@@ -1,0 +1,54 @@
+# ============================================
+# 最小化 .gitignore (Wails v3 + Go)
+# ============================================
+
+# 编译产物
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/.task/
+/bin/
+/dist/
+/build/
+
+# Go 依赖
+/vendor/
+go.sum
+
+/node_modules
+
+# 前端构建
+/frontend/dist/
+/frontend/build/
+/frontend/node_modules/
+/frontend/package-lock.json
+/frontend/bindings/
+
+# Wails 临时文件
+/.wails/
+/wails-build/
+
+# 数据库
+*.db
+*.sqlite
+*.sqlite3
+*.wal
+*.shm
+
+# 环境变量
+.env
+.env.local
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# 日志
+*.log
+logs/

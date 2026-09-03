@@ -1,0 +1,112 @@
+/* src/styles/global.css */
+
+html, body, #app {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: #1A1A22;  /* 与窗口背景色一致 */
+  overflow: hidden;
+}
+
+/* ===== 浅色主题（默认） ===== */
+:root {
+  /* 背景色 */
+  --color-bg-base: #f5f5f7;
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f0f0f2;
+  --color-bg-tertiary: #e8e8ea;
+  --color-bg-hover: #e8e8ea;
+  --color-bg-card: #ffffff;
+  
+  /* 文本色 */
+  --color-text-primary: #1a1a22;
+  --color-text-secondary: #4a4a56;
+  --color-text-tertiary: #8a8a96;
+  --color-text-muted: #b0b0ba;
+  --color-text-inverse: #ffffff;
+  
+  /* 品牌色 - 低饱和 */
+  --color-primary: #5b7a8a;
+  --color-primary-hover: #6e8f9f;
+  --color-primary-active: #4a6a7a;
+  --color-primary-light: rgba(91, 122, 138, 0.12);
+  
+  /* 边框 */
+  --color-border: #d4d4da;
+  --color-border-light: #e4e4e8;
+  --color-border-dark: #c4c4ca;
+  
+  /* 功能色 */
+  --color-success: #5a8a6a;
+  --color-warning: #8a8a5a;
+  --color-danger: #8a5a5a;
+  --color-info: #5a7a8a;
+  
+  /* 阴影 */
+  --color-shadow: rgba(0, 0, 0, 0.08);
+  --color-shadow-heavy: rgba(0, 0, 0, 0.15);
+  
+  /* 滚动条 */
+  --color-scrollbar: rgba(0, 0, 0, 0.12);
+  --color-scrollbar-hover: rgba(0, 0, 0, 0.2);
+  
+  /* 侧边栏特殊 */
+  --sidebar-bg: #f5f5f7;
+  --sidebar-border: #d4d4da;
+}
+
+/* ===== 深色主题 ===== */
+[data-theme="dark"] {
+  /* 背景色 */
+  --color-bg-base: #14141a;
+  --color-bg-primary: #1a1a22;
+  --color-bg-secondary: #2c2c37;
+  --color-bg-tertiary: #2a2a34;
+  --color-bg-hover: #3f3f4c;
+  --color-bg-card: #20202a;
+  
+  /* 文本色 */
+  --color-text-primary: #e8e8ee;
+  --color-text-secondary: #b0b0bc;
+  --color-text-tertiary: #7a7a8a;
+  --color-text-muted: #5a5a6a;
+  --color-text-inverse: #1a1a22;
+  
+  /* 品牌色 - 深色模式下略亮 */
+  --color-primary: #6e8f9f;
+  --color-primary-hover: #8aadbd;
+  --color-primary-active: #5b7a8a;
+  --color-primary-light: rgba(110, 143, 159, 0.2);
+  
+  /* 边框 */
+  --color-border: #2a2a36;
+  --color-border-light: #333340;
+  --color-border-dark: #1e1e27;
+  
+  /* 功能色 */
+  --color-success: #5a8a6a;
+  --color-warning: #8a8a5a;
+  --color-danger: #8a5a5a;
+  --color-info: #5a7a8a;
+  
+  /* 阴影 */
+  --color-shadow: rgba(0, 0, 0, 0.4);
+  --color-shadow-heavy: rgba(0, 0, 0, 0.6);
+  
+  /* 滚动条 */
+  --color-scrollbar: rgba(255, 255, 255, 0.08);
+  --color-scrollbar-hover: rgba(255, 255, 255, 0.15);
+  
+  /* 侧边栏特殊 */
+  --sidebar-bg: #14141a;
+  --sidebar-border: #2a2a36;
+}
+
+/* ===== 滚动条全局样式 ===== */
+::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+  background: transparent !important;
+}
