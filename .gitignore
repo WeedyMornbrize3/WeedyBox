@@ -12,11 +12,17 @@
 /.task/
 /bin/
 /dist/
-/build/
 
 # Go 依赖
 /vendor/
 go.sum
+
+/build/android/
+/build/darwin/
+/build/ios/
+/build/linux/
+/build/docker/
+
 
 /node_modules
 
