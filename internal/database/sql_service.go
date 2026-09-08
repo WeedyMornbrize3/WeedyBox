@@ -47,8 +47,7 @@ func initAllTables(ctx context.Context, s *SQLiteService) error {
 			title TEXT NOT NULL,
 			description TEXT,
 			priority INTEGER DEFAULT 1,
-			completed INTEGER DEFAULT 0,
-			status TEXT DEFAULT 'pending',
+			completed INTEGER DEFAULT 0,  -- 0=false, 1=true
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,

@@ -5,13 +5,10 @@ import (
 	"WeedyBox/internal/database"
 	"WeedyBox/internal/model"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 type TodoService struct {
@@ -32,10 +29,10 @@ func (s *TodoService) rowToTodo(row map[string]interface{}) model.Todo {
 	if desc, ok := row["description"].(string); ok {
 		todo.Description = desc
 	}
-	if createdAt, ok := row["created_at"].(string); ok {
+	if createdAt, ok := row["created_at"].(time.Time); ok {
 		todo.CreatedAt = createdAt
 	}
-	if updatedAt, ok := row["updated_at"].(string); ok {
+	if updatedAt, ok := row["updated_at"].(time.Time); ok {
 		todo.UpdatedAt = updatedAt
 	}
 
@@ -205,14 +202,16 @@ func (s *TodoService) Update(ctx context.Context, id int64, dto model.UpdateTodo
 // ToggleComplete 切换完成状态
 func (s *TodoService) ToggleComplete(ctx context.Context, id int64) (*model.Todo, error) {
 	// 先检查是否存在
-	if _, err := s.GetByID(ctx, id); err != nil {
+	_, err := s.GetByID(ctx, id)
+	if err != nil {
 		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	query := `UPDATE todos SET completed = CASE WHEN completed = 0 THEN 1 ELSE 0 END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+	// ✅ 使用 completed 字段（0/1 切换）
+	query := `UPDATE todos SET completed = CASE WHEN completed = 1 THEN 0 ELSE 1 END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
 	if err := s.DB.Execute(ctx, query, id); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, fmt.Errorf("切换状态被取消: %w", err)
@@ -223,6 +222,7 @@ func (s *TodoService) ToggleComplete(ctx context.Context, id int64) (*model.Todo
 		return nil, fmt.Errorf("切换状态失败: %w", err)
 	}
 
+	// 返回更新后的 todo
 	return s.GetByID(ctx, id)
 }
 
@@ -273,32 +273,44 @@ func (s *TodoService) rowToStats(row map[string]interface{}) (model.TodoStats, e
 		Completed: 0,
 		Pending:   0,
 	}
-	if total, ok := row["total"].(sql.NullInt64); ok {
-		stats.Total = total.Int64
+	if total, ok := row["total"].(int64); ok {
+		stats.Total = total
 	}
-	if completed, ok := row["created_at"].(sql.NullInt64); ok {
-		stats.Completed = completed.Int64
+	if completed, ok := row["completed"].(int64); ok {
+		stats.Completed = completed
 	}
-	if pending, ok := row["updated_at"].(sql.NullInt64); ok {
-		stats.Pending = pending.Int64
+	if pending, ok := row["pending"].(int64); ok {
+		stats.Pending = pending
 	}
 	return stats, nil
 }
 
 // bug  need-fix
-func (s *TodoService) GetStats() (model.TodoStats, error) {
+// GetStats 获取统计信息
+func (s *TodoService) GetStats(ctx context.Context) (model.TodoStats, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	// ✅ 使用 completed 字段（0=未完成, 1=已完成）
 	query := `
         SELECT 
             COALESCE(COUNT(*), 0) as total,
-            COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) as completed,
-            COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) as pending
+            COALESCE(SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END), 0) as completed,
+            COALESCE(SUM(CASE WHEN completed = 0 THEN 1 ELSE 0 END), 0) as pending
         FROM todos
     `
 
-	row, err := s.DB.QueryRow(application.Get().Context(), query)
+	row, err := s.DB.QueryRow(ctx, query)
 	if err != nil {
-		return model.TodoStats{}, err
+		if errors.Is(err, context.Canceled) {
+			return model.TodoStats{}, fmt.Errorf("统计被取消: %w", err)
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return model.TodoStats{}, fmt.Errorf("统计超时: %w", err)
+		}
+		return model.TodoStats{}, fmt.Errorf("获取统计失败: %w", err)
 	}
+
 	return s.rowToStats(row)
 }
 

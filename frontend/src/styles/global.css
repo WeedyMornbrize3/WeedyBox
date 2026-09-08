@@ -24,7 +24,7 @@ html, body, #app {
   --color-text-secondary: #4a4a56;
   --color-text-tertiary: #8a8a96;
   --color-text-muted: #b0b0ba;
-  --color-text-inverse: #ffffff;
+  --color-text-inverse: #dddbe4;
   
   /* 品牌色 - 低饱和 */
   --color-primary: #5b7a8a;
@@ -67,15 +67,15 @@ html, body, #app {
   --color-bg-card: #20202a;
   
   /* 文本色 */
-  --color-text-primary: #e8e8ee;
-  --color-text-secondary: #b0b0bc;
-  --color-text-tertiary: #7a7a8a;
+  --color-text-primary: #c5c5d2;
+  --color-text-secondary: #b2b2c1;
+  --color-text-tertiary: #8b8b99;
   --color-text-muted: #5a5a6a;
   --color-text-inverse: #1a1a22;
   
   /* 品牌色 - 深色模式下略亮 */
   --color-primary: #6e8f9f;
-  --color-primary-hover: #8aadbd;
+  --color-primary-hover: #b3c1d4;
   --color-primary-active: #5b7a8a;
   --color-primary-light: rgba(110, 143, 159, 0.2);
   

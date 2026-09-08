@@ -20,7 +20,7 @@ export const useTodoStore = defineStore('todo', () => {
     const pendingTodos = computed(() => 
         todos.value.filter(t => !t.completed)
     )
-
+ 
     const highPriorityTodos = computed(() =>
         todos.value.filter(t => t.priority === 2)
     )

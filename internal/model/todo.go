@@ -1,15 +1,19 @@
 // internal/model/todo.go
 package model
 
+import (
+	"time"
+)
+
 // Todo 数据模型
 type Todo struct {
-	ID          int64  `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description,omitempty"`
-	Priority    int    `json:"priority"`
-	Completed   bool   `json:"completed"`
-	CreatedAt   string `json:"createdAt"`
-	UpdatedAt   string `json:"updatedAt"`
+	ID          int64     `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description,omitempty"`
+	Priority    int       `json:"priority"`
+	Completed   bool      `json:"completed"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 // CreateTodoDTO 创建请求

@@ -10,7 +10,7 @@
     <span class="text-sm text-primary">
       ⏳ 待完成: <span class="font-medium text-yellow-500">{{ stats.pending }}</span>
     </span>
-    <span class="text-sm" v-if="stats.total > 0">
+    <span class="text-sm text-primary" v-if="stats.total > 0">
       完成率: <span class="font-medium text-brand">{{ completionRate }}%</span>
     </span>
   </div>
