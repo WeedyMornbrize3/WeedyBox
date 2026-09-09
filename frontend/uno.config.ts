@@ -77,7 +77,7 @@ export default defineConfig({
     // 按钮
     'btn-brand': 'px-4 py-2 bg-brand text-inverse rounded-lg hover:bg-brand-hover transition-colors duration-200 cursor-pointer border-none',
     'btn-ghost': 'px-4 py-2 text-secondary hover:text-primary hover:bg-hover rounded-lg transition-colors duration-200 cursor-pointer border-none bg-transparent',
-
+    'btn-delete': '!w-6 !h-6 !rounded-full !p-0 flex items-center justify-center text-xs border-2 border-brand bg-transparent text-brand hover:bg-brand hover:text-inverse transition-colors duration-200 cursor-pointer flex-shrink-0',
     // 输入框
     'input-theme': 'bg-secondary border border-theme rounded-lg px-3 py-2 text-primary placeholder-tertiary focus:outline-none focus:border-brand transition-colors duration-200',
 

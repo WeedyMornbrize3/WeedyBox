@@ -32,7 +32,8 @@ const handleSubmit = async () => {
 
   loading.value = true
   try {
-    await todoStore.addTodo(title)
+    // todoStore.curPriority = 0  占位  可修改了
+    await todoStore.addTodo(title,'')  //占位
     newTodo.value = ''
   } catch (e) {
     // 错误已在 store 中处理

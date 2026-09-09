@@ -12,7 +12,6 @@
     >
       <span class="text-sm">{{ option.icon }}</span>
       <span class="font-medium">{{ option.label }}</span>
-      <span v-if="modelValue === option.value" class="text-brand font-semibold text-xs ml-0.5">✓</span>
     </button>
   </div>
 </template>

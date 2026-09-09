@@ -32,6 +32,7 @@ go.sum
 /frontend/node_modules/
 /frontend/package-lock.json
 /frontend/bindings/
+/frontend/.bindings-tmp-1008763502/
 
 # Wails 临时文件
 /.wails/

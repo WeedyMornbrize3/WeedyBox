@@ -43,10 +43,6 @@ func (s *TodoService) rowToTodo(row map[string]interface{}) model.Todo {
 
 // Create 创建 TODO
 func (s *TodoService) Create(ctx context.Context, dto model.CreateTodoDTO) (*model.Todo, error) {
-	if dto.Priority < 0 || dto.Priority > 2 {
-		dto.Priority = 1
-	}
-
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
@@ -95,7 +91,7 @@ func (s *TodoService) GetAll(ctx context.Context) ([]model.Todo, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	query := `SELECT id, title, description, priority, completed, created_at, updated_at FROM todos ORDER BY priority DESC, created_at DESC`
+	query := `SELECT id, title, description, priority, completed, created_at, updated_at FROM todos ORDER BY completed ASC, priority DESC, created_at DESC`
 	rows, err := s.DB.Query(ctx, query)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -124,7 +120,7 @@ func (s *TodoService) GetByStatus(ctx context.Context, completed bool) ([]model.
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	query := `SELECT id, title, description, priority, completed, created_at, updated_at FROM todos WHERE completed = ? ORDER BY priority DESC, created_at DESC`
+	query := `SELECT id, title, description, priority, completed, created_at, updated_at FROM todos WHERE completed = ? ORDER BY completed ASC, priority DESC, created_at DESC`
 	rows, err := s.DB.Query(ctx, query, completedInt)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {

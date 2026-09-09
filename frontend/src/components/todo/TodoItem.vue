@@ -1,12 +1,12 @@
 <!-- frontend/src/components/todo/TodoItem.vue -->
 <template>
-  <div
-    class="flex items-center gap-3 px-4 py-3 rounded-lg bg-card border-theme hover:border-brand-light transition-colors"
+  <label
+    class="flex items-center gap-3 px-4 py-3 rounded-lg bg-card border-theme hover:border-brand transition-colors cursor-pointer"
     :class="{ 'opacity-60': todo.completed }"
   >
     <input
       type="checkbox"
-      class="w-4 h-4 accent-brand cursor-pointer"
+      class="w-0 h-0"
       :checked="todo.completed"
       :disabled="isUpdating"
       @change="emit('toggle', props.todo.id)"
@@ -14,7 +14,7 @@
 
     <!-- 优先级标签 -->
     <span
-      class="w-2 h-2 rounded-full flex-shrink-0"
+      class="w-3 h-3 rounded-full flex-shrink-0"
       :class="priorityColor"
       :title="priorityLabel"
     />
@@ -40,17 +40,18 @@
       {{ formatDate(todo.createdAt) }}
     </span>
 
-    <!-- 删除按钮 -->
+    <!-- 删除按钮 - 需要阻止点击冒泡 -->
     <button
-      class="btn-brand"
-      @click="handleDelete"
+      class="btn-delete"
+      style="border: 1px"
+      @click.stop="handleDelete"
       title="删除"
       :disabled="isDeleting"
     >
       <span v-if="isDeleting" class="inline-block animate-spin">⟳</span>
       <span v-else>✕</span>
-    </button>
-  </div>
+</button>
+  </label>
 </template>
 
 <script setup lang="ts">

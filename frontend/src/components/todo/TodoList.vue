@@ -5,7 +5,11 @@
     <h2 class="text-xl font-semibold text-primary mb-4">📋 TODO 列表</h2>
 
     <!-- 统计 -->
-    <TodoStats :stats="todoStore.stats" />
+    <div class="flex">
+      <TodoStats :stats="todoStore.stats" />
+      <TodoPrioritySelector class="ml-auto">
+      </TodoPrioritySelector>
+    </div>
 
     <!-- 输入框 -->
     <TodoInput class="mt-4" />
@@ -45,6 +49,7 @@ import { useTodoStore } from '../../stores/todoStore'
 import TodoInput from './TodoInput.vue'
 import TodoItem from './TodoItem.vue'
 import TodoStats from './TodoStats.vue'
+import TodoPrioritySelector from './TodoPrioritySelector.vue'
 
 const todoStore = useTodoStore()
 

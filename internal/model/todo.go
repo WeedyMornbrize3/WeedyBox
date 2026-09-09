@@ -10,7 +10,7 @@ type Todo struct {
 	ID          int64     `json:"id"`
 	Title       string    `json:"title"`
 	Description string    `json:"description,omitempty"`
-	Priority    int       `json:"priority"`
+	Priority    int       `json:"priority"` // 0 1 2
 	Completed   bool      `json:"completed"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`

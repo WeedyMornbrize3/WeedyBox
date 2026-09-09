@@ -11,6 +11,7 @@ export const useTodoStore = defineStore('todo', () => {
     const loading = ref(false)
     const error = ref<string | null>(null)
     const stats = ref<TodoStats>({ total: 0, completed: 0, pending: 0 })
+    const curPriority = ref<number>(1)
 
     // ===== Getters =====
     const completedTodos = computed(() => 
@@ -49,9 +50,13 @@ export const useTodoStore = defineStore('todo', () => {
         }
     }
 
-    async function addTodo(title: string, description?: string, priority?: number) {
+    async function addTodo(title: string, description?: string) {
         try {
-            const todo = await todoApi.create({ title, description, priority })
+            const todo = await todoApi.create({
+                title: title.trim(), 
+                description: description?.trim() || undefined, 
+                priority: curPriority.value
+            })
             todos.value.unshift(todo)
             await loadStats()
             return todo
@@ -123,6 +128,7 @@ export const useTodoStore = defineStore('todo', () => {
         loading,
         error,
         stats,
+        curPriority,
         // Getters
         completedTodos,
         pendingTodos,
