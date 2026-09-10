@@ -39,6 +39,12 @@ export default defineConfig({
     ['border-theme', { 'border': '1px solid var(--color-border)' }],
     ['border-theme-light', { 'border-color': 'var(--color-border-light)' }],
     ['border-theme-dark', { 'border-color': 'var(--color-border-dark)' }],
+    ['border-sidebar', { 'border-color': 'var(--sidebar-border)' }],
+
+    // 动效
+    // 注意：presetUno 的 will-change 规则不支持方括号任意值
+    // （will-change-[width] 会被规则捕获成字面量 "[width]" 而失效），用 will-change-width
+    ['will-change-width', { 'will-change': 'width' }],
 
     // 功能色
     ['text-success', { 'color': 'var(--color-success)' }],
@@ -90,7 +96,7 @@ export default defineConfig({
     'titlebar-btn-close': 'bg-transparent border-none text-tertiary text-base w-7 h-7 rounded cursor-pointer transition-all duration-200 flex items-center justify-center leading-none p-0 font-light hover:bg-danger hover:text-white',
 
     // ---------- 侧边栏 Sidebar ----------
-    'sidebar': 'fixed left-0 top-0 h-screen bg-sidebar text-primary transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] flex flex-col z-[1000] shadow-[1px_0_16px_var(--color-shadow)] overflow-hidden select-none border-r-2 border-sidebar will-change-[width]',
+    'sidebar': 'fixed left-0 top-0 h-screen bg-sidebar text-primary transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] flex flex-col z-[1000] shadow-[1px_0_16px_var(--color-shadow)] overflow-hidden select-none border-r-2 border-sidebar will-change-width',
     'sidebar-header': 'flex items-center px-5 gap-3 cursor-pointer min-h-[72px] flex-shrink-0 transition-colors duration-150 hover:bg-hover',
     'logo-icon': 'flex-shrink-0 text-brand flex items-center justify-center',
     'logo-text': 'text-lg font-semibold text-primary whitespace-nowrap transition-opacity duration-250 ease-in overflow-hidden tracking-[0.5px]',

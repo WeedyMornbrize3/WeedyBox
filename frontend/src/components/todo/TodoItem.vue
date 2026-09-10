@@ -1,61 +1,65 @@
 <!-- frontend/src/components/todo/TodoItem.vue -->
 <template>
   <label
-    class="flex items-center gap-3 px-4 py-3 rounded-lg bg-card border-theme hover:border-brand transition-colors cursor-pointer"
+    class="todo-item flex flex-col gap-1.5 px-4 py-3 rounded-lg bg-card border-theme hover:border-brand transition-colors cursor-pointer"
     :class="{ 'opacity-60': todo.completed }"
   >
-    <input
-      type="checkbox"
-      class="w-0 h-0"
-      :checked="todo.completed"
-      :disabled="isUpdating"
-      @change="emit('toggle', props.todo.id)"
-    />
+    <!-- 主行：勾选 + 优先级 + 标题 + 时间 + 删除 -->
+    <div class="flex items-center gap-3 w-full">
+      <input
+        type="checkbox"
+        class="w-0 h-0"
+        :checked="todo.completed"
+        :disabled="isUpdating"
+        @change="emit('toggle', props.todo.id)"
+      />
 
-    <!-- 优先级标签 -->
-    <span
-      class="w-3 h-3 rounded-full flex-shrink-0"
-      :class="priorityColor"
-      :title="priorityLabel"
-    />
+      <!-- 优先级标签 -->
+      <span
+        class="w-3 h-3 rounded-full flex-shrink-0"
+        :class="priorityColor"
+        :title="priorityLabel"
+      />
 
-    <!-- 标题 -->
-    <span
-      class="flex-1 text-sm text-primary"
-      :class="{ 'line-through text-tertiary': todo.completed }"
-    >
-      {{ todo.title }}
-    </span>
+      <!-- 标题：主要信息 -->
+      <span
+        class="flex-1 min-w-0 truncate text-sm font-medium text-primary"
+        :class="{ 'line-through text-tertiary': todo.completed }"
+      >
+        {{ todo.title }}
+      </span>
 
-    <!-- 描述 -->
-    <span
+      <!-- 时间 -->
+      <span class="text-xs text-tertiary flex-shrink-0 hidden sm:block">
+        {{ formatDate(todo.createdAt) }}
+      </span>
+
+      <!-- 删除按钮 - 需要阻止点击冒泡 -->
+      <button
+        class="btn-delete"
+        style="border: 1px"
+        @click.stop="handleDelete"
+        title="删除"
+        :disabled="isDeleting"
+      >
+        <span v-if="isDeleting" class="inline-block animate-spin">⟳</span>
+        <span v-else>✕</span>
+      </button>
+    </div>
+
+    <!-- 描述：次要信息，缩进对齐标题并带左侧竖线 -->
+    <p
       v-if="todo.description"
-      class="text-xs text-tertiary truncate max-w-[200px] hidden sm:block"
+      class="todo-desc"
+      :class="{ 'line-through': todo.completed }"
     >
       {{ todo.description }}
-    </span>
-
-    <!-- 时间 -->
-    <span class="text-xs text-tertiary flex-shrink-0 hidden sm:block">
-      {{ formatDate(todo.createdAt) }}
-    </span>
-
-    <!-- 删除按钮 - 需要阻止点击冒泡 -->
-    <button
-      class="btn-delete"
-      style="border: 1px"
-      @click.stop="handleDelete"
-      title="删除"
-      :disabled="isDeleting"
-    >
-      <span v-if="isDeleting" class="inline-block animate-spin">⟳</span>
-      <span v-else>✕</span>
-</button>
+    </p>
   </label>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 import type { Todo } from '../../../bindings/WeedyBox/internal/model'
 import { useTodoStore } from '../../stores/todoStore'
 
@@ -132,6 +136,24 @@ const handleDelete = async () => {
 </script>
 
 <style scoped>
+/* 描述：小字号 + 弱色 + 左侧竖线，与标题形成层级区分 */
+.todo-desc {
+  margin: 0;
+  /* 24px = 勾选框(0) + gap3(12) + 圆点12 —— 与标题起始位置对齐 */
+  padding-left: 24px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-left: 2px solid var(--color-border-light);
+  transition: border-color 0.2s ease;
+}
+
+.todo-item:hover .todo-desc {
+  border-left-color: var(--color-primary);
+}
+
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
