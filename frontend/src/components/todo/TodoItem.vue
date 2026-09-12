@@ -38,7 +38,7 @@
       <button
         class="btn-delete"
         style="border: 1px"
-        @click.stop="handleDelete"
+        @click="todoStore.deleteTodo(props.todo.id)"
         title="删除"
         :disabled="isDeleting"
       >
@@ -112,25 +112,6 @@ const formatDate = (dateStr: string) => {
     return `${Math.floor(diff / (24 * 60 * 60 * 1000))}天前`
   }
   return date.toLocaleDateString('zh-CN')
-}
-
-const handleDelete = async () => {
-  if (isDeleting.value) return
-  
-  if (!confirm(`确定要删除 "${props.todo.title}" 吗？`)) {
-    return
-  }
-  
-  try {
-    isDeleting.value = true
-    await todoStore.deleteTodo(props.todo.id)
-    emit('delete', props.todo.id)
-  } catch (error) {
-    console.error('删除失败:', error)
-    emit('error', error as Error)
-  } finally {
-    isDeleting.value = false
-  }
 }
 
 </script>

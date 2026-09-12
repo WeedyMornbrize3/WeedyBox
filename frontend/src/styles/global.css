@@ -1,5 +1,16 @@
 /* src/styles/global.css */
 
+/* ===== 盒模型基准（必须）=====
+   presetUno 不带 border-box reset，缺了它任何「定了高度又带 padding」的元素
+   实际占位都会变成 height + padding（content-box），布局链会逐级溢出视口。
+   实测（9245 真实页面）：加这一条后 root 高度 1048→1018、
+   列表卡片底部从「超出视口 36px、最后一条滚不到」变为「完整落在视口内」。 */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 html, body, #app {
   margin: 0;
   padding: 0;
@@ -18,6 +29,8 @@ html, body, #app {
   --color-bg-tertiary: #e8e8ea;
   --color-bg-hover: #e8e8ea;
   --color-bg-card: #ffffff;
+  /* 半透明次级背景（筛选栏 / 统计栏），alpha 60% */
+  --color-bg-secondary-soft: rgba(240, 240, 242, 0.6);
   
   /* 文本色 */
   --color-text-primary: #1a1a22;
@@ -65,6 +78,8 @@ html, body, #app {
   --color-bg-tertiary: #2a2a34;
   --color-bg-hover: #3f3f4c;
   --color-bg-card: #20202a;
+  /* 半透明次级背景（筛选栏 / 统计栏），alpha 60% */
+  --color-bg-secondary-soft: rgba(44, 44, 55, 0.6);
   
   /* 文本色 */
   --color-text-primary: #c5c5d2;
@@ -109,4 +124,39 @@ html, body, #app {
   height: 0 !important;
   display: none !important;
   background: transparent !important;
+}
+
+/* ===== 局部恢复滚动条（配合类名 scrollbar-theme 使用） =====
+   为什么必须写 !important：上面全局规则用了 !important。由于 CSS 优先级规则中
+   「带 !important 的声明永远胜过不带 !important 的声明」与选择器权重无关，
+   这里每个属性都必须同样带 !important 才能覆盖。
+   为什么写在这里而不是 uno.config.ts：UnoCSS 的 utility 规则只能输出单层声明，
+   无法生成 ::-webkit-scrollbar 这类伪元素选择器（嵌套对象会被字符串化成
+   "[object Object]"），因此滚动条样式只能放在纯 CSS 中。
+   用法：<div class="overflow-y-auto scrollbar-theme"> */
+.scrollbar-theme {
+  scrollbar-width: thin;                                   /* Firefox */
+  scrollbar-color: var(--color-scrollbar) transparent;     /* Firefox */
+}
+
+.scrollbar-theme::-webkit-scrollbar {
+  display: block !important;
+  width: 8px !important;
+  height: 8px !important;
+  background: transparent !important;
+}
+
+.scrollbar-theme::-webkit-scrollbar-track {
+  display: block !important;
+  background: transparent !important;
+}
+
+.scrollbar-theme::-webkit-scrollbar-thumb {
+  display: block !important;
+  background: var(--color-scrollbar) !important;
+  border-radius: 4px;
+}
+
+.scrollbar-theme::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-hover) !important;
 }

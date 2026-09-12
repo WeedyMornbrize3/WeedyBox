@@ -1,5 +1,5 @@
 // uno.config.ts
-import { defineConfig, presetUno, presetAttributify } from 'unocss'
+import { defineConfig, presetUno, presetAttributify, presetIcons } from 'unocss'
 
 export default defineConfig({
   presets: [
@@ -7,6 +7,17 @@ export default defineConfig({
     presetAttributify({
       prefix: 'un-',
       prefixedOnly: false,
+    }),
+    // 图标：用 i-<集合>-<名字> 类名，如 i-lucide-align-left
+    // 数据来自已安装的 @iconify/json（本地，236 个集合），构建时按需内联，无运行时请求。
+    // 想换成按集合单独安装（体积更小）可 `npm i -D @iconify-json/lucide`，
+    // 装了单集合包后 presetIcons 会优先用它。
+    presetIcons({
+      scale: 1,
+      extraProperties: {
+        'display': 'inline-block',
+        'vertical-align': 'middle',
+      },
     }),
   ],
 
@@ -16,6 +27,9 @@ export default defineConfig({
     ['bg-base', { 'background-color': 'var(--color-bg-base)' }],
     ['bg-primary', { 'background-color': 'var(--color-bg-primary)' }],
     ['bg-secondary', { 'background-color': 'var(--color-bg-secondary)' }],
+    // 半透明次级背景。注意：自定义 rule 是精确字符串匹配，不支持 bg-secondary/50
+    // 这类透明度后缀（会被判为 unmatched），需要半透明时用这个类名。
+    ['bg-secondary-soft', { 'background-color': 'var(--color-bg-secondary-soft)' }],
     ['bg-tertiary', { 'background-color': 'var(--color-bg-tertiary)' }],
     ['bg-hover', { 'background-color': 'var(--color-bg-hover)' }],
     ['bg-card', { 'background-color': 'var(--color-bg-card)' }],
@@ -37,9 +51,9 @@ export default defineConfig({
 
     // 边框
     ['border-theme', { 'border': '1px solid var(--color-border)' }],
-    ['border-theme-light', { 'border-color': 'var(--color-border-light)' }],
-    ['border-theme-dark', { 'border-color': 'var(--color-border-dark)' }],
-    ['border-sidebar', { 'border-color': 'var(--sidebar-border)' }],
+    ['border-theme-light', { 'border-color': '1px solid var(--color-border-light)' }],
+    ['border-theme-dark', { 'border-color': '1px solid var(--color-border-dark)' }],
+    ['border-sidebar', { 'border-color': '1px solid var(--sidebar-border)' }],
 
     // 动效
     // 注意：presetUno 的 will-change 规则不支持方括号任意值
@@ -86,6 +100,19 @@ export default defineConfig({
     'btn-delete': '!w-6 !h-6 !rounded-full !p-0 flex items-center justify-center text-xs border-2 border-brand bg-transparent text-brand hover:bg-brand hover:text-inverse transition-colors duration-200 cursor-pointer flex-shrink-0',
     // 输入框
     'input-theme': 'bg-secondary border border-theme rounded-lg px-3 py-2 text-primary placeholder-tertiary focus:outline-none focus:border-brand transition-colors duration-200',
+
+    // ---------- 筛选栏 FilterBar ----------
+    // 横向排列 + 横向滚动：不用 flex-wrap（放不下就换行），放不下时改为溢出滚动。
+    // 各分组必须 flex-shrink-0，否则会被压扁而不是产生滚动条。
+    // 注意：scrollbar-theme 是 global.css 里的普通类（不是 UnoCSS utility），
+    // 不能写进 shortcut（会被判 unmatched），必须在模板 class 里单独加。
+    'filter-bar': 'flex flex-nowrap items-center gap-x-4 px-3 pt-2.5 pb-1.5 rounded-lg bg-secondary-soft overflow-x-auto overflow-y-hidden',
+    'filter-group': 'flex items-center gap-2 flex-shrink-0',
+    'filter-label': 'text-xs text-tertiary whitespace-nowrap',
+    'filter-chips': 'flex flex-nowrap gap-1',
+    // 药丸按钮：未选中 / 选中
+    'chip': 'px-2.5 py-1 rounded-md cursor-pointer text-xs whitespace-nowrap border-theme bg-transparent text-secondary hover:bg-hover hover:text-primary transition-colors duration-200',
+    'chip-active': '!bg-card !text-brand !border-brand font-medium',
 
     // ---------- 主内容 ----------
     'main-content': 'flex-1 p-6 overflow-y-auto bg-primary',

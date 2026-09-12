@@ -1,9 +1,43 @@
 // frontend/src/stores/todoStore.ts
 
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { todoApi } from '../services/todoService'
 import type { Todo, TodoStats } from '../../bindings/WeedyBox/internal/model'
+
+// ===== 筛选类型 =====
+// 'pending' = 只看未完成（默认），'completed' = 只看已完成，'all' = 全部
+export type CompletedFilter = 'pending' | 'completed' | 'all'
+// null = 全部优先级，0 低 / 1 中 / 2 高
+export type PriorityFilter = number | null
+// 按创建时间过滤：'all' 不限 / 'today' 今天 / 'week' 近7天 / 'month' 近30天
+export type TimeFilter = 'all' | 'today' | 'week' | 'month'
+
+export const COMPLETED_OPTIONS: { value: CompletedFilter; label: string }[] = [
+    { value: 'pending', label: '未完成' },
+    { value: 'completed', label: '已完成' },
+    { value: 'all', label: '全部' },
+]
+
+export const PRIORITY_OPTIONS: { value: PriorityFilter; label: string }[] = [
+    { value: null, label: '全部' },
+    { value: 2, label: '高' },
+    { value: 1, label: '中' },
+    { value: 0, label: '低' },
+]
+
+export const TIME_OPTIONS: { value: TimeFilter; label: string }[] = [
+    { value: 'all', label: '全部' },
+    { value: 'today', label: '今天' },
+    { value: 'week', label: '近7天' },
+    { value: 'month', label: '近30天' },
+]
+
+export const TIME_RANGE_DAYS: Record<Exclude<TimeFilter, 'all'>, number> = {
+    today: 0,
+    week: 7,
+    month: 30,
+}
 
 export const useTodoStore = defineStore('todo', () => {
     // ===== State =====
@@ -12,6 +46,17 @@ export const useTodoStore = defineStore('todo', () => {
     const error = ref<string | null>(null)
     const stats = ref<TodoStats>({ total: 0, completed: 0, pending: 0 })
     const curPriority = ref<number>(1)
+
+    // 筛选条件：默认只看未完成
+    const filters = reactive<{
+        completed: CompletedFilter
+        priority: PriorityFilter
+        time: TimeFilter
+    }>({
+        completed: 'pending',
+        priority: null,
+        time: 'all',
+    })
 
     // ===== Getters =====
     const completedTodos = computed(() => 
@@ -30,6 +75,45 @@ export const useTodoStore = defineStore('todo', () => {
         if (stats.value.total === 0) return 0
         return Math.round((stats.value.completed / stats.value.total) * 100)
     })
+
+    // 时间是否落在筛选范围内
+    function matchTime(createdAt: string, time: TimeFilter): boolean {
+        if (time === 'all') return true
+        const diff = Date.now() - new Date(createdAt).getTime()
+        if (Number.isNaN(diff)) return true
+        const days = TIME_RANGE_DAYS[time]
+        // diff 为负（时间在未来）时按 0 处理；'today' 为 0 表示仅今天
+        const elapsedDays = Math.max(0, diff) / (24 * 60 * 60 * 1000)
+        if (days === 0) return elapsedDays < 1
+        return elapsedDays <= days
+    }
+
+    // 应用筛选后的列表（模板渲染用这个，不再直接用 todos）
+    const filteredTodos = computed(() =>
+        todos.value.filter(t => {
+            if (filters.completed === 'pending' && t.completed) return false
+            if (filters.completed === 'completed' && !t.completed) return false
+            if (filters.priority !== null && t.priority !== filters.priority) return false
+            if (!matchTime(t.createdAt, filters.time)) return false
+            return true
+        })
+    )
+
+    // 是否处于非默认筛选状态（用于空状态文案）
+    const isFilterActive = computed(() =>
+        filters.completed !== 'pending' || filters.priority !== null || filters.time !== 'all'
+    )
+
+    // 筛选后为空、但原始数据不为空 —— 说明是筛选条件把内容挡住了
+    const isFilteredEmpty = computed(() =>
+        !loading.value && todos.value.length > 0 && filteredTodos.value.length === 0
+    )
+
+    function resetFilters() {
+        filters.completed = 'pending'
+        filters.priority = null
+        filters.time = 'all'
+    }
 
     // ===== Actions =====
     async function loadTodos() {
@@ -129,11 +213,15 @@ export const useTodoStore = defineStore('todo', () => {
         error,
         stats,
         curPriority,
+        filters,
         // Getters
         completedTodos,
         pendingTodos,
         highPriorityTodos,
         completionRate,
+        filteredTodos,
+        isFilterActive,
+        isFilteredEmpty,
         // Actions
         loadTodos,
         addTodo,
@@ -142,5 +230,6 @@ export const useTodoStore = defineStore('todo', () => {
         deleteTodo,
         loadStats,
         init,
+        resetFilters,
     }
 })

@@ -1,6 +1,6 @@
 <!-- frontend/src/components/todo/TodoStats.vue -->
 <template>
-  <div class="flex flex-wrap gap-4 px-4 py-2 rounded-lg bg-secondary/50">
+  <div class="flex flex-wrap gap-4 px-4 py-2 rounded-lg bg-secondary-soft">
     <span class="text-sm text-primary">
       🕶️ 总计: <span class="font-medium text-primary">{{ stats.total }}</span>
     </span>
