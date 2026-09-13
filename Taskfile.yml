@@ -5,18 +5,18 @@ vars:
   BIN_DIR: "bin"
   PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "npm"}}'
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
-  # Target OS for build/package/run. Defaults to the host OS, and is overridden
-  # by `wails3 build GOOS=...` (or the GOOS env var) for cross-compilation. The
-  # tasks below dispatch to the matching platform Taskfile via this variable.
-  GOOS: '{{.GOOS | default OS}}'
+  # 本项目只出 Windows 版本，GOOS 固定为 windows，不再跟随宿主 OS、
+  # 也不再支持 `wails3 build GOOS=...` 跨平台覆盖（下面只 include 了 windows）。
+  # 如需恢复多平台：把对应的 include 与这里改回 '{{.GOOS | default OS}}' 即可。
+  GOOS: windows
 
 includes:
   common: ./build/Taskfile.yml
   windows: ./build/windows/Taskfile.yml
-  darwin: ./build/darwin/Taskfile.yml
-  linux: ./build/linux/Taskfile.yml
-  ios: ./build/ios/Taskfile.yml
-  android: ./build/android/Taskfile.yml
+  # 已裁剪：darwin / linux / ios / android
+  # 本项目只构建 Windows；这些平台的 Taskfile 已不再挂载，
+  # 因此 `task build` / `package` / `run` 只会分发到 windows。
+  # 需要时用 `wails3 update build-assets` 重新生成对应平台目录后再加回 include。
 
 tasks:
   build:
@@ -39,27 +39,3 @@ tasks:
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 
-  setup:docker:
-    summary: Builds Docker image for cross-compilation (~800MB download)
-    cmds:
-      - task: common:setup:docker
-
-  build:server:
-    summary: Builds the application in server mode (no GUI, HTTP server only)
-    cmds:
-      - task: common:build:server
-
-  run:server:
-    summary: Runs the application in server mode
-    cmds:
-      - task: common:run:server
-
-  build:docker:
-    summary: Builds a Docker image for server mode deployment
-    cmds:
-      - task: common:build:docker
-
-  run:docker:
-    summary: Builds and runs the Docker image
-    cmds:
-      - task: common:run:docker
