@@ -34,7 +34,9 @@ go.sum
 /frontend/dist/
 /frontend/build/
 /frontend/node_modules/
-/frontend/package-lock.json
+# frontend/package-lock.json 必须纳入版本控制！
+# 忽略它会让每次 clone 都重新解析依赖版本，实测曾把 vite 装到 8.3.0，
+# 触发 UnoCSS 的 HMR 回归（动态导入的路由页样式不生效）——详见 doc/conventions.md。
 /frontend/bindings/
 /frontend/.bindings-tmp-1008763502/
 
