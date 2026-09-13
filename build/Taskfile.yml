@@ -209,7 +209,16 @@ tasks:
       # 否则全新 clone 后首次构建会直接报
       #   open build/darwin/icon.icns: The system cannot find the path specified
       # 产物 icons.icns 对 Windows 构建无用，且已被 .gitignore 忽略。
-      - mkdir -p darwin
+      #
+      # 建目录必须分平台写：
+      #   - 不要用 `mkdir -p` —— Windows 上 mkdir 常不在 PATH（Git 只提供 sh/bash，
+      #     mkdir.exe 位于 Git\usr\bin 但未必可解析），会报 "mkdir": executable file not found in $PATH
+      #   - cmd 的 mkdir 不是幂等的（目录已存在会返回 1，导致任务失败）
+      #   - PowerShell 的 New-Item -Force 幂等，且本项目只构建 Windows
+      - cmd: powershell -NoProfile -Command "New-Item -ItemType Directory -Path darwin -Force | Out-Null"
+        platforms: [windows]
+      - cmd: mkdir -p darwin
+        platforms: [linux, darwin]
       - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico
 
   dev:frontend:
