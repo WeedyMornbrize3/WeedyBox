@@ -191,7 +191,7 @@ tasks:
       - wails3 generate bindings -f '{{.BUILD_FLAGS}}' -clean=true{{if eq .OBFUSCATED "true"}} -obfuscated{{end}} -ts -i
 
   generate:icons:
-    summary: 只生成 Windows `.ico`（本项目已裁剪为仅 Windows 构建）
+    summary: 生成图标（wails3 无参数可跳过 mac 图标，故显式指定其输出路径并确保目录存在）
     run: once
     dir: build
     sources:
@@ -199,13 +199,18 @@ tasks:
     generates:
       - "windows/icon.ico"
     cmds:
-      # 注意：不要加回 -macfilename / -macassetdir。
-      # 原模板会写 darwin/icons.icns，一旦 build/darwin/ 不存在（本项目已裁剪该平台）
-      # 就会 `open darwin/icons.icns: The system cannot find the path specified`，
-      # 而本任务又是 windows:build 的依赖，因此会直接卡死 Windows 构建。
-      # 另外也不能只省略 -macfilename：CLI 的默认 Mac 路径是 build/darwin/icon.icns，
-      # 在 dir: build 下依然会失败，必须同时不触发 Mac 图标生成。
-      - wails3 generate icons -input appicon.png -windowsfilename windows/icon.ico
+      # 关于 mac 图标：wails3 generate icons 没有「只生成 Windows」的开关，
+      # 无论是否传 -macfilename 都会写 mac 图标，区别只在写到哪里：
+      #   - 传 -macfilename darwin/icons.icns → 写到 build/darwin/icons.icns
+      #   - 不传                             → 用内部默认值 build/darwin/icon.icns，
+      #                                        在 dir: build 下会去找 build/build/darwin/，必然失败
+      # 所以必须显式传 -macfilename，并保证 build/darwin/ 目录存在。
+      # 该目录由仓库内 build/darwin/.gitkeep 保证存在（见 .gitignore 的 !/build/darwin/.gitkeep），
+      # 否则全新 clone 后首次构建会直接报
+      #   open build/darwin/icon.icns: The system cannot find the path specified
+      # 产物 icons.icns 对 Windows 构建无用，且已被 .gitignore 忽略。
+      - mkdir -p darwin
+      - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico
 
   dev:frontend:
     summary: Runs the frontend in development mode

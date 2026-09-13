@@ -18,7 +18,11 @@
 go.sum
 
 /build/android/
-/build/darwin/
+# build/darwin/ 必须保留：wails3 generate icons 一定会写 mac 图标，
+# 目录不存在会让 Windows 构建直接失败（详见 build/Taskfile.yml 的 generate:icons）。
+# 故用 .gitkeep 占位，只忽略生成的图标产物。
+/build/darwin/*
+!/build/darwin/.gitkeep
 /build/ios/
 /build/linux/
 /build/docker/

@@ -25,21 +25,39 @@
 - 验证：`wails3 task --list` 只应出现 `windows:*` 与 `common:*` 命名空间；
   构建日志中会出现 `[windows:generate:syso]` 与 `[windows:build:native] ... -o "bin/weedybox.exe"`。
 
-#### ⚠️ 图标任务已改为只出 Windows `.ico`
+#### ⚠️ 图标任务：`build/darwin/` 必须存在
 
-`build/Taskfile.yml` 的 `generate:icons` **不能**加回 mac 参数：
+`wails3 generate icons` **没有「只生成 Windows」的开关**——它总会写 mac 图标，区别只在写到哪里：
+
+| 写法 | 实际落点 | 结果 |
+| --- | --- | --- |
+| `-macfilename darwin/icons.icns` | `build/darwin/icons.icns`（任务以 `dir: build` 运行） | ✅ |
+| 不传 `-macfilename` | CLI 默认值 `build/darwin/icon.icns` → 会去找 `build/build/darwin/` | ❌ 必然失败 |
+
+`build/Taskfile.yml` 的 `generate:icons` 是 `windows:build` 的**依赖**，它一失败，
+`wails3 build` 与 `wails3 dev` 全部起不来。报错形如：
+
+```
+ERROR  open build/darwin/icon.icns: The system cannot find the path specified.
+```
+
+当前处理（实测通过）：
 
 ```yaml
 cmds:
-  - wails3 generate icons -input appicon.png -windowsfilename windows/icon.ico
+  - mkdir -p darwin
+  - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico
 ```
 
-- 原模板是 `... -macfilename darwin/icons.icns -iconcomposerinput appicon.icon -macassetdir darwin`。
-  由于 `build/darwin/` 已裁剪，该命令会报
-  **`open darwin/icons.icns: The system cannot find the path specified`**，
-  而 `generate:icons` 是 `windows:build` 的依赖，**会直接卡死 Windows 构建与 `wails3 dev`**。
-- 只删 `-macfilename` 也不行：CLI 默认 Mac 路径是 `build/darwin/icon.icns`，任务以 `dir: build` 运行，照样失败。
-- `wails3 generate icons` **不会自动创建目标目录**，目录不存在即报错。
+并且 `.gitignore` 用 `!/build/darwin/.gitkeep` 保留目录占位，保证**全新 clone** 后目录存在：
+
+```gitignore
+/build/darwin/*
+!/build/darwin/.gitkeep
+```
+
+> 别再改成「只传 `-windowsfilename`」——那会落到 CLI 默认路径而失败。
+> 产物 `icons.icns` 对 Windows 构建无用，已被忽略。
 
 #### 已删除的无用任务
 
