@@ -214,6 +214,25 @@ Wails3 CLI 装在 `%USERPROFILE%\go\bin`，确认该目录在 `PATH` 中，并**
 `go.sum` 被 `.gitignore` 忽略（不在仓库里），首次构建时由 `go mod tidy` 自动重新生成；
 `npm install` 也需要联网下载依赖。之后即可离线构建。
 
+**设置 / TODO 页样式不生效（只有首页正常）**
+
+这是 `vite` 版本漂移导致的 UnoCSS HMR 回归（上游 [unocss#5331](https://github.com/unocss/unocss/issues/5331)）：
+动态导入的路由页新出现的工具类无法送达浏览器（服务端已生成，浏览器拿不到）。
+
+**本项目已修复**：`frontend/package.json` 把 `vite` 锁为 `~8.2.2`，且 **`frontend/package-lock.json` 已纳入 git**，
+正常 `npm install` 会精确装到 8.2.2。
+
+若仍遇到，请核对版本：
+
+```powershell
+node -e "console.log(require('./frontend/node_modules/vite/package.json').version)"
+```
+
+- 若是 **8.3.x** → 删除 `frontend/node_modules` 后重新 `npm install`（lock 已锁版本）。
+- 若已是 **8.2.2** 仍异常 → 完整刷新页面；dev server 有内存缓存，必要时重启 `wails3 dev`。
+
+> 注意：**不要把 `frontend/package-lock.json` 加进 `.gitignore`**，否则版本会漂回 8.3.x 并复现该问题。
+
 **列表能显示但数据为空 / 前端报错**
 
 只跑 `npm run dev` 时没有 Wails 后端，属正常现象，请用 `wails3 dev`。

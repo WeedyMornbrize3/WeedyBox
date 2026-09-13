@@ -14,6 +14,30 @@
 
 > 本机 `task` CLI 未安装，直接用 `wails3 build` / `wails3 task <name>` 即可（`wails3 task` 内置 task 运行器）。
 
+### ⚠️ 依赖版本必须锁定（`package-lock.json` 已纳入版本控制）
+
+**`frontend/package-lock.json` 不能加回 `.gitignore`。** 忽略它会让每次 clone 都重新解析依赖版本，
+实测曾把 `vite` 装成 **8.3.0**，触发 UnoCSS 的 HMR 回归：
+
+> 症状：`wails3 dev` 下**动态导入的路由页（设置 / TODO）样式不生效**——
+> 服务端已生成 CSS，但浏览器拿不到。首页等初始加载的样式正常。
+> 上游 issue：[unocss#5331](https://github.com/unocss/unocss/issues/5331)
+> （Vite 8.3 改用原始模块 URL 注册 HMR，UnoCSS 仍发编码路径 `/@id/__x00__/__uno.css`，
+> `hotModulesMap.get()` 找不到 → 静默跳过更新）
+
+因此：
+
+| 约束 | 值 | 原因 |
+| --- | --- | --- |
+| `vite` | `~8.2.2`（用 `~` 锁次版本） | 8.3.0 有上述回归，与 UnoCSS 66.x 不兼容 |
+| `unocss` 系列 | `^66.8.1` | 66.10.2 在此场景下同样受影响 |
+| `frontend/package-lock.json` | **纳入 git** | 保证 clone 后版本完全可复现 |
+
+判定方法：`node -e "console.log(require('./node_modules/vite/package.json').version)"`，
+或直接看 `frontend/node_modules/vite/package.json`。**出现样式缺失时先核对 vite 是否为 8.2.2。**
+
+临时规避：完整刷新页面（重载）可恢复；dev server 有内存缓存，必要时需重启 dev server。
+
 ### 只构建 Windows
 
 `Taskfile.yml` 的 `includes` **只挂载了 `common` 与 `windows`**，`GOOS` 固定为 `windows`：
