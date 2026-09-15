@@ -236,10 +236,3 @@ node -e "console.log(require('./frontend/node_modules/vite/package.json').versio
 **列表能显示但数据为空 / 前端报错**
 
 只跑 `npm run dev` 时没有 Wails 后端，属正常现象，请用 `wails3 dev`。
-
-## 说明
-
-本项目为个人练手 / 学习项目，Wails v3 本身仍处于 **beta** 阶段，API 可能变动。
-
-> 本文档中的安装与运行指令已在**全新 clone** 中完整实测通过：
-> `npm install` → `wails3 build`（产出 `bin/weedybox.exe`）→ `wails3 dev`（Vite 起在 9245、WebView2 窗口正常打开、数据库服务注册成功）。
