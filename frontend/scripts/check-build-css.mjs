@@ -62,6 +62,42 @@ for (const [name, needle] of layout) {
 }
 console.log(layoutBad === 0 ? `OK: 布局链与无障碍 ${layout.length} 项断言全部通过` : `${layoutBad} 项布局断言失败`)
 
+// ===== 边框专项断言 =====
+// 回归背景：presetUno 的 preflight 把所有元素重置为 border-width:0; border-style:solid。
+// 因此「只设 border-color」的规则会让边框彻底不显示；若元素另有非零 border-width，
+// 样式还会退回初始值 outset，渲染成 3D 伪立体边框。
+// 所以每条 border-* 规则都必须自带 width + style + color 三件套。
+const borderRules = [
+  ['border-theme', 'border:1px solid var(--color-border)'],
+  ['border-theme-light', 'border:1px solid var(--color-border-light)'],
+  ['border-theme-dark', 'border:1px solid var(--color-border-dark)'],
+  ['border-brand', 'border:1px solid var(--color-primary)'],
+]
+let borderBad = 0
+for (const [name, needle] of borderRules) {
+  if (!css.includes(needle)) { borderBad++; console.log(`  MISSING  ${name}  -> 期望 ${needle}`) }
+}
+// 反向断言：任何 CSS 变量色值都不应被塞进 border-color 的简写位置
+const shorthandInColor = css.match(/border-color:1px\s+solid/g)
+if (shorthandInColor) { borderBad++; console.log(`  ❌ 有 ${shorthandInColor.length} 处 border-color 收到简写值（非法 CSS）`) }
+console.log(borderBad === 0 ? `OK: 边框规则 ${borderRules.length} 项均自带 width+style+color` : `${borderBad} 项边框断言失败`)
+
+// 单侧边框：必须显式把其余边归零，否则会渲染成四边都有框
+const sideRules = [
+  ['border-b-theme-light', 'border-bottom:1px solid var(--color-border-light)', ['border-top:0', 'border-right:0', 'border-left:0']],
+  ['border-r-sidebar', 'border-right:2px solid var(--sidebar-border)', ['border-top:0', 'border-bottom:0', 'border-left:0']],
+  ['border-l-theme-light', 'border-left:2px solid var(--color-border-light)', ['border-top:0', 'border-right:0', 'border-bottom:0']],
+]
+let sideBad = 0
+for (const [name, own, zeros] of sideRules) {
+  if (!css.includes(own)) { sideBad++; console.log(`  MISSING  ${name} -> 期望含 ${own}`) }
+  for (const z of zeros) {
+    // 同一规则块内应出现归零声明（minify 后形如 border-right:0）
+    if (!css.includes(z)) { sideBad++; console.log(`  MISSING  ${name} 缺少 ${z}（会退化成四边框）`) }
+  }
+}
+console.log(sideBad === 0 ? `OK: 单侧边框 ${sideRules.length} 条均显式置零其余边` : `${sideBad} 项单侧边框断言失败`)
+
 
 // emoji 是否还残留在产物 JS 里（结构性图标应为 0）
 const jsFiles = readdirSync(assets).filter(f => f.endsWith('.js'))

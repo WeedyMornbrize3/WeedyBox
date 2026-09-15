@@ -50,16 +50,29 @@ export default defineConfig({
     ['bg-brand', { 'background-color': 'var(--color-primary)' }],
     ['bg-brand-hover', { 'background-color': 'var(--color-primary-hover)' }],
     ['bg-brand-light', { 'background-color': 'var(--color-primary-light)' }],
-    ['border-brand', { 'border-color': 'var(--color-primary)' }],
 
-    // 边框
-    // ⚠️ 曾经写成 { 'border-color': '1px solid …' }，把简写值塞进了 border-color，
-    //    产出 `.border-theme-light{border-color:1px solid …}` —— 非法 CSS，整条声明作废。
-    //    单值映射一律只给颜色；需要整条边框时用 `border`（见 border-theme）。
+    // ===== 边框 =====
+    // ⚠️ 两条血泪教训，改这里的规则前务必先读：
+    //
+    // 1) 绝不能把简写值塞进 `border-color`。
+    //    曾写成 { 'border-color': '1px solid …' }，产出
+    //    `.border-theme-light{border-color:1px solid …}` —— 非法声明，整条作废。
+    //
+    // 2) 绝不能只给 `border-color`（即使值是合法颜色）。
+    //    presetUno 的 preflight 会把所有元素重置为
+    //      *,::before,::after { border-width: 0; border-style: solid }
+    //    于是「只设颜色」的规则拿不到任何宽度 → 计算值 border-width: 0px、样式 none，
+    //    边框完全不显示；更糟的是，当同一元素另有非零 `border-width` 时，
+    //    border-style 会退回浏览器初始值 `outset`，渲染出 1.6px 的 3D 伪立体边框
+    //    （实测 chip-active: `1.6px outset rgb(45,212,191)`）。
+    //
+    // 结论：**每条边框规则都必须自带 width + style + color 三件套**，
+    // 即一律用 `border` 简写，绝不单独用 `border-color`。
+    // 需要「底色/主题色 + 指定线宽」时，把本规则写在后面覆盖简写（CSS 按出现顺序取胜）。
     ['border-theme', { 'border': '1px solid var(--color-border)' }],
-    ['border-theme-light', { 'border-color': 'var(--color-border-light)' }],
-    ['border-theme-dark', { 'border-color': 'var(--color-border-dark)' }],
-    ['border-sidebar', { 'border-color': 'var(--sidebar-border)' }],
+    ['border-theme-light', { 'border': '1px solid var(--color-border-light)' }],
+    ['border-theme-dark', { 'border': '1px solid var(--color-border-dark)' }],
+    ['border-brand', { 'border': '1px solid var(--color-primary)' }],
 
     // 优先级语义色（0 低 / 1 中 / 2 高）
     ['text-priority-low', { 'color': 'var(--color-text-tertiary)' }],
@@ -68,8 +81,17 @@ export default defineConfig({
     ['bg-priority-low', { 'background-color': 'var(--color-text-tertiary)' }],
     ['bg-priority-medium', { 'background-color': 'var(--color-warning)' }],
     ['bg-priority-high', { 'background-color': 'var(--color-danger)' }],
-    ['border-priority-medium', { 'border-color': 'var(--color-warning)' }],
-    ['border-priority-high', { 'border-color': 'var(--color-danger)' }],
+    ['border-priority-medium', { 'border': '1px solid var(--color-warning)' }],
+    ['border-priority-high', { 'border': '1px solid var(--color-danger)' }],
+
+    // ===== 单侧边框（显式设定四边，避免被整框简写重置）=====
+    // 为什么必须显式写全四边：一条 `border: 1px solid X` 的整框规则会把四边宽度都重置，
+    // 于是「border-b + 整框颜色类」会变成四边都有框。
+    // 这几条按 CSS 出现顺序排在本文件更后面 → 覆盖任何整框规则，
+    // 真正实现「只有某一边有线」；其余边明确归零，不依赖声明顺序的巧合。
+    ['border-b-theme-light', { 'border-bottom': '1px solid var(--color-border-light)', 'border-top': '0', 'border-right': '0', 'border-left': '0' }],
+    ['border-r-sidebar', { 'border-right': '2px solid var(--sidebar-border)', 'border-top': '0', 'border-bottom': '0', 'border-left': '0' }],
+    ['border-l-theme-light', { 'border-left': '2px solid var(--color-border-light)', 'border-top': '0', 'border-right': '0', 'border-bottom': '0' }],
 
     // 功能色
     ['text-success', { 'color': 'var(--color-success)' }],
@@ -115,8 +137,10 @@ export default defineConfig({
 
     // ---------- 卡片 ----------
     // Flat：用 1px 边框 + 圆角区分层级，不用投影。
-    'card': 'bg-card rounded-xl border border-theme p-5',
-    'card-flat': 'bg-card rounded-xl border border-theme',
+    // 边框一律由 `border-theme` 这类「自带 width+style+color」的规则提供，
+    // 不再依赖通用 `border` 类去补宽度（那正是边框消失的成因）。
+    'card': 'bg-card rounded-xl border-theme p-5',
+    'card-flat': 'bg-card rounded-xl border-theme',
     'card-hover': 'card hover:border-brand transition-colors duration-200',
 
     // ---------- 按钮 ----------
@@ -126,12 +150,12 @@ export default defineConfig({
     'input-theme': 'bg-secondary rounded-lg px-3 py-2 text-primary placeholder-tertiary border-theme focus:border-brand transition-colors duration-200',
 
     // ---------- 顶部栏 ----------
-    'titlebar': 'fixed top-0 left-0 right-0 h-[30px] flex items-center justify-between px-3 bg-base text-secondary z-[1100] select-none border-b border-theme-light',
+    'titlebar': 'fixed top-0 left-0 right-0 h-[30px] flex items-center justify-between px-3 bg-base text-secondary z-[1100] select-none border-b-theme-light',
     'titlebar-btn': 'flex-center bg-transparent border-none text-tertiary w-7 h-7 rounded cursor-pointer transition-colors duration-200 leading-none p-0 hover:bg-hover hover:text-primary',
     'titlebar-btn-close': 'flex-center bg-transparent border-none text-tertiary w-7 h-7 rounded cursor-pointer transition-colors duration-200 leading-none p-0 hover:bg-danger hover:text-white',
 
     // ---------- 侧边栏 ----------
-    'sidebar': 'fixed left-0 top-0 h-screen bg-sidebar text-primary transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] flex flex-col z-[1000] overflow-hidden select-none border-r-2 border-sidebar will-change-width',
+    'sidebar': 'fixed left-0 top-0 h-screen bg-sidebar text-primary transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] flex flex-col z-[1000] overflow-hidden select-none border-r-sidebar will-change-width',
     'sidebar-header': 'flex items-center px-5 gap-3 cursor-pointer min-h-[72px] flex-shrink-0 transition-colors duration-150 hover:bg-hover',
     'logo-icon': 'flex-shrink-0 text-brand flex-center',
     'logo-text': 'text-lg font-semibold text-primary whitespace-nowrap transition-opacity duration-250 ease-in overflow-hidden tracking-[0.5px]',
@@ -155,6 +179,8 @@ export default defineConfig({
     'filter-chips': 'flex flex-nowrap gap-1',
     'chip': 'px-2.5 py-1 rounded-md cursor-pointer text-xs whitespace-nowrap bg-transparent text-secondary border-theme-light hover:bg-hover hover:text-primary transition-colors duration-200 flex items-center gap-1',
     // 选中态：品牌色文字 + 边框 + 卡片底色（不靠颜色单独表意，同时有边框与字重变化）
+    // ⚠️ 必须用 !border-brand（自带 1px solid）而不是 !border-color-brand：
+    //    只改颜色会让 border-style 退回 outset，渲染成 1.6px 的 3D 立体边框。
     'chip-active': '!bg-brand-light !text-brand !border-brand font-medium',
 
     // ---------- TODO 列表 ----------
@@ -163,17 +189,17 @@ export default defineConfig({
     // 串成一条 shortcut 时，UnoCSS 会丢弃链条中后段的部分声明——产物 CSS 里
     // .todo-check 只剩 :checked/:hover 两条，width/appearance/焦点环全部静默消失。
     // 因此列表行的样式直接写在组件模板的 class 里（见 TodoItem.vue），便于逐一核对产物。
-    'todo-desc-block': 'mt-1 text-xs leading-relaxed text-tertiary whitespace-pre-wrap break-words border-l-2 border-theme-light pl-3 transition-colors duration-200',
+    'todo-desc-block': 'mt-1 text-xs leading-relaxed text-tertiary whitespace-pre-wrap break-words border-l-theme-light pl-3 transition-colors duration-200',
 
     // ---------- 设置页 ----------
     'settings-page': 'max-w-[700px] mx-auto w-full',
     'settings-title': 'text-2xl font-semibold text-primary mb-5 tracking-[0.5px]',
     'settings-container': 'flex flex-col gap-5',
-    'settings-section': 'bg-card rounded-xl border border-theme p-4',
-    'section-header': 'flex items-center gap-2.5 mb-3 pb-2.5 border-b border-theme-light',
+    'settings-section': 'bg-card rounded-xl border-theme p-4',
+    'section-header': 'flex items-center gap-2.5 mb-3 pb-2.5 border-b-theme-light',
     'section-icon': 'text-brand flex-center',
     'section-title': 'text-[15px] font-semibold text-primary m-0',
-    'settings-item': 'flex items-center justify-between py-2.5 border-b border-theme-light last:border-none last:pb-0',
+    'settings-item': 'flex items-center justify-between py-2.5 border-b-theme-light last:border-none last:pb-0',
     'item-info': 'flex-1 flex flex-col gap-0.5 min-w-0',
     'item-label': 'text-sm font-medium text-primary',
     'item-description': 'text-xs text-tertiary',
