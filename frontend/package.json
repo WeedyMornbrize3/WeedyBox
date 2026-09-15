@@ -7,7 +7,9 @@
     "dev": "vite",
     "build:dev": "vue-tsc && vite build --minify false --mode development",
     "build": "vue-tsc && vite build --mode production",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:tokens": "node scripts/check-unocss-tokens.mjs",
+    "check:build": "node scripts/check-build-css.mjs"
   },
   "dependencies": {
     "@wailsio/runtime": "^3.0.0-beta.13",

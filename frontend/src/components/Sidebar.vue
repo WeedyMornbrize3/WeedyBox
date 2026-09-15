@@ -7,10 +7,8 @@
     <!-- Logo/标题区域 -->
     <div class="sidebar-header" @click="sidebarStore.toggleSidebar">
       <div class="logo-icon">
-        <svg viewBox="0 0 24 24" width="28" height="28">
-          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" 
-                stroke="currentColor" fill="none" stroke-width="1.5"/>
-        </svg>
+        <!-- 手绘 svg → 统一图标族（lucide 线性 2px），与全站图标风格一致 -->
+        <span class="i-lucide-package icon-lg" aria-hidden="true" />
       </div>
       <span 
         v-show="!sidebarStore.isCollapsed" 
@@ -28,7 +26,7 @@
         :class="{ 'nav-item-active': currentRoute === item.path }"
         @click="navigateTo(item.path)"
       >
-        <span class="nav-icon">{{ item.icon }}</span>
+        <span class="nav-icon icon-md" :class="item.icon" aria-hidden="true" />
         <span 
           v-show="!sidebarStore.isCollapsed" 
           class="nav-text"
@@ -52,7 +50,7 @@
         :class="{ 'nav-item-active': currentRoute === item.path }"
         @click="navigateTo(item.path)"
       >
-        <span class="nav-icon">{{ item.icon }}</span>
+        <span class="nav-icon icon-md" :class="item.icon" aria-hidden="true" />
         <span 
           v-show="!sidebarStore.isCollapsed" 
           class="nav-text"
@@ -84,15 +82,17 @@ interface MenuItem {
 }
 
 // 上导航菜单项（从上到下排列）
+// icon 存 UnoCSS 图标类名（presetIcons 按需内联），不再使用 emoji——
+// emoji 依赖字体、跨平台渲染不一致，且无法用主题变量控色。
 const menuItemsUp = ref<MenuItem[]>([
-  { path: '/', label: '首页', icon: '🏠' },
-  { path: '/test', label: '测试', icon: 'ℹ️' },
-  { path: '/todo', label: 'TODO', icon: '📒' }
+  { path: '/', label: '首页', icon: 'i-lucide-house' },
+  { path: '/test', label: '测试', icon: 'i-lucide-flask-conical' },
+  { path: '/todo', label: 'TODO', icon: 'i-lucide-list-todo' }
 ])
 
 // 下导航菜单项（从下到上排列）
 const menuItemsDown = ref<MenuItem[]>([
-  { path: '/settings', label: '设置', icon: '⚙️' }
+  { path: '/settings', label: '设置', icon: 'i-lucide-settings' }
 ])
 
 const router = useRouter()

@@ -1,8 +1,10 @@
 <!-- frontend/src/components/todo/FilterBar.vue -->
 <!-- 筛选栏：完成状态 / 优先级 / 创建时间。默认只看未完成。
-     横向排列，放不下时横向滚动（scrollbar-theme 在 global.css 中定义，不能写进 shortcut） -->
+     横向排列，放不下时横向滚动（scrollbar-theme 定义在 global.css，不能写进 UnoCSS shortcut）。 -->
 <template>
-  <div class="filter-bar scrollbar-theme">
+  <div class="filter-bar">
+    <span class="i-lucide-list-filter icon-sm text-tertiary flex-shrink-0" aria-hidden="true" />
+
     <FilterChipGroup
       v-model="filters.completed"
       label="状态"
@@ -21,10 +23,11 @@
       :options="TIME_OPTIONS"
     />
 
-    <!-- 结果计数 + 重置：横向排列下贴在最右侧（随内容一起横向滚动） -->
+    <!-- 计数 + 重置：横向滚动时贴在最右侧 -->
     <div class="ml-auto flex items-center gap-2 flex-shrink-0">
-      <span class="text-xs text-tertiary whitespace-nowrap">
-        {{ todoStore.filteredTodos.length }} / {{ todoStore.todos.length }} 条
+      <!-- 计数变化用 aria-live 播报（视觉上就是普通文本，不加动效噪音） -->
+      <span class="text-xs text-tertiary whitespace-nowrap tabular-nums" aria-live="polite">
+        已筛选 {{ todoStore.filteredTodos.length }} / {{ todoStore.todos.length }} 条
       </span>
       <button
         v-if="todoStore.isFilterActive"
@@ -33,7 +36,8 @@
         title="恢复默认筛选"
         @click="todoStore.resetFilters()"
       >
-        ↺ 重置
+        <span class="i-lucide-rotate-ccw icon-xs" aria-hidden="true" />
+        重置
       </button>
     </div>
   </div>

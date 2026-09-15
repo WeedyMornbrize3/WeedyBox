@@ -10,11 +10,15 @@
     <div class="titlebar-left"></div>
 
     <div class="flex items-center gap-1" style="--wails-draggable: no-drag; -webkit-app-region: no-drag">
-      <button class="titlebar-btn" @click="minimize" title="最小化">─</button>
-      <button class="titlebar-btn" @click="toggleMaximize" title="最大化/还原">
-        {{ isMaximised ? '⧉' : '☐' }}
+      <button class="titlebar-btn" @click="minimize" title="最小化" aria-label="最小化窗口">
+        <span class="i-lucide-minus icon-sm" aria-hidden="true" />
       </button>
-      <button class="titlebar-btn-close" @click="close" title="关闭">✕</button>
+      <button class="titlebar-btn" @click="toggleMaximize" :title="isMaximised ? '还原' : '最大化'" :aria-label="isMaximised ? '还原窗口' : '最大化窗口'">
+        <span :class="isMaximised ? 'i-lucide-copy icon-sm' : 'i-lucide-square icon-sm'" aria-hidden="true" />
+      </button>
+      <button class="titlebar-btn-close" @click="close" title="关闭" aria-label="关闭窗口">
+        <span class="i-lucide-x icon-sm" aria-hidden="true" />
+      </button>
     </div>
   </header>
 </template>

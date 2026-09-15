@@ -1,145 +1,120 @@
 <!-- frontend/src/components/todo/TodoItem.vue -->
+<!-- 单条 TODO。
+     结构要点（与旧版的区别）：
+       1. 根元素是 <div> 而不是 <label>——旧版把删除按钮放在 <label> 内部，
+          点删除会先触发 label 的默认行为（切换勾选框），再靠 @click 冒泡语义兜底，
+          行为不可靠；现在勾选框、优先级、标题、删除按钮是同级 flex item。
+       2. 勾选框是可以真正聚焦的原生 input（旧版 w-0 h-0 被完全隐藏，键盘无法操作）。
+       3. 删除按钮用 type="button" + aria-label，点击不冒泡到行本身。 -->
 <template>
-  <label
-    class="todo-item flex flex-col gap-1.5 px-4 py-3 rounded-lg bg-card border-theme hover:border-brand transition-colors cursor-pointer"
+  <div
+    class="group flex items-start gap-3 px-3 py-2.5 rounded-lg bg-card border-theme transition-colors duration-200 hover:border-brand"
     :class="{ 'opacity-60': todo.completed }"
   >
-    <!-- 主行：勾选 + 优先级 + 标题 + 时间 + 删除 -->
-    <div class="flex items-center gap-3 w-full">
-      <input
-        type="checkbox"
-        class="w-0 h-0"
-        :checked="todo.completed"
-        :disabled="isUpdating"
-        @change="emit('toggle', props.todo.id)"
-      />
+    <!-- 勾选框：原生 input 提供语义、键盘与无障碍状态，外观由 .todo-checkbox 绘制。
+         这些 utility 刻意不封装成 shortcut——串联过长的 shortcut 会被 UnoCSS 截断。 -->
+    <input
+      type="checkbox"
+      class="todo-checkbox flex-shrink-0 w-[18px] h-[18px] mt-[2px] rounded-[5px] cursor-pointer appearance-none flex-center text-transparent transition-colors duration-200 border-2 border-theme-dark bg-transparent hover:border-brand checked:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
+      :checked="todo.completed"
+      :disabled="isUpdating"
+      :aria-label="todo.completed ? `标记「${todo.title}」为未完成` : `标记「${todo.title}」为已完成`"
+      @change="emit('toggle', todo.id)"
+    />
 
-      <!-- 优先级标签 -->
-      <span
-        class="w-3 h-3 rounded-full flex-shrink-0"
-        :class="priorityColor"
-        :title="priorityLabel"
-      />
+    <!-- 主内容区：标题主行 + 描述块 -->
+    <div class="flex-1 min-w-0 flex flex-col gap-0.5">
+      <div class="flex items-center gap-2 w-full">
+        <!-- 优先级：图标 + 文本标签（不靠颜色单独表意，色盲用户也能区分） -->
+        <span
+          class="flex items-center gap-1 flex-shrink-0 text-[11px] font-medium whitespace-nowrap"
+          :class="priorityClass"
+          :title="`优先级：${priorityLabel}`"
+        >
+          <span :class="[priorityIcon, 'icon-xs']" aria-hidden="true" />
+          {{ priorityLabel }}
+        </span>
 
-      <!-- 标题：主要信息 -->
-      <span
-        class="flex-1 min-w-0 truncate text-sm font-medium text-primary"
-        :class="{ 'line-through text-tertiary': todo.completed }"
-      >
-        {{ todo.title }}
-      </span>
+        <span
+          class="flex-1 min-w-0 truncate text-sm font-medium"
+          :class="todo.completed ? 'line-through text-tertiary' : 'text-primary'"
+          :title="todo.title"
+        >
+          {{ todo.title }}
+        </span>
 
-      <!-- 时间 -->
-      <span class="text-xs text-tertiary flex-shrink-0 hidden sm:block">
-        {{ formatDate(todo.createdAt) }}
-      </span>
+        <time
+          class="text-xs text-muted flex-shrink-0 whitespace-nowrap"
+          :datetime="todo.createdAt"
+          :title="fullDate"
+        >
+          {{ formatDate(todo.createdAt) }}
+        </time>
+      </div>
 
-      <!-- 删除按钮 - 需要阻止点击冒泡 -->
-      <button
-        class="btn-delete"
-        style="border: 1px"
-        @click="todoStore.deleteTodo(props.todo.id)"
-        title="删除"
-        :disabled="isDeleting"
-      >
-        <span v-if="isDeleting" class="inline-block animate-spin">⟳</span>
-        <span v-else>✕</span>
-      </button>
+      <p v-if="todo.description" class="todo-desc-block group-hover:border-brand">
+        {{ todo.description }}
+      </p>
     </div>
 
-    <!-- 描述：次要信息，缩进对齐标题并带左侧竖线 -->
-    <p
-      v-if="todo.description"
-      class="todo-desc"
-      :class="{ 'line-through': todo.completed }"
+    <!-- 删除：图标按钮，带可访问名称。默认半透明以降低视觉噪音，
+         悬停/键盘聚焦时完全不透明——不靠 hover 才可发现。 -->
+    <button
+      type="button"
+      class="btn-delete opacity-40 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+      :disabled="isDeleting"
+      :aria-label="`删除「${todo.title}」`"
+      title="删除"
+      @click.stop="emit('delete', todo.id)"
     >
-      {{ todo.description }}
-    </p>
-  </label>
+      <span :class="isDeleting ? 'i-lucide-loader-circle icon-sm spin' : 'i-lucide-trash-2 icon-sm'" aria-hidden="true" />
+    </button>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import type { Todo } from '../../../bindings/WeedyBox/internal/model'
-import { useTodoStore } from '../../stores/todoStore'
 
-const props = defineProps<{ //只读属性
+const props = defineProps<{
   todo: Todo
+  isUpdating?: boolean
+  isDeleting?: boolean
 }>()
 
 const emit = defineEmits<{
   toggle: [id: number]
   delete: [id: number]
-  error: [error: Error]
 }>()
 
-const todoStore = useTodoStore()
-const isUpdating = ref(false)
-const isDeleting = ref(false)
+// 优先级 0 低 / 1 中 / 2 高：颜色 + 图标 + 文字三重编码
+const PRIORITY_MAP: Record<number, { label: string; icon: string; className: string }> = {
+  0: { label: '低', icon: 'i-lucide-signal-low', className: 'text-priority-low' },
+  1: { label: '中', icon: 'i-lucide-signal-medium', className: 'text-priority-medium' },
+  2: { label: '高', icon: 'i-lucide-signal-high', className: 'text-priority-high' },
+}
 
-// ===== Computed =====
-const priorityColor = computed(() => {
-  const colors: Record<number, string> = {
-    0: 'bg-green-500',
-    1: 'bg-yellow-500',
-    2: 'bg-red-500',
-  }
-  return colors[props.todo.priority] || 'bg-gray-500'
-})
+const meta = computed(() => PRIORITY_MAP[props.todo.priority] ?? PRIORITY_MAP[1])
+const priorityLabel = computed(() => meta.value.label)
+const priorityIcon = computed(() => meta.value.icon)
+const priorityClass = computed(() => meta.value.className)
 
-const priorityLabel = computed(() => {
-  const labels: Record<number, string> = {
-    0: '低优先级',
-    1: '中优先级',
-    2: '高优先级',
-  }
-  return labels[props.todo.priority] || '未知'
-})
+const fullDate = computed(() => new Date(props.todo.createdAt).toLocaleString('zh-CN'))
 
-// ===== Methods =====
-const formatDate = (dateStr: string) => {
+// 相对时间：只处理过去时间，未来时间（时钟偏差）按「刚刚」处理
+function formatDate(dateStr: string): string {
   const date = new Date(dateStr)
-  const now = new Date()
-  const diff = now.getTime() - date.getTime()
-  
-  if (diff < 24 * 60 * 60 * 1000) {
-    return '今天'
-  }
-  if (diff < 48 * 60 * 60 * 1000) {
-    return '昨天'
-  }
-  if (diff < 7 * 24 * 60 * 60 * 1000) {
-    return `${Math.floor(diff / (24 * 60 * 60 * 1000))}天前`
-  }
-  return date.toLocaleDateString('zh-CN')
-}
+  const time = date.getTime()
+  if (Number.isNaN(time)) return ''
 
+  const day = 24 * 60 * 60 * 1000
+  const diff = Date.now() - time
+
+  if (diff < 60 * 1000) return '刚刚'
+  if (diff < 60 * 60 * 1000) return `${Math.floor(diff / (60 * 1000))} 分钟前`
+  if (diff < day) return `${Math.floor(diff / (60 * 60 * 1000))} 小时前`
+  if (diff < 2 * day) return '昨天'
+  if (diff < 7 * day) return `${Math.floor(diff / day)} 天前`
+  return `${date.getMonth() + 1} 月 ${date.getDate()} 日`
+}
 </script>
-
-<style scoped>
-/* 描述：小字号 + 弱色 + 左侧竖线，与标题形成层级区分 */
-.todo-desc {
-  margin: 0;
-  /* 24px = 勾选框(0) + gap3(12) + 圆点12 —— 与标题起始位置对齐 */
-  padding-left: 24px;
-  font-size: 0.75rem;
-  line-height: 1.5;
-  color: var(--color-text-tertiary);
-  white-space: pre-wrap;
-  word-break: break-word;
-  border-left: 2px solid var(--color-border-light);
-  transition: border-color 0.2s ease;
-}
-
-.todo-item:hover .todo-desc {
-  border-left-color: var(--color-primary);
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-.animate-spin {
-  animation: spin 1s linear infinite;
-}
-</style>

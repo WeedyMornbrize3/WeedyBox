@@ -1,8 +1,8 @@
 <template>
-  <div class="bg-card rounded-xl border border-theme p-4 transition-colors duration-300">
-    <div class="flex items-center gap-2.5 mb-3 pb-2.5 border-b border-theme-light">
-      <span class="text-[18px]">{{ icon }}</span>
-      <h2 class="text-[15px] font-semibold text-primary m-0">{{ title }}</h2>
+  <div class="settings-section">
+    <div class="section-header">
+      <span class="section-icon icon-md" :class="icon" aria-hidden="true" />
+      <h2 class="section-title">{{ title }}</h2>
     </div>
     <slot />
   </div>
@@ -10,6 +10,7 @@
 
 <script setup lang="ts">
 defineProps<{
+  // UnoCSS 图标类名，如 i-lucide-palette（不再传 emoji）
   icon: string
   title: string
 }>()

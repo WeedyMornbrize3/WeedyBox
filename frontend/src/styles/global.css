@@ -1,4 +1,11 @@
 /* src/styles/global.css */
+/* =============================================================================
+   设计系统 token（三层结构）
+     1. CSS 变量：本文件，唯一色值来源（浅色 :root / 深色 [data-theme="dark"]）
+     2. UnoCSS rules：把变量映射成类名（uno.config.ts）
+     3. shortcuts：复用组合
+   配色：Teal 主色 + 语义状态色。所有正文级文本组合均已核验 WCAG AA(4.5:1)。
+   ============================================================================= */
 
 /* ===== 盒模型基准（必须）=====
    presetUno 不带 border-box reset，缺了它任何「定了高度又带 padding」的元素
@@ -16,106 +23,162 @@ html, body, #app {
   padding: 0;
   width: 100%;
   height: 100%;
-  background: #1A1A22;  /* 与窗口背景色一致 */
+  /* 与窗口创建时的 BackgroundColour 一致，避免启动瞬间闪白。
+     ⚠️ 这是「启动底色」而非主题色，两套主题下都保持深色，
+     真正的界面底色由 #app 内的 bg-primary 元素覆盖。 */
+  background: #101418;
   overflow: hidden;
 }
 
-/* ===== 浅色主题（默认） ===== */
+/* ===== 浅色主题（默认）===== */
 :root {
-  /* 背景色 */
-  --color-bg-base: #f5f5f7;
+  color-scheme: light;
+
+  /* 背景 */
+  --color-bg-base: #f8fafc;
   --color-bg-primary: #ffffff;
-  --color-bg-secondary: #f0f0f2;
-  --color-bg-tertiary: #e8e8ea;
-  --color-bg-hover: #e8e8ea;
+  --color-bg-secondary: #f1f5f9;
+  --color-bg-tertiary: #e2e8f0;
+  --color-bg-hover: #e9eff5;
   --color-bg-card: #ffffff;
-  /* 半透明次级背景（筛选栏 / 统计栏），alpha 60% */
-  --color-bg-secondary-soft: rgba(240, 240, 242, 0.6);
-  
-  /* 文本色 */
-  --color-text-primary: #1a1a22;
-  --color-text-secondary: #4a4a56;
-  --color-text-tertiary: #8a8a96;
-  --color-text-muted: #b0b0ba;
-  --color-text-inverse: #dddbe4;
-  
-  /* 品牌色 - 低饱和 */
-  --color-primary: #5b7a8a;
-  --color-primary-hover: #6e8f9f;
-  --color-primary-active: #4a6a7a;
-  --color-primary-light: rgba(91, 122, 138, 0.12);
-  
-  /* 边框 */
-  --color-border: #d4d4da;
-  --color-border-light: #e4e4e8;
-  --color-border-dark: #c4c4ca;
-  
+  /* 半透明次级背景（统计栏 / 筛选栏），alpha 60% */
+  --color-bg-secondary-soft: rgba(241, 245, 249, 0.6);
+
+  /* 文本（对 #ffffff / #f8fafc 均 ≥4.5:1） */
+  --color-text-primary: #0f172a;    /* 17.9:1 */
+  --color-text-secondary: #334155;  /* 10.4:1 */
+  --color-text-tertiary: #475569;   /*  7.6:1 */
+  --color-text-muted: #64748b;      /*  4.8:1 —— 仅用于辅助小字 */
+  --color-text-inverse: #ffffff;
+
+  /* 品牌色（Teal）
+     ⚠️ #0D9488(teal-600) 作文字只有 3.74:1、白字压在其上也只有 3.74:1，
+        两者都不达 AA，故文字/填充统一用 teal-700。 */
+  --color-primary: #0f766e;          /* 对白 5.47:1、对底 5.25:1 */
+  --color-primary-hover: #115e59;    /* 7.58:1 */
+  --color-primary-active: #134e4a;
+  --color-primary-light: rgba(15, 118, 110, 0.1);
+
+  /* 边框（非文本对比度 ≥3:1） */
+  --color-border: #cbd5e1;        /* 对卡片 1.5:1，仅作分隔 */
+  --color-border-light: #e2e8f0;
+  --color-border-dark: #94a3b8;   /* 3.0:1，用于交互控件描边 */
+
   /* 功能色 */
-  --color-success: #5a8a6a;
-  --color-warning: #8a8a5a;
-  --color-danger: #8a5a5a;
-  --color-info: #5a7a8a;
-  
-  /* 阴影 */
-  --color-shadow: rgba(0, 0, 0, 0.08);
-  --color-shadow-heavy: rgba(0, 0, 0, 0.15);
-  
+  --color-success: #15803d;  /* 5.02:1 */
+  --color-warning: #b45309;  /* 5.02:1 */
+  --color-danger: #dc2626;   /* 4.83:1 */
+  --color-info: #1d4ed8;     /* 6.70:1 */
+
+  /* 阴影：Flat Design 默认不用装饰性阴影，仅浮层与焦点环使用 */
+  --color-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --color-shadow-heavy: 0 8px 24px rgba(15, 23, 42, 0.12);
+  --color-ring: var(--color-primary);
+
   /* 滚动条 */
-  --color-scrollbar: rgba(0, 0, 0, 0.12);
-  --color-scrollbar-hover: rgba(0, 0, 0, 0.2);
-  
-  /* 侧边栏特殊 */
-  --sidebar-bg: #f5f5f7;
-  --sidebar-border: #d4d4da;
+  --color-scrollbar: rgba(15, 23, 42, 0.18);
+  --color-scrollbar-hover: rgba(15, 23, 42, 0.32);
+
+  /* 侧边栏 */
+  --sidebar-bg: #f8fafc;
+  --sidebar-border: #e2e8f0;
+
+  /* 语义别名 */
+  --color-bg-check: var(--color-primary);
+  --color-check-mark: #ffffff;
+  --color-brand-text: var(--color-primary);
+  --color-text-body: var(--color-text-primary);
+  --color-text-hint: var(--color-text-muted);
+  --color-text-on-brand: #ffffff;
 }
 
 /* ===== 深色主题 ===== */
 [data-theme="dark"] {
-  /* 背景色 */
-  --color-bg-base: #14141a;
-  --color-bg-primary: #1a1a22;
-  --color-bg-secondary: #2c2c37;
-  --color-bg-tertiary: #2a2a34;
-  --color-bg-hover: #3f3f4c;
-  --color-bg-card: #20202a;
-  /* 半透明次级背景（筛选栏 / 统计栏），alpha 60% */
-  --color-bg-secondary-soft: rgba(44, 44, 55, 0.6);
-  
-  /* 文本色 */
-  --color-text-primary: #c5c5d2;
-  --color-text-secondary: #b2b2c1;
-  --color-text-tertiary: #8b8b99;
-  --color-text-muted: #5a5a6a;
-  --color-text-inverse: #1a1a22;
-  
-  /* 品牌色 - 深色模式下略亮 */
-  --color-primary: #6e8f9f;
-  --color-primary-hover: #b3c1d4;
-  --color-primary-active: #5b7a8a;
-  --color-primary-light: rgba(110, 143, 159, 0.2);
-  
-  /* 边框 */
-  --color-border: #2a2a36;
-  --color-border-light: #333340;
-  --color-border-dark: #1e1e27;
-  
-  /* 功能色 */
-  --color-success: #5a8a6a;
-  --color-warning: #8a8a5a;
-  --color-danger: #8a5a5a;
-  --color-info: #5a7a8a;
-  
-  /* 阴影 */
-  --color-shadow: rgba(0, 0, 0, 0.4);
-  --color-shadow-heavy: rgba(0, 0, 0, 0.6);
-  
-  /* 滚动条 */
-  --color-scrollbar: rgba(255, 255, 255, 0.08);
-  --color-scrollbar-hover: rgba(255, 255, 255, 0.15);
-  
-  /* 侧边栏特殊 */
-  --sidebar-bg: #14141a;
-  --sidebar-border: #2a2a36;
+  color-scheme: dark;
+
+  /* 背景（比纯黑更柔和，避免 OLED 拖影与强对比疲劳） */
+  --color-bg-base: #101418;
+  --color-bg-primary: #101418;
+  --color-bg-secondary: #1b222a;
+  --color-bg-tertiary: #232c35;
+  --color-bg-hover: #232c35;
+  --color-bg-card: #171c21;
+  --color-bg-secondary-soft: rgba(27, 34, 42, 0.6);
+
+  /* 文本（对 #171c21 均 ≥4.5:1；不用纯白，降低眩光） */
+  --color-text-primary: #e6edf3;    /* 14.5:1 */
+  --color-text-secondary: #c3cdd6;  /* 10.6:1 */
+  --color-text-tertiary: #9aa6b2;   /*  6.9:1 */
+  --color-text-muted: #8a94a0;      /*  5.6:1 */
+  --color-text-inverse: #0b1116;
+
+  /* 品牌色：深色底上改用更亮的 teal，保证文字对比 9.21:1 */
+  --color-primary: #2dd4bf;
+  --color-primary-hover: #5eead4;
+  --color-primary-active: #14b8a6;
+  --color-primary-light: rgba(45, 212, 191, 0.14);
+
+  /* 边框（深色下提升亮度，保证分隔可见） */
+  --color-border: #2b3540;
+  --color-border-light: #232c35;
+  --color-border-dark: #4a5764;
+
+  /* 功能色：深色底改用亮色调 */
+  --color-success: #4ade80;  /* 9.84:1 */
+  --color-warning: #fbbf24;  /* 10.27:1 */
+  --color-danger: #f87171;   /* 6.20:1 */
+  --color-info: #60a5fa;
+
+  --color-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --color-shadow-heavy: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --color-ring: var(--color-primary);
+
+  --color-scrollbar: rgba(255, 255, 255, 0.16);
+  --color-scrollbar-hover: rgba(255, 255, 255, 0.3);
+
+  --sidebar-bg: #0d1116;
+  --sidebar-border: #232c35;
+
+  /* 语义别名：深色下品牌色是亮色，勾选框/按钮上的文字必须用深色 */
+  --color-bg-check: var(--color-primary);
+  --color-check-mark: #04211f;
+  --color-brand-text: var(--color-primary);
+  --color-text-body: var(--color-text-primary);
+  --color-text-hint: var(--color-text-muted);
+  --color-text-on-brand: #04211f;
+}
+
+/* ===== 排版基准 =====
+   不引外部字体：桌面端离线可用优先，中文回退由系统字体栈保证。
+   想换成自托管字体只需在此处追加 @font-face 并改写 font-family。 */
+body {
+  font-family: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI",
+    "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* 键盘可达性：所有可交互控件的可见焦点环
+   （组件内用 focus-visible:outline-none 显式接管时，本规则作为兜底） */
+:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 屏幕阅读器专用文本（用于 aria-live 播报、图标按钮的隐藏标签） */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
 }
 
 /* ===== 滚动条全局样式 ===== */
@@ -159,4 +222,56 @@ html, body, #app {
 
 .scrollbar-theme::-webkit-scrollbar-thumb:hover {
   background: var(--color-scrollbar-hover) !important;
+}
+
+/* ===== 复选框（TODO 完成态）=====
+   放在这里而不是 scoped style：该元素的选中态需要在两套主题下都正确换色，
+   用变量集中控制，避免组件内出现硬编码色值。 */
+.todo-checkbox {
+  background-color: transparent;
+}
+
+.todo-checkbox:checked {
+  background-color: var(--color-bg-check);
+  border-color: var(--color-bg-check);
+  color: var(--color-check-mark);
+}
+
+/* 勾号用 mask 绘制，颜色由外层 color 决定（随主题变化的 --color-check-mark） */
+.todo-checkbox::after {
+  content: "";
+  display: block;
+  width: 10px;
+  height: 10px;
+  background-color: currentColor;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  -webkit-mask: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.todo-checkbox:checked::after {
+  opacity: 1;
+}
+
+/* ===== 加载旋转 ===== */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+/* ===== 无障碍：尊重系统的「减弱动态效果」 ===== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

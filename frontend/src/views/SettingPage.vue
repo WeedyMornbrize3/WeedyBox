@@ -2,7 +2,7 @@
 <template>
   <SettingsPage>
     <!-- 外观设置 -->
-    <SettingsSection icon="🎨" title="外观">
+    <SettingsSection icon="i-lucide-palette" title="外观">
       <!-- 深色模式切换 -->
       <SettingsItem :label="modeDes" description="点击切换 深色/浅色 模式">
         <ThemeToggle />
@@ -15,7 +15,7 @@
     </SettingsSection>
 
     <!-- 通用设置 -->
-    <SettingsSection icon="⚙️" title="通用">
+    <SettingsSection icon="i-lucide-sliders-horizontal" title="通用">
       <SettingsItem label="语言" description="选择界面语言">
         <LanguageSelect v-model="language" />
       </SettingsItem>
