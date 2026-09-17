@@ -16,13 +16,14 @@ const must = [
   'filter-bar', 'filter-group', 'filter-label', 'filter-chips', 'chip', 'chip-active',
   'nav-item', 'nav-icon', 'section-icon', 'settings-page', 'settings-section',
   'text-priority-low', 'text-priority-medium', 'text-priority-high',
-  'border-theme-light', 'border-theme-dark', 'bg-brand', 'text-brand', 'text-danger', 'text-success', 'text-warning',
+  'border-theme-light', 'border-theme-dark', 'bg-brand', 'text-brand', 'text-danger', 'text-success',
   'bg-secondary-soft', 'tabular-nums', 'flex-col-center',
   'sr-only', 'scrollbar-theme', 'todo-checkbox', 'prefers-reduced-motion',
   'checked\\:border-brand', 'focus-visible\\:ring-2', 'appearance-none', 'opacity-40', 'group-hover\\:border-l-brand',
+  '--motion-slow', '--ease-enter',
   'i-lucide-trash-2', 'i-lucide-list-todo', 'i-lucide-signal-high',
   'i-lucide-inbox', 'i-lucide-loader-circle', 'i-lucide-sun', 'i-lucide-palette',
-  'i-lucide-plus', 'i-lucide-rotate-ccw', 'i-lucide-search-x', 'i-lucide-layers',
+  'i-lucide-plus', 'i-lucide-rotate-ccw', 'i-lucide-search-x', 'i-lucide-sliders-horizontal',
 ]
 
 let bad = 0
