@@ -1,25 +1,27 @@
 <!-- frontend/src/components/todo/TodoItem.vue -->
-<!-- 单条 TODO。
-     结构要点（与旧版的区别）：
-       1. 根元素是 <div> 而不是 <label>——旧版把删除按钮放在 <label> 内部，
-          点删除会先触发 label 的默认行为（切换勾选框），再靠 @click 冒泡语义兜底，
-          行为不可靠；现在勾选框、优先级、标题、删除按钮是同级 flex item。
-       2. 勾选框是可以真正聚焦的原生 input（旧版 w-0 h-0 被完全隐藏，键盘无法操作）。
-       3. 删除按钮用 type="button" + aria-label，点击不冒泡到行本身。 -->
+<!-- 单条 TODO。交互分工（与旧版的区别）：
+       1. 左侧勾选框从「完成」改为「选择」——勾选只表达选中，不再改完成状态，
+          因此它对应的是批量操作（完成全部 / 删除选中的目标）。
+       2. 「完成」是行右侧的独立按钮，位于删除按钮左侧，两种状态互换图标与语义。
+       3. 根元素是 <div> 而不是 <label>：旧版把删除按钮放在 <label> 内部，
+          点删除会先触发 label 的默认行为，行为不可靠；现在控件之间是同级 flex item。
+       4. 选择框是原生 input（键盘可达、有可见焦点环）。 -->
 <template>
   <div
-    class="group flex items-start gap-3 px-3 py-2.5 rounded-lg bg-card border-theme transition-colors duration-200 hover:border-brand"
-    :class="{ 'opacity-60': todo.completed }"
+    class="group flex items-start gap-3 px-3 py-2.5 rounded-lg bg-card border-theme transition-colors duration-200"
+    :class="[
+      todo.completed ? 'opacity-60' : '',
+      selected ? 'border-brand bg-brand-light' : 'hover:border-brand',
+    ]"
   >
-    <!-- 勾选框：原生 input 提供语义、键盘与无障碍状态，外观由 .todo-checkbox 绘制。
-         这些 utility 刻意不封装成 shortcut——串联过长的 shortcut 会被 UnoCSS 截断。 -->
+    <!-- 选择框：只表示「已选中」，用来做批量操作；不改变完成状态 -->
     <input
       type="checkbox"
       class="todo-checkbox flex-shrink-0 w-[18px] h-[18px] mt-[2px] rounded-[5px] cursor-pointer appearance-none flex-center text-transparent transition-colors duration-200 border-2 border-theme-dark bg-transparent hover:border-brand checked:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
-      :checked="todo.completed"
+      :checked="selected"
       :disabled="isUpdating"
-      :aria-label="todo.completed ? `标记「${todo.title}」为未完成` : `标记「${todo.title}」为已完成`"
-      @change="emit('toggle', todo.id)"
+      :aria-label="selected ? `取消选择「${todo.title}」` : `选择「${todo.title}」`"
+      @change="emit('select', todo.id)"
     />
 
     <!-- 主内容区：标题主行 + 描述块 -->
@@ -63,33 +65,48 @@
       </p>
     </div>
 
-    <!-- 删除：连点两下删除，不弹确认框。
-         第一下只是「进入待确认态」（图标变红 + 加粗边框 + 底色变红，鼠标提示变为「再点一次删除」），
-         第二下才真正删除；移开鼠标或失焦即自动撤销，因此不需要模态确认也不会误删。 -->
-    <!-- 颜色类全部放进下面的动态 :class，静态 class 里不留任何颜色工具类。
-         原因：UnoCSS 按字母序输出 rules，`.text-danger` 排在 `.text-white` 之后
-         （权重相同，0,1,0），会把待确认态的白字压掉；`.bg-transparent` 同理压 `.bg-danger`。
-         所以同一属性只能由一处决定。 -->
-    <button
-      v-if="!isDeleting"
-      type="button"
-      class="btn-delete group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-      :class="isArmed
-        ? 'opacity-100 bg-danger border-danger text-white scale-110'
-        : 'opacity-40 bg-transparent border-danger text-danger hover:opacity-100 hover:bg-danger hover:border-danger hover:text-white'"
-      :aria-label="isArmed ? `再次点击确认删除「${todo.title}」` : `删除「${todo.title}」（需连点两下）`"
-      :title="isArmed ? '再点一次删除' : '删除（连点两下）'"
-      @click.stop="handleDeleteClick"
-      @mouseleave="cancelDelete"
-      @blur="cancelDelete"
-    >
-      <span :class="isArmed ? 'i-lucide-check icon-sm' : 'i-lucide-trash-2 icon-sm'" aria-hidden="true" />
-    </button>
+    <!-- 行内操作：完成在左、删除在右。
+         颜色类全部放进动态 :class，静态 class 里不留任何颜色工具类——
+         UnoCSS 按字母序输出 rules，同权重时排后面的会压掉排前面的
+         （`.text-tertiary` 会压掉 `.text-success`），同一属性只能由一处决定。
+         ⚠️ 静息态用 opacity-75 而不是更弱的 40%：实测 40% 时图标对比度仅 1.78:1，
+         达不到「有意义的图标需 ≥3:1」；0.75 时两套主题最低 3.18:1，正好达标。 -->
+    <div class="flex items-center gap-1 flex-shrink-0">
+      <!-- 完成 / 取消完成：图标与语义随状态互换 -->
+      <button
+        type="button"
+        class="btn-row opacity-75 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+        :class="todo.completed ? 'row-btn-done' : 'row-btn-todo'"
+        :disabled="isUpdating"
+        :aria-label="todo.completed ? `将「${todo.title}」标记为未完成` : `将「${todo.title}」标记为已完成`"
+        :title="todo.completed ? '标记为未完成' : '标记为已完成'"
+        @click.stop="emit('toggle', todo.id)"
+      >
+        <span :class="todo.completed ? 'i-lucide-circle-check-big icon-sm' : 'i-lucide-circle icon-sm'" aria-hidden="true" />
+      </button>
 
-    <!-- 提交中：短暂态，避免删除瞬间元素直接消失造成的视觉跳跃 -->
-    <span v-else class="btn-delete opacity-100 text-danger cursor-default" aria-hidden="true">
-      <span class="i-lucide-loader-circle icon-sm spin" />
-    </span>
+      <!-- 删除：连点两下删除，不弹确认框。
+           第一下进入待确认态（图标变红 + 底色变红，提示改为「再点一次删除」），
+           第二下才真正删除；移开鼠标或失焦即自动撤销。 -->
+      <button
+        v-if="!isDeleting"
+        type="button"
+        class="btn-row group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+        :class="isArmed ? 'row-btn-delete-armed opacity-100 scale-110' : 'row-btn-delete opacity-75 hover:opacity-100'"
+        :aria-label="isArmed ? `再次点击确认删除「${todo.title}」` : `删除「${todo.title}」（需连点两下）`"
+        :title="isArmed ? '再点一次删除' : '删除（连点两下）'"
+        @click.stop="handleDeleteClick"
+        @mouseleave="cancelDelete"
+        @blur="cancelDelete"
+      >
+        <span :class="isArmed ? 'i-lucide-check icon-sm' : 'i-lucide-trash-2 icon-sm'" aria-hidden="true" />
+      </button>
+
+      <!-- 提交中：短暂态，避免删除瞬间元素直接消失造成的视觉跳跃 -->
+      <span v-else class="btn-row opacity-100 row-btn-done cursor-default" aria-hidden="true">
+        <span class="i-lucide-loader-circle icon-sm spin" />
+      </span>
+    </div>
   </div>
 </template>
 
@@ -101,11 +118,14 @@ const props = defineProps<{
   todo: Todo
   isUpdating?: boolean
   isDeleting?: boolean
+  /** 是否已被选中（选中只用于批量操作，与完成状态无关） */
+  selected?: boolean
 }>()
 
 const emit = defineEmits<{
   toggle: [id: number]
   delete: [id: number]
+  select: [id: number]
 }>()
 
 // ===== 连点两下删除 =====
@@ -200,10 +220,51 @@ function formatDate(dateStr: string): string {
 </script>
 
 <style scoped>
-/* 描述块的左侧竖线：宽度 / 样式 / 基础色都在这里定义，
+/* 描述块：默认只有左侧一条竖线，hover 时只有这条竖线换成品牌色。
+   竖线本身（宽度/样式/基础色）定义在这里，
    UnoCSS 只负责 group-hover 时的颜色切换（见模板的 group-hover:border-l-brand）。
    这样同一属性只有一个来源，不依赖 UnoCSS 的规则输出顺序。 */
 .todo-desc-block {
   border-left: 2px solid var(--color-border-light);
+}
+
+/* ===== 行内操作按钮（完成 / 删除）=====
+   实心 hover 态的文字色必须用随主题翻转的语义变量：
+   深色主题下 brand / success / danger 都是亮色，白字压上去只有 1.7~2.8:1。 */
+.row-btn-todo {
+  color: var(--color-text-tertiary);
+}
+
+.row-btn-todo:hover:not(:disabled) {
+  background-color: var(--color-primary);
+  color: var(--color-text-on-brand);
+}
+
+.row-btn-done {
+  color: var(--color-success);
+}
+
+.row-btn-done:hover:not(:disabled) {
+  background-color: var(--color-success);
+  color: var(--color-text-on-success);
+}
+
+/* 删除按钮：默认只描边，hover 才填红 */
+.row-btn-delete {
+  background-color: transparent;
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.row-btn-delete:hover:not(:disabled) {
+  background-color: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-text-on-danger);
+}
+
+.row-btn-delete-armed {
+  background-color: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-text-on-danger);
 }
 </style>

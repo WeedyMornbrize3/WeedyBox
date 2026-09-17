@@ -153,12 +153,10 @@ export default defineConfig({
     // ---------- 按钮 ----------
     'btn-brand': 'px-4 py-2 bg-brand text-inverse rounded-lg font-medium hover:bg-brand-hover transition-colors duration-200 cursor-pointer border-none',
     'btn-ghost': 'px-4 py-2 text-secondary hover:text-primary hover:bg-hover rounded-lg transition-colors duration-200 cursor-pointer border-none bg-transparent',
-    // ⚠️ shortcut 里不要写会与调用处动态 class 冲突的「颜色/状态」工具类。
-    //    UnoCSS 把 shortcuts 输出在 rules 之前，因此 shortcut 内部的工具类会
-    //    反而压过模板上后写的 utility：实测 btn-delete 里的 text-tertiary/bg-transparent
-    //    会把调用处的 text-white / bg-danger 顶掉（待确认态显示不出白字）。
-    //    这里只保留尺寸与布局，颜色与 hover 状态交给调用处（TodoItem.vue）。
-    'btn-delete': '!w-7 !h-7 !rounded-lg !p-0 flex-center border-none transition-colors duration-200 cursor-pointer flex-shrink-0',
+    // 行内图标按钮（完成 / 删除共用）：只定义尺寸与布局，
+    // 颜色与状态一律由调用处的动态 class 决定——shortcut 里写颜色会压掉调用处
+    // （UnoCSS 把 shortcuts 输出在 rules 之前），这个坑已经踩过。
+    'btn-row': '!w-7 !h-7 !rounded-lg !p-0 flex-center border transition-colors duration-200 cursor-pointer flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-40',
     'input-theme': 'bg-secondary rounded-lg px-3 py-2 text-primary placeholder-tertiary border-theme focus:border-brand transition-colors duration-200',
 
     // ---------- 顶部栏 ----------

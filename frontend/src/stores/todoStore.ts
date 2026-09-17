@@ -3,7 +3,7 @@
 import { defineStore } from 'pinia'
 import { ref, reactive, computed } from 'vue'
 import { todoApi } from '../services/todoService'
-import type { Todo, TodoStats } from '../../bindings/WeedyBox/internal/model'
+import type { Todo, TodoStats, UpdateTodoDTO } from '../../bindings/WeedyBox/internal/model'
 
 // ===== 筛选类型 =====
 // 'pending' = 只看未完成（默认），'completed' = 只看已完成，'all' = 全部
@@ -230,6 +230,37 @@ export const useTodoStore = defineStore('todo', () => {
         }
     }
 
+    /**
+     * 批量标记完成（供「完成全部」使用）。
+     * 复用已有的 Update 绑定（它返回更新后的 Todo），逐个把返回结果就地替换，
+     * 这样后端若对 updated_at 等字段做了处理也能如实反映。
+     * 未选中的条目不受影响。
+     */
+    async function completeMany(ids: number[]) {
+        const unique = [...new Set(ids)]
+        if (unique.length === 0) return 0
+
+        // 只处理确实存在且尚未完成的条目，避免无谓请求
+        const pending = todos.value.filter(t => unique.includes(t.id) && !t.completed)
+        if (pending.length === 0) return 0
+
+        try {
+            for (const todo of pending) {
+                const updated = await todoApi.update(todo.id, { completed: true } as UpdateTodoDTO)
+                const index = todos.value.findIndex(t => t.id === todo.id)
+                if (index !== -1) todos.value[index] = updated
+            }
+            await loadStats()
+            return pending.length
+        } catch (e) {
+            error.value = e instanceof Error ? e.message : '批量完成失败'
+            console.error('批量完成 TODO 失败:', e)
+            // 已成功的部分保留（后端已是事实），仅重新拉取以对齐真实状态
+            await loadTodos()
+            throw e
+        }
+    }
+
     async function loadStats() {
         try {
             stats.value = await todoApi.getStats()
@@ -265,6 +296,7 @@ export const useTodoStore = defineStore('todo', () => {
         updateTodo,
         deleteTodo,
         deleteMany,
+        completeMany,
         loadStats,
         init,
         resetFilters,

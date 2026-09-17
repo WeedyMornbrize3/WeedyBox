@@ -104,6 +104,12 @@ html, body, #app {
   --color-text-body: var(--color-text-primary);
   --color-text-hint: var(--color-text-muted);
   --color-text-on-brand: #ffffff;
+  /* 实心功能色按钮上的文字色。
+     ⚠️ 不能统一用白字：深色主题下 success/brand/danger 都是「亮色」
+     （#4ade80 / #2dd4bf / #f87171），白字压上去只有 1.7~2.8:1，远不达 AA；
+     必须换成深色文字（9~10:1）。浅色主题反之。 */
+  --color-text-on-success: #ffffff;
+  --color-text-on-danger: #ffffff;
 }
 
 /* ===== 深色主题 ===== */
@@ -160,6 +166,9 @@ html, body, #app {
   --color-text-body: var(--color-text-primary);
   --color-text-hint: var(--color-text-muted);
   --color-text-on-brand: #04211f;
+  /* 深色主题下功能色是亮色，实心按钮必须用深色文字 */
+  --color-text-on-success: #04211f;
+  --color-text-on-danger: #2a0a0a;
 }
 
 /* ===== 排版基准 =====

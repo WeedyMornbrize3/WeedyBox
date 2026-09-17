@@ -1,6 +1,12 @@
 <!-- frontend/src/components/todo/TodoList.vue -->
 <!-- 排版取向（Minimalism & Swiss）：统一间距节奏、去掉多余装饰（无投影/渐变）、
-     只保留必要元素；统计与筛选默认收起，需要时再展开（渐进披露）。 -->
+     只保留必要元素；筛选默认收起，批量操作只在有选中时才出现（渐进披露）。
+
+     批量操作模型：
+       行的左侧选择框负责「选中哪些」，工具栏右侧的
+       「完成全部 / 删除全部」对选中集合执行动作。
+       两个按钮都要求**连点两下**（第一下进入待确认态，第二下才执行），
+       并且不会弹任何确认框或展开额外面板。 -->
 <template>
   <div class="todo-container select-none h-full min-h-0 flex flex-col gap-3">
     <!-- 页头 -->
@@ -9,12 +15,7 @@
       <h2 class="text-xl font-semibold text-primary m-0">TODO 列表</h2>
     </header>
 
-    <!-- 统计 + 新建优先级（有数据时才出现；无数据时页头直接把注意力导向输入框） -->
-    <!-- ⚠️ 这里不能让 TodoStats 不可收缩（曾写 flex-shrink-0）：
-         统计栏固有宽度约 271px，优先级选择器约 172px，两者都不可收缩时
-         在容器 <455px（实测 380~452px）下合计超出容器宽度，
-         统计栏内部的 flex-wrap 永远得不到触发，选择器被顶出卡片右边框。
-         改为 flex-1 min-w-0：统计栏吃掉剩余空间、可收缩，空间不足时在内部换行。 -->
+    <!-- 统计 + 新建优先级（有数据时才出现） -->
     <Transition name="fade-rise">
       <div v-if="hasTodos" class="flex items-center gap-3 flex-shrink-0">
         <TodoStats :stats="todoStore.stats" class="flex-1 min-w-0" />
@@ -25,7 +26,7 @@
     <!-- 输入框：常驻，不藏（藏起来反而多一次点击） -->
     <TodoInput class="flex-shrink-0" />
 
-    <!-- 工具行：筛选 / 删除，同级别；各自的下拉面板默认收起（渐进披露） -->
+    <!-- 工具行：左「筛选」，右批量操作（有选中才出现） -->
     <div v-if="hasTodos" class="flex flex-col flex-shrink-0">
       <div class="flex items-center gap-1">
         <button
@@ -46,26 +47,68 @@
           </span>
         </button>
 
+        <!-- 全选当前可见（键盘可达的替代路径：逐个点行内选择框亦可） -->
         <button
+          v-if="visibleIds.length"
           type="button"
           class="panel-toggle flex items-center gap-1.5 px-2 py-1 rounded-md text-xs cursor-pointer border-none bg-transparent hover:bg-hover transition-colors duration-200"
-          :class="isDeleteOpen ? 'text-danger' : 'text-tertiary'"
-          :aria-expanded="isDeleteOpen"
-          aria-controls="todo-delete-panel"
-          @click="toggleDeletePanel"
+          :class="allVisibleSelected ? 'text-brand' : 'text-tertiary'"
+          :aria-pressed="allVisibleSelected"
+          @click="toggleSelectAll"
         >
-          <span class="i-lucide-trash-2 icon-xs" aria-hidden="true" />
-          {{ isDeleteOpen ? '收起删除' : '删除' }}
-          <span
-            v-if="selectedIds.length"
-            class="ml-0.5 px-1.5 rounded-full text-[10px] font-medium bg-brand-light text-danger tabular-nums"
-          >
-            {{ selectedIds.length }}
-          </span>
+          <span :class="allVisibleSelected ? 'i-lucide-square-check-big icon-xs' : 'i-lucide-square icon-xs'" aria-hidden="true" />
+          {{ allVisibleSelected ? '取消全选' : '全选' }}
         </button>
+
+        <!-- 批量操作：对「已选中」执行。没有选中时不渲染，避免一排禁用按钮占位 -->
+        <div v-if="selectedIds.length" class="ml-auto flex items-center gap-1.5">
+          <button
+            type="button"
+            class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer border-none transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            :class="armed === 'complete' ? 'btn-success' : 'btn-complete'"
+            :disabled="completing"
+            :aria-label="completing
+              ? '正在完成'
+              : armed === 'complete'
+                ? `再次点击确认将这 ${selectedIds.length} 项标记为已完成`
+                : `将选中的 ${selectedIds.length} 项标记为已完成（需连点两下确认）`"
+            @click="handleCompleteClick"
+            @mouseleave="disarm"
+            @blur="disarm"
+          >
+            <span
+              :class="completing ? 'i-lucide-loader-circle icon-xs spin' : armed === 'complete' ? 'i-lucide-check icon-xs' : 'i-lucide-circle-check-big icon-xs'"
+              aria-hidden="true"
+            />
+            {{ completing ? '完成中…' : armed === 'complete' ? '再点一次确认' : '完成全部' }}
+            <span class="px-1.5 rounded-full bg-white/25 text-[10px] tabular-nums">{{ selectedIds.length }}</span>
+          </button>
+
+          <button
+            type="button"
+            class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer border-none transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            :class="armed === 'delete' ? 'btn-danger-armed' : 'btn-danger'"
+            :disabled="deleting"
+            :aria-label="deleting
+              ? '正在删除'
+              : armed === 'delete'
+                ? `再次点击确认删除这 ${selectedIds.length} 项`
+                : `删除选中的 ${selectedIds.length} 项（需连点两下确认）`"
+            @click="handleDeleteClick"
+            @mouseleave="disarm"
+            @blur="disarm"
+          >
+            <span
+              :class="deleting ? 'i-lucide-loader-circle icon-xs spin' : armed === 'delete' ? 'i-lucide-check icon-xs' : 'i-lucide-trash-2 icon-xs'"
+              aria-hidden="true"
+            />
+            {{ deleting ? '删除中…' : armed === 'delete' ? '再点一次确认' : '删除全部' }}
+            <span class="px-1.5 rounded-full bg-white/25 text-[10px] tabular-nums">{{ selectedIds.length }}</span>
+          </button>
+        </div>
       </div>
 
-      <!-- ===== 筛选面板 ===== -->
+      <!-- 筛选面板（唯一的下拉面板） -->
       <Transition
         name="collapse"
         @enter="collapseEnter"
@@ -75,83 +118,6 @@
       >
         <div v-show="isFilterOpen" id="todo-filter-panel">
           <FilterBar class="mt-2 flex-shrink-0 scrollbar-theme" />
-        </div>
-      </Transition>
-
-      <!-- ===== 删除面板：先选范围（可再手动勾选目标），确认后一次删除 ===== -->
-      <Transition
-        name="collapse"
-        @enter="collapseEnter"
-        @after-enter="collapseAfterEnter"
-        @leave="collapseLeave"
-        @after-leave="collapseAfterLeave"
-      >
-        <div v-show="isDeleteOpen" id="todo-delete-panel" class="mt-2 rounded-lg bg-secondary-soft border-theme-light p-3 flex flex-col gap-2.5">
-          <!-- 范围预设：点一下即选中该范围内的全部条目 -->
-          <div class="flex flex-wrap items-center gap-1.5">
-            <span class="text-xs text-tertiary mr-0.5">范围</span>
-            <button
-              v-for="scope in DELETE_SCOPES"
-              :key="scope.value"
-              type="button"
-              class="chip"
-              :class="{ 'chip-active': deleteScope === scope.value }"
-              :aria-pressed="deleteScope === scope.value"
-              @click="applyScope(scope.value)"
-            >
-              {{ scope.label }}
-            </button>
-          </div>
-
-          <!-- 目标清单：在所选范围内自由勾选 -->
-          <div class="flex flex-col gap-1">
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-tertiary">
-                {{ scopeLabel }} · 共 {{ scopedTodos.length }} 项
-              </span>
-              <div v-if="scopedTodos.length" class="flex items-center gap-2">
-                <button type="button" class="link-btn" @click="selectAllScoped">全选</button>
-                <button type="button" class="link-btn" @click="clearSelection">清空</button>
-              </div>
-            </div>
-
-            <p v-if="!scopedTodos.length" class="m-0 text-xs text-muted py-1">
-              该范围内没有 TODO
-            </p>
-
-            <!-- 条目多时内部滚动，面板高度保持稳定 -->
-            <ul v-else class="delete-list m-0 p-0 list-none flex flex-col gap-0.5">
-              <li v-for="todo in scopedTodos" :key="todo.id">
-                <label class="flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer hover:bg-hover transition-colors duration-200">
-                  <input
-                    type="checkbox"
-                    class="delete-check"
-                    :checked="selectedIds.includes(todo.id)"
-                    @change="toggleSelected(todo.id)"
-                  />
-                  <span class="flex-1 min-w-0 truncate text-xs" :class="todo.completed ? 'text-tertiary line-through' : 'text-secondary'">
-                    {{ todo.title }}
-                  </span>
-                  <span class="flex-shrink-0 text-[10px] text-muted">{{ priorityText(todo.priority) }}</span>
-                </label>
-              </li>
-            </ul>
-          </div>
-
-          <!-- 确认区 -->
-          <div class="flex items-center gap-2 pt-1 border-t border-theme-light">
-            <span class="text-xs text-tertiary">
-              待删除 <span class="font-semibold text-danger tabular-nums">{{ selectedIds.length }}</span> 项
-            </span>
-            <button
-              type="button"
-              class="ml-auto btn-danger px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer border-none transition-colors duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
-              :disabled="!selectedIds.length || deleting"
-              @click="confirmDelete"
-            >
-              {{ deleting ? '删除中…' : confirmLabel }}
-            </button>
-          </div>
         </div>
       </Transition>
     </div>
@@ -213,8 +179,10 @@
           v-for="todo in todoStore.filteredTodos"
           :key="todo.id"
           :todo="todo"
+          :selected="selectedIds.includes(todo.id)"
           :is-updating="busyIds.has(todo.id)"
           :is-deleting="busyIds.has(todo.id)"
+          @select="toggleSelected"
           @toggle="handleToggle"
           @delete="handleDelete"
         />
@@ -242,41 +210,17 @@ const todoStore = useTodoStore()
 
 const hasTodos = computed(() => todoStore.todos.length > 0)
 
-// ===== 渐进披露：两个面板默认收起 =====
+// ===== 筛选面板（默认收起） =====
 const TOOL_PANEL_KEY = 'todo-tool-panel'
 const isFilterOpen = ref(false)
-const isDeleteOpen = ref(false)
 
 onMounted(() => {
-  const saved = localStorage.getItem(TOOL_PANEL_KEY)
-  isFilterOpen.value = saved === 'filter'
-  isDeleteOpen.value = saved === 'delete'
+  isFilterOpen.value = localStorage.getItem(TOOL_PANEL_KEY) === 'filter'
 })
 
-function persistPanelState() {
-  localStorage.setItem(TOOL_PANEL_KEY, isDeleteOpen.value ? 'delete' : isFilterOpen.value ? 'filter' : '')
-}
-
-// 同一行上的两个面板互斥展开：避免两段内容同时撑开、把列表挤得很短
 function toggleFilterPanel() {
   isFilterOpen.value = !isFilterOpen.value
-  if (isFilterOpen.value) {
-    isDeleteOpen.value = false
-    resetDeletePanel()
-  }
-  persistPanelState()
-}
-
-function toggleDeletePanel() {
-  isDeleteOpen.value = !isDeleteOpen.value
-  if (isDeleteOpen.value) {
-    isFilterOpen.value = false
-    // 打开时默认选中「已完成」——批量删除里最常用的诉求
-    applyScope('completed')
-  } else {
-    resetDeletePanel()
-  }
-  persistPanelState()
+  localStorage.setItem(TOOL_PANEL_KEY, isFilterOpen.value ? 'filter' : '')
 }
 
 // 处于非默认筛选时，即使面板收起也显示条件数量，
@@ -290,95 +234,95 @@ const activeFilterCount = computed(() => {
   return n
 })
 
-// ===== 删除指定范围 =====
-// 「自由选择」的落点：范围只决定候选集，候选集里的每一条都可再手动勾选。
-const DELETE_SCOPES = [
-  { value: 'completed', label: '已完成' },
-  { value: 'pending', label: '未完成' },
-  { value: 'priority-high', label: '高优先级' },
-  { value: 'priority-medium', label: '中优先级' },
-  { value: 'priority-low', label: '低优先级' },
-  { value: 'all', label: '全部' },
-] as const
-
-type DeleteScope = (typeof DELETE_SCOPES)[number]['value']
-
-const deleteScope = ref<DeleteScope>('completed')
+// ===== 选择集合 =====
 const selectedIds = ref<number[]>([])
-const deleting = ref(false)
 
-const scopeLabel = computed(
-  () => DELETE_SCOPES.find((s) => s.value === deleteScope.value)?.label ?? ''
+/** 当前列表里实际可见（经筛选后）的条目 id —— 用于「全选」 */
+const visibleIds = computed(() => todoStore.filteredTodos.map((t) => t.id))
+
+const allVisibleSelected = computed(
+  () => visibleIds.value.length > 0 && visibleIds.value.every((id) => selectedIds.value.includes(id))
 )
-
-const scopedTodos = computed(() => {
-  const all = todoStore.todos
-  switch (deleteScope.value) {
-    case 'completed':
-      return all.filter((t) => t.completed)
-    case 'pending':
-      return all.filter((t) => !t.completed)
-    case 'priority-high':
-      return all.filter((t) => t.priority === 2)
-    case 'priority-medium':
-      return all.filter((t) => t.priority === 1)
-    case 'priority-low':
-      return all.filter((t) => t.priority === 0)
-    default:
-      return all
-  }
-})
-
-const confirmLabel = computed(() => {
-  const n = selectedIds.value.length
-  if (n === 0) return '确认删除'
-  // 命中范围内全部条目时提示「全部」，否则提示数量，避免误以为只删一条
-  return n === scopedTodos.value.length && n > 1 ? `删除全部 ${n} 项` : `删除 ${n} 项`
-})
-
-function applyScope(scope: DeleteScope) {
-  deleteScope.value = scope
-  selectedIds.value = scopedTodos.value.map((t) => t.id)
-}
 
 function toggleSelected(id: number) {
   selectedIds.value = selectedIds.value.includes(id)
     ? selectedIds.value.filter((x) => x !== id)
     : [...selectedIds.value, id]
+  disarm()
 }
 
-const selectAllScoped = () => {
-  selectedIds.value = scopedTodos.value.map((t) => t.id)
+const toggleSelectAll = () => {
+  if (allVisibleSelected.value) {
+    // 只取消当前可见的部分，保留其它范围内的选择
+    const visible = new Set(visibleIds.value)
+    selectedIds.value = selectedIds.value.filter((id) => !visible.has(id))
+  } else {
+    selectedIds.value = [...new Set([...selectedIds.value, ...visibleIds.value])]
+  }
+  disarm()
 }
+
 const clearSelection = () => {
   selectedIds.value = []
+  disarm()
 }
 
-function resetDeletePanel() {
-  selectedIds.value = []
-  deleteScope.value = 'completed'
+// ===== 批量操作：连点两下 =====
+// 同一个时刻只允许一个按钮处于待确认态，避免「以为在确认完成、其实点的是删除」。
+const armed = ref<'complete' | 'delete' | null>(null)
+const completing = ref(false)
+const deleting = ref(false)
+
+const disarm = () => {
+  armed.value = null
 }
 
-// 优先级中文标签（与 TodoItem 的三重编码一致：0 低 / 1 中 / 2 高）
-const PRIORITY_TEXT: Record<number, string> = { 0: '低', 1: '中', 2: '高' }
-const priorityText = (p: number) => PRIORITY_TEXT[p] ?? ''
+// 选择集合一变就撤销待确认态：避免「看到的是 A，确认时动的是 B」
+watch(selectedIds, disarm)
 
-async function confirmDelete() {
+function handleCompleteClick() {
+  if (completing.value || !selectedIds.value.length) return
+  if (armed.value !== 'complete') {
+    armed.value = 'complete'
+    return
+  }
+  armed.value = null
+  void completeSelected()
+}
+
+function handleDeleteClick() {
+  if (deleting.value || !selectedIds.value.length) return
+  if (armed.value !== 'delete') {
+    armed.value = 'delete'
+    return
+  }
+  armed.value = null
+  void deleteSelected()
+}
+
+async function completeSelected() {
   const ids = [...selectedIds.value]
-  if (!ids.length || deleting.value) return
+  if (!ids.length) return
+  completing.value = true
+  try {
+    const n = await todoStore.completeMany(ids)
+    showToast('success', n > 0 ? `已完成 ${n} 项` : '所选条目均已完成')
+    clearSelection()
+  } catch (e) {
+    showToast('error', e instanceof Error ? e.message : '批量完成失败')
+  } finally {
+    completing.value = false
+  }
+}
+
+async function deleteSelected() {
+  const ids = [...selectedIds.value]
+  if (!ids.length) return
   deleting.value = true
   try {
     const n = await todoStore.deleteMany(ids)
     showToast('success', `已删除 ${n} 项`)
-    resetDeletePanel()
-    // 删空之后整块工具行会消失，这里顺手收起面板状态
-    if (todoStore.todos.length === 0) {
-      isDeleteOpen.value = false
-      persistPanelState()
-    } else {
-      // 范围内可能还有剩余条目，重新按当前范围选中，方便连续清理
-      applyScope(deleteScope.value)
-    }
+    clearSelection()
   } catch (e) {
     showToast('error', e instanceof Error ? e.message : '批量删除失败')
   } finally {
@@ -421,11 +365,11 @@ async function runWithBusy(id: number, action: () => Promise<unknown>, okText: s
   }
 }
 
+// 单条完成 / 取消完成（行右侧按钮）
 const handleToggle = (id: number) =>
   runWithBusy(id, () => todoStore.toggleComplete(id), '已更新完成状态')
 
-// 删除不再弹确认框：确认动作已由 TodoItem 的「连点两下」承担
-// （第一下进入待确认态，第二下才 emit delete）。
+// 单条删除：确认动作由 TodoItem 的「连点两下」承担，这里不弹确认框
 const handleDelete = (id: number) => {
   runWithBusy(id, () => todoStore.deleteTodo(id), '已删除')
 }
@@ -440,7 +384,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* ===== 渐进披露：展开/收起 =====
+/* ===== 筛选面板展开/收起 =====
    高度由 useAutoHeight 的 hooks 用 JS 测量（CSS 无法过渡到 height:auto），
    这里只补透明度，让显现更柔和。时长/缓动统一走 global.css 的动效 token。 */
 .collapse-enter-from,
@@ -509,78 +453,43 @@ onBeforeUnmount(() => {
   transform: translateY(-4px);
 }
 
-/* ===== 删除面板 ===== */
-/* 面板内文字按钮（全选/清空）：低调的链接式按钮 */
-.link-btn {
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--color-primary);
-  font-size: 11px;
-  cursor: pointer;
-  transition: opacity var(--motion-fast) var(--ease-enter);
-}
-
-.link-btn:hover {
-  opacity: 0.75;
-}
-
-/* 目标清单：条目多时内部滚动，避免面板把列表挤扁 */
-.delete-list {
-  max-height: 9.5rem;
-  overflow-y: auto;
-}
-
-/* 勾选框：沿用与列表行一致的外观，但尺寸更小以匹配紧凑行高 */
-.delete-check {
-  flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  border: 1.5px solid var(--color-border-dark);
-  border-radius: 4px;
-  background: transparent;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color var(--motion-fast) var(--ease-enter),
-              border-color var(--motion-fast) var(--ease-enter);
-}
-
-.delete-check:checked {
-  background-color: var(--color-bg-check);
-  border-color: var(--color-bg-check);
-}
-
-.delete-check:checked::after {
-  content: '';
-  width: 8px;
-  height: 8px;
-  background-color: var(--color-check-mark);
-  -webkit-mask: var(--icon-check) center / contain no-repeat;
-  mask: var(--icon-check) center / contain no-repeat;
-}
-
-.delete-check:focus-visible {
-  outline: 2px solid var(--color-ring);
-  outline-offset: 2px;
-  opacity: 1;
-}
-
-/* 确认删除按钮：唯一的实心强调色按钮，位置固定在面板右下 */
+/* 批量按钮的实心底色。文字色用语义变量（随主题翻转），
+   因为深色主题下 success/danger 是亮色，白字会不达标。 */
 .btn-danger {
   background-color: var(--color-danger);
-  color: #ffffff;
+  color: var(--color-text-on-danger);
 }
 
 .btn-danger:hover:not(:disabled) {
   opacity: 0.88;
 }
 
-.btn-danger:disabled {
-  cursor: not-allowed;
+/* 待确认态：比默认更醒目（提亮 + 描边），文字色同样走语义变量 */
+.btn-danger-armed {
+  background-color: var(--color-danger);
+  color: var(--color-text-on-danger);
+  box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-danger);
+}
+
+.btn-success {
+  background-color: var(--color-success);
+  color: var(--color-text-on-success);
+}
+
+.btn-success:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+/* 完成按钮的默认态与悬停态。
+   悬停变绿时文字必须同步换成 --color-text-on-success，
+   否则深色主题下会变成「亮绿底 + 白字」(1.74:1，不达标)。 */
+.btn-complete {
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+}
+
+.btn-complete:hover:not(:disabled) {
+  background-color: var(--color-success);
+  color: var(--color-text-on-success);
 }
 </style>

@@ -10,7 +10,7 @@ const uno = await createGenerator(config)
 const tokens = [
   // 快捷方式是否成组解析
   'icon-xs', 'icon-sm', 'icon-md', 'icon-lg', 'icon-xl',
-  'card-flat', 'btn-delete', 'todo-desc-block',
+  'card-flat', 'btn-row', 'todo-desc-block',
   'filter-bar', 'chip', 'chip-active', 'nav-icon', 'section-icon',
   // 存疑的 preset 能力
   'checked:border-brand',
@@ -30,7 +30,7 @@ const tokens = [
   'border-theme-dark',
   'bg-priority-low',
   'text-priority-high',
-  'opacity-40',
+  'opacity-75',
   'group-hover:border-l-brand',
   'border-l-brand',
   'tabular-nums',

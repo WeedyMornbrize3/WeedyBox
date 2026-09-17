@@ -12,15 +12,17 @@ console.log(`CSS files: ${cssFiles.join(', ')}  (total ${css.length} chars)`)
 
 const must = [
   'icon-xs', 'icon-sm', 'icon-md', 'icon-lg', 'icon-xl',
-  'todo-desc-block', 'card-flat', 'btn-delete', 'btn-brand', 'btn-ghost',
+  'todo-desc-block', 'card-flat', 'btn-row', 'btn-brand', 'btn-ghost',
   'filter-bar', 'filter-group', 'filter-label', 'filter-chips', 'chip', 'chip-active',
   'nav-item', 'nav-icon', 'section-icon', 'settings-page', 'settings-section',
   'text-priority-low', 'text-priority-medium', 'text-priority-high',
   'border-theme-light', 'border-theme-dark', 'bg-brand', 'text-brand', 'text-danger', 'text-success',
   'bg-secondary-soft', 'tabular-nums', 'flex-col-center',
   'sr-only', 'scrollbar-theme', 'todo-checkbox', 'prefers-reduced-motion',
-  'checked\\:border-brand', 'focus-visible\\:ring-2', 'appearance-none', 'opacity-40', 'group-hover\\:border-l-brand',
+  'checked\\:border-brand', 'focus-visible\\:ring-2', 'appearance-none', 'opacity-75', 'group-hover\\:border-l-brand',
   '--motion-slow', '--ease-enter',
+  // 实心按钮上的文字色必须随主题翻转（深色下功能色是亮色，白字不达标）
+  '--color-text-on-success', '--color-text-on-danger', '--color-text-on-brand',
   'i-lucide-trash-2', 'i-lucide-list-todo', 'i-lucide-signal-high',
   'i-lucide-inbox', 'i-lucide-loader-circle', 'i-lucide-sun', 'i-lucide-palette',
   'i-lucide-plus', 'i-lucide-rotate-ccw', 'i-lucide-search-x', 'i-lucide-sliders-horizontal',
