@@ -52,12 +52,12 @@
         </time>
       </div>
 
-      <p v-if="todo.description" class="todo-desc-block group-hover:border-brand">
+      <p v-if="todo.description" class="todo-desc-block group-hover:border-brand-l">
         {{ todo.description }}
       </p>
     </div>
 
-    <!-- 删除：图标按钮，带可访问名称。默认半透明以降低视觉噪音，
+    <!-- 删除：图标按钮，带可访问名称。默认半透明以降低视觉噪音， need-change: 改为连点两下删除 不在弹窗
          悬停/键盘聚焦时完全不透明——不靠 hover 才可发现。 -->
     <button
       type="button"

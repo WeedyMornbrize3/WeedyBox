@@ -73,6 +73,7 @@ export default defineConfig({
     ['border-theme-light', { 'border': '1px solid var(--color-border-light)' }],
     ['border-theme-dark', { 'border': '1px solid var(--color-border-dark)' }],
     ['border-brand', { 'border': '1px solid var(--color-primary)' }],
+    ['border-brand-l', { 'border-left': '2px solid var(--color-primary)' }],
 
     // 优先级语义色（0 低 / 1 中 / 2 高）
     ['text-priority-low', { 'color': 'var(--color-text-tertiary)' }],
