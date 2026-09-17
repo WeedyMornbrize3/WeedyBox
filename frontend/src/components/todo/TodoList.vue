@@ -64,8 +64,9 @@
         <div v-if="selectedIds.length" class="ml-auto flex items-center gap-1.5">
           <button
             type="button"
-            class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer border border-solid transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            :class="armed === 'complete' ? 'btn-success' : 'btn-complete'"
+            class="bulk-btn"
+            :class="[uncompleteMode ? 'bulk-uncomplete' : 'bulk-complete', { 'is-armed': armed === 'complete' }]"
+            :style="{ '--bulk-accent': uncompleteMode ? 'var(--color-warning)' : 'var(--color-success)' }"
             :disabled="completing"
             :aria-label="completing
               ? (uncompleteMode ? '正在取消完成' : '正在完成')
@@ -86,13 +87,14 @@
               aria-hidden="true"
             />
             {{ completing ? (uncompleteMode ? '取消中…' : '完成中…') : armed === 'complete' ? '再点一次确认' : completeActionLabel }}
-            <span class="px-1.5 rounded-full bg-white/25 text-[10px] tabular-nums">{{ selectedIds.length }}</span>
+            <span class="bulk-count">{{ selectedIds.length }}</span>
           </button>
 
           <button
             type="button"
-            class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer border border-solid transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            :class="armed === 'delete' ? 'btn-danger-armed' : 'btn-danger'"
+            class="bulk-btn bulk-delete"
+            :class="{ 'is-armed': armed === 'delete' }"
+            :style="{ '--bulk-accent': 'var(--color-danger)' }"
             :disabled="deleting"
             :aria-label="deleting
               ? '正在删除'
@@ -108,7 +110,7 @@
               aria-hidden="true"
             />
             {{ deleting ? '删除中…' : armed === 'delete' ? '再点一次确认' : '删除全部' }}
-            <span class="px-1.5 rounded-full bg-white/25 text-[10px] tabular-nums">{{ selectedIds.length }}</span>
+            <span class="bulk-count">{{ selectedIds.length }}</span>
           </button>
         </div>
       </div>
@@ -293,6 +295,19 @@ const disarm = () => {
 // 选择集合一变就撤销待确认态：避免「看到的是 A，确认时动的是 B」
 watch(selectedIds, disarm)
 
+// 切换筛选时清空所有选择。
+// 理由：筛选会换掉列表里可见的条目，留着旧选择会造成
+// 「看不见的选中项被批量操作带上」——尤其是「已完成」筛选下
+// 按钮语义会反转成取消完成，残留选择极易误操作。
+// 同时撤销待确认态，避免按钮停在 armed 状态。
+watch(
+  () => [todoStore.filters.completed, todoStore.filters.priority, todoStore.filters.time],
+  () => {
+    clearSelection()
+    disarm()
+  }
+)
+
 function handleCompleteClick() {
   if (completing.value || !selectedIds.value.length) return
   if (armed.value !== 'complete') {
@@ -473,45 +488,71 @@ onBeforeUnmount(() => {
   transform: translateY(-4px);
 }
 
-/* 批量按钮的实心底色。文字色用语义变量（随主题翻转），
-   因为深色主题下 success/danger 是亮色，白字会不达标。 */
-.btn-danger {
-  background-color: var(--color-danger);
-  color: var(--color-text-on-danger);
-}
-
-.btn-danger:hover:not(:disabled) {
-  opacity: 0.88;
-}
-
-/* 待确认态：比默认更醒目（提亮 + 描边），文字色同样走语义变量 */
-.btn-danger-armed {
-  background-color: var(--color-danger);
-  border-color: var(--color-danger);
-  color: var(--color-text-on-danger);
-  box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-danger);
-}
-
-/* 待确认态（完成）：同构的实心 + 描边 */
-.btn-success {
-  background-color: var(--color-success);
-  border-color: var(--color-success);
-  color: var(--color-text-on-success);
-  box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-success);
-}
-
-/* 完成按钮的默认态：与删除按钮同构——描边 + 中性文字，hover 才填成功绿。
-   悬停/待确认变绿时文字必须同步换成 --color-text-on-success，
-   否则深色主题下会变成「亮绿底 + 白字」(1.74:1，不达标)。 */
-.btn-complete {
+/* ===== 批量操作按钮（完成全部 / 取消完成 / 删除全部）=====
+   三个按钮严格同构，只有 accent 语义色不同（由模板以内联 --bulk-accent 传入）：
+     默认态：透明底 + accent 描边 + accent 文字
+     hover  ：填 accent + 反色文字
+     待确认 ：同 hover，另加一圈外描边以强调（.is-armed）
+   把颜色放在 scoped 里而不是模板工具类，是为了避免再踩
+   「UnoCSS 出序/同权重覆盖」那类静默失效——这里只有一处决定颜色。
+   反色文字必须用随主题翻转的语义变量：深色主题下 success/danger 是亮色，
+   白字压上去只有 1.7~2.8:1，不达标。 */
+.bulk-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--bulk-accent);
   background-color: transparent;
-  border-color: var(--color-border-dark);
-  color: var(--color-text-secondary);
+  color: var(--bulk-accent);
+  transition: background-color var(--motion-fast) var(--ease-enter),
+              border-color var(--motion-fast) var(--ease-enter),
+              color var(--motion-fast) var(--ease-enter);
 }
 
-.btn-complete:hover:not(:disabled) {
-  background-color: var(--color-success);
-  border-color: var(--color-success);
-  color: var(--color-text-on-success);
+.bulk-btn:hover:not(:disabled) {
+  background-color: var(--bulk-accent);
+  color: var(--bulk-on-accent);
+}
+
+.bulk-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 待确认态：填 accent + 外描边强调，与默认态明确区分 */
+.bulk-btn.is-armed {
+  background-color: var(--bulk-accent);
+  color: var(--bulk-on-accent);
+  box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--bulk-accent);
+}
+
+/* 数量徽标：用 currentColor 派生，随按钮文字色自动反转 */
+.bulk-count {
+  padding: 0 0.375rem;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  background-color: color-mix(in srgb, currentColor 22%, transparent);
+}
+
+/* 各动作的反色文字：默认（浅色主题）为白字，深色主题在下方覆盖 */
+.bulk-complete,
+.bulk-uncomplete,
+.bulk-delete {
+  --bulk-on-accent: #ffffff;
+}
+
+[data-theme="dark"] .bulk-complete,
+[data-theme="dark"] .bulk-uncomplete {
+  --bulk-on-accent: #04211f;
+}
+
+[data-theme="dark"] .bulk-delete {
+  --bulk-on-accent: #2a0a0a;
 }
 </style>
