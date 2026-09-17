@@ -102,11 +102,7 @@ for (const [name, own, zeros] of sideRules) {
 }
 console.log(sideBad === 0 ? `OK: 单侧边框 ${sideRules.length} 条均显式置零其余边` : `${sideBad} 项单侧边框断言失败`)
 
-// ===== 同一元素上「两条规则都改 border-left / border-top …」的自查（仅告警）=====
-// 背景：UnoCSS 对同一属性只保留一条规则，且 shortcut 输出在 rules 之前、
-// rules 之间按字母序，因此同一元素上叠加两条改同一侧边框的类时，
-// 后写的那条可能被静默丢弃（曾导致 hover 时描述块从「一条竖线」变成「一个方框」）。
-// 这里扫描模板，把同一 class 属性里出现两次同侧边框类的地方列出来，供人工确认。
+// ===== 模板静态扫描的公共部分 =====
 const SRC = join(process.cwd(), 'src')
 function walk(dir) {
   const out = []
@@ -117,6 +113,38 @@ function walk(dir) {
   }
   return out
 }
+
+// ===== 「border 缺少 border-style」自查（仅告警）=====
+// 背景：UnoCSS 的 `border` 工具类只输出 border-width，不输出 border-style。
+// <button> 的 UA 默认 border-style 是 `outset`，于是计算值变成 `1px outset`,
+// 渲染成 3D 立体边而不是扁平描边（实测「未完成 item 的完成按钮」正是如此）。
+// 因此凡是写了 `border`（或 border-t/r/b/l 等）的地方，都必须同时写 `border-solid`。
+{
+  const BORDER_RE = /(^|[\s"'])border(-[trbl])?(?![-\w])/
+  const offenders = []
+  for (const file of walk(SRC)) {
+    const text = readFileSync(file, 'utf8')
+    for (const m of text.matchAll(/class="([^"]*)"/g)) {
+      const attr = m[1]
+      if (!BORDER_RE.test(attr)) continue
+      // 已显式声明样式，或明确不要边框，则跳过
+      if (/\bborder-(solid|dashed|dotted|double|none)\b/.test(attr)) continue
+      offenders.push(`${file.replace(process.cwd(), '.')} :: ${attr.slice(0, 90)}`)
+    }
+  }
+  if (offenders.length) {
+    console.log(`\n⚠️  ${offenders.length} 处用了 border 但没写 border-style（<button> 上会退化成 outset 立体边）：`)
+    for (const o of offenders) console.log('    - ' + o)
+  } else {
+    console.log('OK: 无「border 缺 border-style」的写法')
+  }
+}
+
+// ===== 同一元素上「两条规则都改 border-left / border-top …」的自查（仅告警）=====
+// 背景：UnoCSS 对同一属性只保留一条规则，且 shortcut 输出在 rules 之前、
+// rules 之间按字母序，因此同一元素上叠加两条改同一侧边框的类时，
+// 后写的那条可能被静默丢弃（曾导致 hover 时描述块从「一条竖线」变成「一个方框」）。
+// 这里扫描模板，把同一 class 属性里出现两次同侧边框类的地方列出来，供人工确认。
 const sidePattern = /(?:^|[\s"'])!?(?:group-hover:|hover:|focus:)?border-(l|t|r|b)(?:-[a-z-]+)?(?=[\s"'])/g
 const conflicts = []
 for (const file of walk(SRC)) {

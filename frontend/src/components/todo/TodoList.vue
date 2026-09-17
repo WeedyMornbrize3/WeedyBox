@@ -64,7 +64,7 @@
         <div v-if="selectedIds.length" class="ml-auto flex items-center gap-1.5">
           <button
             type="button"
-            class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer border transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer border border-solid transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             :class="armed === 'complete' ? 'btn-success' : 'btn-complete'"
             :disabled="completing"
             :aria-label="completing
@@ -91,7 +91,7 @@
 
           <button
             type="button"
-            class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer border-none transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer border border-solid transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             :class="armed === 'delete' ? 'btn-danger-armed' : 'btn-danger'"
             :disabled="deleting"
             :aria-label="deleting

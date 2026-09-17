@@ -156,7 +156,11 @@ export default defineConfig({
     // 行内图标按钮（完成 / 删除共用）：只定义尺寸与布局，
     // 颜色与状态一律由调用处的动态 class 决定——shortcut 里写颜色会压掉调用处
     // （UnoCSS 把 shortcuts 输出在 rules 之前），这个坑已经踩过。
-    'btn-row': '!w-7 !h-7 !rounded-lg !p-0 flex-center border transition-colors duration-200 cursor-pointer flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-40',
+    // ⚠️ 必须写 `border border-solid`，不能只写 `border`：
+    //    `border` 只设 border-width，不设 border-style。而 <button> 的 UA 默认
+    //    border-style 是 `outset`，于是计算值变成 `1px outset` —— 渲染成 3D 立体边，
+    //    而不是我们要的扁平描边（实测“未完成 item 的完成按钮”正是如此）。
+    'btn-row': '!w-7 !h-7 !rounded-lg !p-0 flex-center border border-solid transition-colors duration-200 cursor-pointer flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-40',
     'input-theme': 'bg-secondary rounded-lg px-3 py-2 text-primary placeholder-tertiary border-theme focus:border-brand transition-colors duration-200',
 
     // ---------- 顶部栏 ----------
