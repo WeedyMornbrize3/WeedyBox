@@ -231,30 +231,30 @@ export const useTodoStore = defineStore('todo', () => {
     }
 
     /**
-     * 批量标记完成（供「完成全部」使用）。
-     * 复用已有的 Update 绑定（它返回更新后的 Todo），逐个把返回结果就地替换，
-     * 这样后端若对 updated_at 等字段做了处理也能如实反映。
-     * 未选中的条目不受影响。
+     * 批量设置完成状态（供「完成全部 / 取消完成」使用）。
+     * 传 completed = true 是标记完成，false 是取消完成。
+     * 只处理状态确实需要变化的条目（已完成的不再重复请求），
+     * 复用已有的 Update 绑定，返回实际改动条数。
      */
-    async function completeMany(ids: number[]) {
+    async function completeMany(ids: number[], completed: boolean) {
         const unique = [...new Set(ids)]
         if (unique.length === 0) return 0
 
-        // 只处理确实存在且尚未完成的条目，避免无谓请求
-        const pending = todos.value.filter(t => unique.includes(t.id) && !t.completed)
-        if (pending.length === 0) return 0
+        // 只处理确实存在、且状态与目标不同的条目，避免无谓请求
+        const target = todos.value.filter(t => unique.includes(t.id) && t.completed !== completed)
+        if (target.length === 0) return 0
 
         try {
-            for (const todo of pending) {
-                const updated = await todoApi.update(todo.id, { completed: true } as UpdateTodoDTO)
+            for (const todo of target) {
+                const updated = await todoApi.update(todo.id, { completed } as UpdateTodoDTO)
                 const index = todos.value.findIndex(t => t.id === todo.id)
                 if (index !== -1) todos.value[index] = updated
             }
             await loadStats()
-            return pending.length
+            return target.length
         } catch (e) {
-            error.value = e instanceof Error ? e.message : '批量完成失败'
-            console.error('批量完成 TODO 失败:', e)
+            error.value = e instanceof Error ? e.message : '批量更新完成状态失败'
+            console.error('批量更新完成状态失败:', e)
             // 已成功的部分保留（后端已是事实），仅重新拉取以对齐真实状态
             await loadTodos()
             throw e

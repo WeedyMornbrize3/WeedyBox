@@ -72,13 +72,17 @@
          ⚠️ 静息态用 opacity-75 而不是更弱的 40%：实测 40% 时图标对比度仅 1.78:1，
          达不到「有意义的图标需 ≥3:1」；0.75 时两套主题最低 3.18:1，正好达标。 -->
     <div class="flex items-center gap-1 flex-shrink-0">
-      <!-- 完成 / 取消完成：图标与语义随状态互换 -->
+      <!-- 完成 / 取消完成：与删除按钮同一种描边图标按钮。
+           两种状态都保持「描边 + 图标」的同构外观，只用颜色区分：
+             未完成 → 中性灰描边；已完成 → 成功绿实心（表示当前就是这个状态）。
+           点击即切换，不要求连点——它不是破坏性操作。 -->
       <button
         type="button"
-        class="btn-row opacity-75 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+        class="btn-row opacity-75 group-hover:opacity-100 group-focus-within:opacity-100 hover:opacity-100 focus-visible:opacity-100"
         :class="todo.completed ? 'row-btn-done' : 'row-btn-todo'"
         :disabled="isUpdating"
         :aria-label="todo.completed ? `将「${todo.title}」标记为未完成` : `将「${todo.title}」标记为已完成`"
+        :aria-pressed="todo.completed"
         :title="todo.completed ? '标记为未完成' : '标记为已完成'"
         @click.stop="emit('toggle', todo.id)"
       >
@@ -91,8 +95,8 @@
       <button
         v-if="!isDeleting"
         type="button"
-        class="btn-row group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-        :class="isArmed ? 'row-btn-delete-armed opacity-100 scale-110' : 'row-btn-delete opacity-75 hover:opacity-100'"
+        class="btn-row opacity-75 group-hover:opacity-100 group-focus-within:opacity-100 hover:opacity-100 focus-visible:opacity-100"
+        :class="isArmed ? 'row-btn-delete-armed opacity-100 scale-110' : 'row-btn-delete'"
         :aria-label="isArmed ? `再次点击确认删除「${todo.title}」` : `删除「${todo.title}」（需连点两下）`"
         :title="isArmed ? '再点一次删除' : '删除（连点两下）'"
         @click.stop="handleDeleteClick"
@@ -103,7 +107,7 @@
       </button>
 
       <!-- 提交中：短暂态，避免删除瞬间元素直接消失造成的视觉跳跃 -->
-      <span v-else class="btn-row opacity-100 row-btn-done cursor-default" aria-hidden="true">
+      <span v-else class="btn-row row-btn-done cursor-default opacity-100" aria-hidden="true">
         <span class="i-lucide-loader-circle icon-sm spin" />
       </span>
     </div>
@@ -229,27 +233,51 @@ function formatDate(dateStr: string): string {
 }
 
 /* ===== 行内操作按钮（完成 / 删除）=====
+   两者共用同一套「描边图标按钮」外观，只在颜色与状态上区分，
+   符合「同一层级只用一种描边/填充风格」的一致性要求。
    实心 hover 态的文字色必须用随主题翻转的语义变量：
-   深色主题下 brand / success / danger 都是亮色，白字压上去只有 1.7~2.8:1。 */
+   深色主题下 success / danger 都是亮色，白字压上去只有 1.7~2.8:1。
+
+   静息不透明度由模板的 opacity-75 提供（实测 40% 时图标对比度仅 1.78:1，
+   达不到「有意义的图标需 ≥3:1」；0.75 时两套主题最低 3.18:1）。
+   提亮交给 group-hover / group-focus-within / hover 工具类，这里不重复声明。 */
+.row-btn-todo,
+.row-btn-done,
+.row-btn-delete,
+.row-btn-delete-armed {
+  transition: background-color var(--motion-fast) var(--ease-enter),
+              border-color var(--motion-fast) var(--ease-enter),
+              color var(--motion-fast) var(--ease-enter),
+              opacity var(--motion-fast) var(--ease-enter),
+              transform var(--motion-fast) var(--ease-enter);
+}
+
+/* --- 完成（未完成态）：中性描边，hover 填品牌色 --- */
 .row-btn-todo {
+  background-color: transparent;
+  border-color: var(--color-border-dark);
   color: var(--color-text-tertiary);
 }
 
 .row-btn-todo:hover:not(:disabled) {
   background-color: var(--color-primary);
+  border-color: var(--color-primary);
   color: var(--color-text-on-brand);
 }
 
+/* --- 完成（已完成态）：成功绿实心，表示「当前就是这个状态」 --- */
 .row-btn-done {
-  color: var(--color-success);
-}
-
-.row-btn-done:hover:not(:disabled) {
   background-color: var(--color-success);
+  border-color: var(--color-success);
   color: var(--color-text-on-success);
 }
 
-/* 删除按钮：默认只描边，hover 才填红 */
+.row-btn-done:hover:not(:disabled) {
+  background-color: transparent;
+  color: var(--color-success);
+}
+
+/* --- 删除：默认只描边，hover 才填红 --- */
 .row-btn-delete {
   background-color: transparent;
   border-color: var(--color-danger);
@@ -262,6 +290,7 @@ function formatDate(dateStr: string): string {
   color: var(--color-text-on-danger);
 }
 
+/* 待确认态：填红 + 轻微放大，明确区别于默认态 */
 .row-btn-delete-armed {
   background-color: var(--color-danger);
   border-color: var(--color-danger);

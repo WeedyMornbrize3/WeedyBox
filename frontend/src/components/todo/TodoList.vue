@@ -64,23 +64,28 @@
         <div v-if="selectedIds.length" class="ml-auto flex items-center gap-1.5">
           <button
             type="button"
-            class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer border-none transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium cursor-pointer border transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             :class="armed === 'complete' ? 'btn-success' : 'btn-complete'"
             :disabled="completing"
             :aria-label="completing
-              ? '正在完成'
+              ? (uncompleteMode ? '正在取消完成' : '正在完成')
               : armed === 'complete'
-                ? `再次点击确认将这 ${selectedIds.length} 项标记为已完成`
-                : `将选中的 ${selectedIds.length} 项标记为已完成（需连点两下确认）`"
+                ? `再次点击确认将这 ${selectedIds.length} 项${completeActionLabel}`
+                : `将选中的 ${selectedIds.length} 项${completeActionLabel}（需连点两下确认）`"
             @click="handleCompleteClick"
             @mouseleave="disarm"
             @blur="disarm"
           >
             <span
-              :class="completing ? 'i-lucide-loader-circle icon-xs spin' : armed === 'complete' ? 'i-lucide-check icon-xs' : 'i-lucide-circle-check-big icon-xs'"
+              class="icon-xs"
+              :class="completing
+                ? 'i-lucide-loader-circle spin'
+                : armed === 'complete'
+                  ? 'i-lucide-check'
+                  : uncompleteMode ? 'i-lucide-circle' : 'i-lucide-circle-check-big'"
               aria-hidden="true"
             />
-            {{ completing ? '完成中…' : armed === 'complete' ? '再点一次确认' : '完成全部' }}
+            {{ completing ? (uncompleteMode ? '取消中…' : '完成中…') : armed === 'complete' ? '再点一次确认' : completeActionLabel }}
             <span class="px-1.5 rounded-full bg-white/25 text-[10px] tabular-nums">{{ selectedIds.length }}</span>
           </button>
 
@@ -273,6 +278,14 @@ const armed = ref<'complete' | 'delete' | null>(null)
 const completing = ref(false)
 const deleting = ref(false)
 
+// 在「已完成」筛选下，列表里看到的都是已完成项，
+// 此时按钮语义反转为「取消完成」——把选中项改回未完成。
+const uncompleteMode = computed(() => todoStore.filters.completed === 'completed')
+
+const completeActionLabel = computed(() =>
+  uncompleteMode.value ? '取消完成' : '标记为已完成'
+)
+
 const disarm = () => {
   armed.value = null
 }
@@ -303,13 +316,20 @@ function handleDeleteClick() {
 async function completeSelected() {
   const ids = [...selectedIds.value]
   if (!ids.length) return
+  // 在「已完成」筛选下反向操作：把选中项改回未完成
+  const targetCompleted = !uncompleteMode.value
   completing.value = true
   try {
-    const n = await todoStore.completeMany(ids)
-    showToast('success', n > 0 ? `已完成 ${n} 项` : '所选条目均已完成')
+    const n = await todoStore.completeMany(ids, targetCompleted)
+    showToast(
+      'success',
+      n > 0
+        ? (targetCompleted ? `已完成 ${n} 项` : `已取消完成 ${n} 项`)
+        : (targetCompleted ? '所选条目均已完成' : '所选条目均未完成')
+    )
     clearSelection()
   } catch (e) {
-    showToast('error', e instanceof Error ? e.message : '批量完成失败')
+    showToast('error', e instanceof Error ? e.message : '批量更新完成状态失败')
   } finally {
     completing.value = false
   }
@@ -467,29 +487,31 @@ onBeforeUnmount(() => {
 /* 待确认态：比默认更醒目（提亮 + 描边），文字色同样走语义变量 */
 .btn-danger-armed {
   background-color: var(--color-danger);
+  border-color: var(--color-danger);
   color: var(--color-text-on-danger);
   box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-danger);
 }
 
+/* 待确认态（完成）：同构的实心 + 描边 */
 .btn-success {
   background-color: var(--color-success);
+  border-color: var(--color-success);
   color: var(--color-text-on-success);
+  box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-success);
 }
 
-.btn-success:hover:not(:disabled) {
-  opacity: 0.88;
-}
-
-/* 完成按钮的默认态与悬停态。
-   悬停变绿时文字必须同步换成 --color-text-on-success，
+/* 完成按钮的默认态：与删除按钮同构——描边 + 中性文字，hover 才填成功绿。
+   悬停/待确认变绿时文字必须同步换成 --color-text-on-success，
    否则深色主题下会变成「亮绿底 + 白字」(1.74:1，不达标)。 */
 .btn-complete {
-  background-color: var(--color-bg-secondary);
+  background-color: transparent;
+  border-color: var(--color-border-dark);
   color: var(--color-text-secondary);
 }
 
 .btn-complete:hover:not(:disabled) {
   background-color: var(--color-success);
+  border-color: var(--color-success);
   color: var(--color-text-on-success);
 }
 </style>
