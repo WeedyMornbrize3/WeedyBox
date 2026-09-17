@@ -52,7 +52,13 @@
         </time>
       </div>
 
-      <p v-if="todo.description" class="todo-desc-block group-hover:border-brand">
+      <!-- 描述块：默认只有左侧一条竖线，hover 时只有这条竖线换成品牌色。
+           竖线本身（宽度/样式/基础色）定义在下方 scoped 样式里，
+           这里只负责「悬停时换成品牌色」。
+           为什么这样拆：UnoCSS 对同一属性（border-left）只保留一条规则，
+           两条都改 border-left 的类同时写在模板上会丢掉其中一个（实测）；
+           而整框的 border-brand 会给四边都加 1px，变成方框。 -->
+      <p v-if="todo.description" class="todo-desc-block group-hover:border-l-brand">
         {{ todo.description }}
       </p>
     </div>
@@ -192,3 +198,12 @@ function formatDate(dateStr: string): string {
   return `${date.getMonth() + 1} 月 ${date.getDate()} 日`
 }
 </script>
+
+<style scoped>
+/* 描述块的左侧竖线：宽度 / 样式 / 基础色都在这里定义，
+   UnoCSS 只负责 group-hover 时的颜色切换（见模板的 group-hover:border-l-brand）。
+   这样同一属性只有一个来源，不依赖 UnoCSS 的规则输出顺序。 */
+.todo-desc-block {
+  border-left: 2px solid var(--color-border-light);
+}
+</style>

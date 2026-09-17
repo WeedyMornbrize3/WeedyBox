@@ -19,7 +19,7 @@ const must = [
   'border-theme-light', 'border-theme-dark', 'bg-brand', 'text-brand', 'text-danger', 'text-success', 'text-warning',
   'bg-secondary-soft', 'tabular-nums', 'flex-col-center',
   'sr-only', 'scrollbar-theme', 'todo-checkbox', 'prefers-reduced-motion',
-  'checked\\:border-brand', 'focus-visible\\:ring-2', 'appearance-none', 'opacity-40', 'group-hover\\:border-brand',
+  'checked\\:border-brand', 'focus-visible\\:ring-2', 'appearance-none', 'opacity-40', 'group-hover\\:border-l-brand',
   'i-lucide-trash-2', 'i-lucide-list-todo', 'i-lucide-signal-high',
   'i-lucide-inbox', 'i-lucide-loader-circle', 'i-lucide-sun', 'i-lucide-palette',
   'i-lucide-plus', 'i-lucide-rotate-ccw', 'i-lucide-search-x', 'i-lucide-layers',
@@ -86,7 +86,8 @@ console.log(borderBad === 0 ? `OK: 边框规则 ${borderRules.length} 项均自�
 const sideRules = [
   ['border-b-theme-light', 'border-bottom:1px solid var(--color-border-light)', ['border-top:0', 'border-right:0', 'border-left:0']],
   ['border-r-sidebar', 'border-right:2px solid var(--sidebar-border)', ['border-top:0', 'border-bottom:0', 'border-left:0']],
-  ['border-l-theme-light', 'border-left:2px solid var(--color-border-light)', ['border-top:0', 'border-right:0', 'border-bottom:0']],
+  // 描述块 hover：必须是单侧规则，否则会从「一条竖线」变成「一个方框」
+  ['border-l-brand', 'border-left:2px solid var(--color-primary)', ['border-top:0', 'border-right:0', 'border-bottom:0']],
 ]
 let sideBad = 0
 for (const [name, own, zeros] of sideRules) {
@@ -97,6 +98,46 @@ for (const [name, own, zeros] of sideRules) {
   }
 }
 console.log(sideBad === 0 ? `OK: 单侧边框 ${sideRules.length} 条均显式置零其余边` : `${sideBad} 项单侧边框断言失败`)
+
+// ===== 同一元素上「两条规则都改 border-left / border-top …」的自查（仅告警）=====
+// 背景：UnoCSS 对同一属性只保留一条规则，且 shortcut 输出在 rules 之前、
+// rules 之间按字母序，因此同一元素上叠加两条改同一侧边框的类时，
+// 后写的那条可能被静默丢弃（曾导致 hover 时描述块从「一条竖线」变成「一个方框」）。
+// 这里扫描模板，把同一 class 属性里出现两次同侧边框类的地方列出来，供人工确认。
+const SRC = join(process.cwd(), 'src')
+function walk(dir) {
+  const out = []
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) out.push(...walk(p))
+    else if (e.name.endsWith('.vue')) out.push(p)
+  }
+  return out
+}
+const sidePattern = /(?:^|[\s"'])!?(?:group-hover:|hover:|focus:)?border-(l|t|r|b)(?:-[a-z-]+)?(?=[\s"'])/g
+const conflicts = []
+for (const file of walk(SRC)) {
+  const text = readFileSync(file, 'utf8')
+  for (const m of text.matchAll(/class="([^"]*)"/g)) {
+    const attr = m[1]
+    const sides = {}
+    for (const sm of attr.matchAll(sidePattern)) {
+      const side = sm[1]
+      // 同一侧出现两次（且不是同类不同尺寸）时记一笔
+      sides[side] = (sides[side] ?? 0) + 1
+    }
+    const dup = Object.entries(sides).filter(([, n]) => n > 1)
+    if (dup.length) {
+      conflicts.push(`${file.replace(process.cwd(), '.')} :: ${dup.map(([s, n]) => `border-${s}×${n}`).join(', ')} :: ${attr.slice(0, 90)}`)
+    }
+  }
+}
+if (conflicts.length) {
+  console.log(`\n⚠️  疑似同侧边框类叠加 ${conflicts.length} 处（请确认是否真的需要，UnoCSS 可能只保留其一）：`)
+  for (const c of conflicts) console.log('    - ' + c)
+} else {
+  console.log('OK: 模板中无同侧边框类叠加')
+}
 
 
 // emoji 是否还残留在产物 JS 里（结构性图标应为 0）

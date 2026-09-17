@@ -92,7 +92,13 @@ export default defineConfig({
     // 真正实现「只有某一边有线」；其余边明确归零，不依赖声明顺序的巧合。
     ['border-b-theme-light', { 'border-bottom': '1px solid var(--color-border-light)', 'border-top': '0', 'border-right': '0', 'border-left': '0' }],
     ['border-r-sidebar', { 'border-right': '2px solid var(--sidebar-border)', 'border-top': '0', 'border-bottom': '0', 'border-left': '0' }],
-    ['border-l-theme-light', { 'border-left': '2px solid var(--color-border-light)', 'border-top': '0', 'border-right': '0', 'border-bottom': '0' }],
+    // 描述块 hover 时只把左竖线换成品牌色。
+    // ⚠️ 这里必须是单侧规则，不能用整框的 border-brand：
+    //    整框简写会给四边都加上 1px，描述块就会从「一条左竖线」变成「一个方框」。
+    // ⚠️ 也不要再造一条 border-l-theme-light 与之共存：两者都改 border-left，
+    //    UnoCSS 对同一属性只保留一条规则，模板里同时写会丢掉其中一个。
+    //    基础竖线因此定义在 TodoItem.vue 的 scoped 样式里，各管一件事。
+    ['border-l-brand', { 'border-left': '2px solid var(--color-primary)', 'border-top': '0', 'border-right': '0', 'border-bottom': '0' }],
 
     // 功能色
     ['text-success', { 'color': 'var(--color-success)' }],
@@ -195,7 +201,11 @@ export default defineConfig({
     // 串成一条 shortcut 时，UnoCSS 会丢弃链条中后段的部分声明——产物 CSS 里
     // .todo-check 只剩 :checked/:hover 两条，width/appearance/焦点环全部静默消失。
     // 因此列表行的样式直接写在组件模板的 class 里（见 TodoItem.vue），便于逐一核对产物。
-    'todo-desc-block': 'mt-1 text-xs leading-relaxed text-tertiary whitespace-pre-wrap break-words border-l-theme-light pl-3 transition-colors duration-200',
+    // 注意：这里刻意不含边框颜色类。基础色（border-l-theme-light）与悬停色
+    // （group-hover:border-l-brand）都写在模板上——两者的选择器权重相同（0,1,0），
+    // 若基础色留在 shortcut 内，它会按出现顺序压掉模板上的 border-l-brand，
+    // 导致「单侧变品牌色」失效（曾实测到）。谁的颜色谁负责，避免权重巧合。
+    'todo-desc-block': 'mt-1 text-xs leading-relaxed text-tertiary whitespace-pre-wrap break-words pl-3 transition-colors duration-200',
 
     // ---------- 设置页 ----------
     'settings-page': 'max-w-[700px] mx-auto w-full',
