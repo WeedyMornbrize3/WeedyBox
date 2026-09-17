@@ -241,6 +241,37 @@ func (s *TodoService) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// DeleteByIDs 批量删除指定 ID 的 TODO（一次 SQL，避免逐个往返）。
+// 前端「删除指定范围」用它：先在内存里算出命中集合，再一次性提交。
+func (s *TodoService) DeleteByIDs(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	// 动态生成占位符：DELETE FROM todos WHERE id IN (?, ?, ...)
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := `DELETE FROM todos WHERE id IN (` + strings.Join(placeholders, ", ") + `)`
+	if err := s.DB.Execute(ctx, query, args...); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return fmt.Errorf("批量删除被取消: %w", err)
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("批量删除超时: %w", err)
+		}
+		return fmt.Errorf("批量删除 TODO 失败: %w", err)
+	}
+	return nil
+}
+
 // DeleteAll 删除所有 TODO
 func (s *TodoService) DeleteAll(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)

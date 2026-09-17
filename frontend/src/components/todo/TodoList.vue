@@ -25,26 +25,47 @@
     <!-- 输入框：常驻，不藏（藏起来反而多一次点击） -->
     <TodoInput class="flex-shrink-0" />
 
-    <!-- 高级筛选：默认收起，点「筛选」才展开 -->
+    <!-- 工具行：筛选 / 删除，同级别；各自的下拉面板默认收起（渐进披露） -->
     <div v-if="hasTodos" class="flex flex-col flex-shrink-0">
-      <button
-        type="button"
-        class="filter-toggle self-start flex items-center gap-1.5 px-2 py-1 -ml-2 rounded-md text-xs cursor-pointer border-none bg-transparent hover:bg-hover transition-colors duration-200"
-        :class="!isFilterActive && 'text-tertiary'"
-        :aria-expanded="isFilterActive"
-        aria-controls="todo-filter-panel"
-        @click="isFilterActive = !isFilterActive"
-      >
-        <span class="i-lucide-sliders-horizontal icon-xs" aria-hidden="true" />
-        {{ isFilterActive ? '收起筛选' : '筛选' }}
-        <span
-          v-if="activeFilterCount"
-          class="ml-0.5 px-1.5 rounded-full text-[10px] font-medium bg-brand-light text-brand tabular-nums"
+      <div class="flex items-center gap-1">
+        <button
+          type="button"
+          class="panel-toggle flex items-center gap-1.5 px-2 py-1 rounded-md text-xs cursor-pointer border-none bg-transparent hover:bg-hover transition-colors duration-200"
+          :class="!isFilterOpen && 'text-tertiary'"
+          :aria-expanded="isFilterOpen"
+          aria-controls="todo-filter-panel"
+          @click="toggleFilterPanel"
         >
-          {{ activeFilterCount }}
-        </span>
-      </button>
+          <span class="i-lucide-sliders-horizontal icon-xs" aria-hidden="true" />
+          {{ isFilterOpen ? '收起筛选' : '筛选' }}
+          <span
+            v-if="activeFilterCount"
+            class="ml-0.5 px-1.5 rounded-full text-[10px] font-medium bg-brand-light text-brand tabular-nums"
+          >
+            {{ activeFilterCount }}
+          </span>
+        </button>
 
+        <button
+          type="button"
+          class="panel-toggle flex items-center gap-1.5 px-2 py-1 rounded-md text-xs cursor-pointer border-none bg-transparent hover:bg-hover transition-colors duration-200"
+          :class="isDeleteOpen ? 'text-danger' : 'text-tertiary'"
+          :aria-expanded="isDeleteOpen"
+          aria-controls="todo-delete-panel"
+          @click="toggleDeletePanel"
+        >
+          <span class="i-lucide-trash-2 icon-xs" aria-hidden="true" />
+          {{ isDeleteOpen ? '收起删除' : '删除' }}
+          <span
+            v-if="selectedIds.length"
+            class="ml-0.5 px-1.5 rounded-full text-[10px] font-medium bg-brand-light text-danger tabular-nums"
+          >
+            {{ selectedIds.length }}
+          </span>
+        </button>
+      </div>
+
+      <!-- ===== 筛选面板 ===== -->
       <Transition
         name="collapse"
         @enter="collapseEnter"
@@ -52,8 +73,85 @@
         @leave="collapseLeave"
         @after-leave="collapseAfterLeave"
       >
-        <div v-show="isFilterActive" id="todo-filter-panel">
+        <div v-show="isFilterOpen" id="todo-filter-panel">
           <FilterBar class="mt-2 flex-shrink-0 scrollbar-theme" />
+        </div>
+      </Transition>
+
+      <!-- ===== 删除面板：先选范围（可再手动勾选目标），确认后一次删除 ===== -->
+      <Transition
+        name="collapse"
+        @enter="collapseEnter"
+        @after-enter="collapseAfterEnter"
+        @leave="collapseLeave"
+        @after-leave="collapseAfterLeave"
+      >
+        <div v-show="isDeleteOpen" id="todo-delete-panel" class="mt-2 rounded-lg bg-secondary-soft border-theme-light p-3 flex flex-col gap-2.5">
+          <!-- 范围预设：点一下即选中该范围内的全部条目 -->
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="text-xs text-tertiary mr-0.5">范围</span>
+            <button
+              v-for="scope in DELETE_SCOPES"
+              :key="scope.value"
+              type="button"
+              class="chip"
+              :class="{ 'chip-active': deleteScope === scope.value }"
+              :aria-pressed="deleteScope === scope.value"
+              @click="applyScope(scope.value)"
+            >
+              {{ scope.label }}
+            </button>
+          </div>
+
+          <!-- 目标清单：在所选范围内自由勾选 -->
+          <div class="flex flex-col gap-1">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-tertiary">
+                {{ scopeLabel }} · 共 {{ scopedTodos.length }} 项
+              </span>
+              <div v-if="scopedTodos.length" class="flex items-center gap-2">
+                <button type="button" class="link-btn" @click="selectAllScoped">全选</button>
+                <button type="button" class="link-btn" @click="clearSelection">清空</button>
+              </div>
+            </div>
+
+            <p v-if="!scopedTodos.length" class="m-0 text-xs text-muted py-1">
+              该范围内没有 TODO
+            </p>
+
+            <!-- 条目多时内部滚动，面板高度保持稳定 -->
+            <ul v-else class="delete-list m-0 p-0 list-none flex flex-col gap-0.5">
+              <li v-for="todo in scopedTodos" :key="todo.id">
+                <label class="flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer hover:bg-hover transition-colors duration-200">
+                  <input
+                    type="checkbox"
+                    class="delete-check"
+                    :checked="selectedIds.includes(todo.id)"
+                    @change="toggleSelected(todo.id)"
+                  />
+                  <span class="flex-1 min-w-0 truncate text-xs" :class="todo.completed ? 'text-tertiary line-through' : 'text-secondary'">
+                    {{ todo.title }}
+                  </span>
+                  <span class="flex-shrink-0 text-[10px] text-muted">{{ priorityText(todo.priority) }}</span>
+                </label>
+              </li>
+            </ul>
+          </div>
+
+          <!-- 确认区 -->
+          <div class="flex items-center gap-2 pt-1 border-t border-theme-light">
+            <span class="text-xs text-tertiary">
+              待删除 <span class="font-semibold text-danger tabular-nums">{{ selectedIds.length }}</span> 项
+            </span>
+            <button
+              type="button"
+              class="ml-auto btn-danger px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer border-none transition-colors duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="!selectedIds.length || deleting"
+              @click="confirmDelete"
+            >
+              {{ deleting ? '删除中…' : confirmLabel }}
+            </button>
+          </div>
         </div>
       </Transition>
     </div>
@@ -144,14 +242,42 @@ const todoStore = useTodoStore()
 
 const hasTodos = computed(() => todoStore.todos.length > 0)
 
-// ===== 渐进披露：筛选面板默认收起 =====
-const FILTER_PANEL_KEY = 'todo-filter-panel'
-const isFilterActive = ref(false)
+// ===== 渐进披露：两个面板默认收起 =====
+const TOOL_PANEL_KEY = 'todo-tool-panel'
+const isFilterOpen = ref(false)
+const isDeleteOpen = ref(false)
 
 onMounted(() => {
-  isFilterActive.value = localStorage.getItem(FILTER_PANEL_KEY) === 'true'
+  const saved = localStorage.getItem(TOOL_PANEL_KEY)
+  isFilterOpen.value = saved === 'filter'
+  isDeleteOpen.value = saved === 'delete'
 })
-watch(isFilterActive, (v) => localStorage.setItem(FILTER_PANEL_KEY, String(v)))
+
+function persistPanelState() {
+  localStorage.setItem(TOOL_PANEL_KEY, isDeleteOpen.value ? 'delete' : isFilterOpen.value ? 'filter' : '')
+}
+
+// 同一行上的两个面板互斥展开：避免两段内容同时撑开、把列表挤得很短
+function toggleFilterPanel() {
+  isFilterOpen.value = !isFilterOpen.value
+  if (isFilterOpen.value) {
+    isDeleteOpen.value = false
+    resetDeletePanel()
+  }
+  persistPanelState()
+}
+
+function toggleDeletePanel() {
+  isDeleteOpen.value = !isDeleteOpen.value
+  if (isDeleteOpen.value) {
+    isFilterOpen.value = false
+    // 打开时默认选中「已完成」——批量删除里最常用的诉求
+    applyScope('completed')
+  } else {
+    resetDeletePanel()
+  }
+  persistPanelState()
+}
 
 // 处于非默认筛选时，即使面板收起也显示条件数量，
 // 避免「看不见的筛选」让用户以为数据丢了。
@@ -163,6 +289,102 @@ const activeFilterCount = computed(() => {
   if (f.time !== 'all') n++
   return n
 })
+
+// ===== 删除指定范围 =====
+// 「自由选择」的落点：范围只决定候选集，候选集里的每一条都可再手动勾选。
+const DELETE_SCOPES = [
+  { value: 'completed', label: '已完成' },
+  { value: 'pending', label: '未完成' },
+  { value: 'priority-high', label: '高优先级' },
+  { value: 'priority-medium', label: '中优先级' },
+  { value: 'priority-low', label: '低优先级' },
+  { value: 'all', label: '全部' },
+] as const
+
+type DeleteScope = (typeof DELETE_SCOPES)[number]['value']
+
+const deleteScope = ref<DeleteScope>('completed')
+const selectedIds = ref<number[]>([])
+const deleting = ref(false)
+
+const scopeLabel = computed(
+  () => DELETE_SCOPES.find((s) => s.value === deleteScope.value)?.label ?? ''
+)
+
+const scopedTodos = computed(() => {
+  const all = todoStore.todos
+  switch (deleteScope.value) {
+    case 'completed':
+      return all.filter((t) => t.completed)
+    case 'pending':
+      return all.filter((t) => !t.completed)
+    case 'priority-high':
+      return all.filter((t) => t.priority === 2)
+    case 'priority-medium':
+      return all.filter((t) => t.priority === 1)
+    case 'priority-low':
+      return all.filter((t) => t.priority === 0)
+    default:
+      return all
+  }
+})
+
+const confirmLabel = computed(() => {
+  const n = selectedIds.value.length
+  if (n === 0) return '确认删除'
+  // 命中范围内全部条目时提示「全部」，否则提示数量，避免误以为只删一条
+  return n === scopedTodos.value.length && n > 1 ? `删除全部 ${n} 项` : `删除 ${n} 项`
+})
+
+function applyScope(scope: DeleteScope) {
+  deleteScope.value = scope
+  selectedIds.value = scopedTodos.value.map((t) => t.id)
+}
+
+function toggleSelected(id: number) {
+  selectedIds.value = selectedIds.value.includes(id)
+    ? selectedIds.value.filter((x) => x !== id)
+    : [...selectedIds.value, id]
+}
+
+const selectAllScoped = () => {
+  selectedIds.value = scopedTodos.value.map((t) => t.id)
+}
+const clearSelection = () => {
+  selectedIds.value = []
+}
+
+function resetDeletePanel() {
+  selectedIds.value = []
+  deleteScope.value = 'completed'
+}
+
+// 优先级中文标签（与 TodoItem 的三重编码一致：0 低 / 1 中 / 2 高）
+const PRIORITY_TEXT: Record<number, string> = { 0: '低', 1: '中', 2: '高' }
+const priorityText = (p: number) => PRIORITY_TEXT[p] ?? ''
+
+async function confirmDelete() {
+  const ids = [...selectedIds.value]
+  if (!ids.length || deleting.value) return
+  deleting.value = true
+  try {
+    const n = await todoStore.deleteMany(ids)
+    showToast('success', `已删除 ${n} 项`)
+    resetDeletePanel()
+    // 删空之后整块工具行会消失，这里顺手收起面板状态
+    if (todoStore.todos.length === 0) {
+      isDeleteOpen.value = false
+      persistPanelState()
+    } else {
+      // 范围内可能还有剩余条目，重新按当前范围选中，方便连续清理
+      applyScope(deleteScope.value)
+    }
+  } catch (e) {
+    showToast('error', e instanceof Error ? e.message : '批量删除失败')
+  } finally {
+    deleting.value = false
+  }
+}
 
 // ===== 处理中的条目 =====
 // ⚠️ 每次变更都整体换一个新 Set：ref 内部的 Set 原地 add/delete 不会触发模板更新。
@@ -285,5 +507,80 @@ onBeforeUnmount(() => {
 .toast-leave-to {
   opacity: 0;
   transform: translateY(-4px);
+}
+
+/* ===== 删除面板 ===== */
+/* 面板内文字按钮（全选/清空）：低调的链接式按钮 */
+.link-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: opacity var(--motion-fast) var(--ease-enter);
+}
+
+.link-btn:hover {
+  opacity: 0.75;
+}
+
+/* 目标清单：条目多时内部滚动，避免面板把列表挤扁 */
+.delete-list {
+  max-height: 9.5rem;
+  overflow-y: auto;
+}
+
+/* 勾选框：沿用与列表行一致的外观，但尺寸更小以匹配紧凑行高 */
+.delete-check {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1.5px solid var(--color-border-dark);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--motion-fast) var(--ease-enter),
+              border-color var(--motion-fast) var(--ease-enter);
+}
+
+.delete-check:checked {
+  background-color: var(--color-bg-check);
+  border-color: var(--color-bg-check);
+}
+
+.delete-check:checked::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background-color: var(--color-check-mark);
+  -webkit-mask: var(--icon-check) center / contain no-repeat;
+  mask: var(--icon-check) center / contain no-repeat;
+}
+
+.delete-check:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+  opacity: 1;
+}
+
+/* 确认删除按钮：唯一的实心强调色按钮，位置固定在面板右下 */
+.btn-danger {
+  background-color: var(--color-danger);
+  color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.btn-danger:disabled {
+  cursor: not-allowed;
 }
 </style>

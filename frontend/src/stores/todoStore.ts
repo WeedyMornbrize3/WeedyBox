@@ -194,6 +194,42 @@ export const useTodoStore = defineStore('todo', () => {
         }
     }
 
+    /**
+     * 批量删除（供「删除指定范围」使用）。
+     * 后端一次 SQL 删除（DeleteByIDs），这里对列表做乐观更新：
+     * 先从本地移除，失败时按原索引回滚，避免用户看到明显延迟。
+     */
+    async function deleteMany(ids: number[]) {
+        const unique = [...new Set(ids)]
+        if (unique.length === 0) return 0
+
+        // 记录原始位置，失败时原样放回
+        const removed: { index: number; todo: Todo }[] = []
+        const target = new Set(unique)
+        todos.value.forEach((todo, index) => {
+            if (target.has(todo.id)) removed.push({ index, todo })
+        })
+
+        const snapshot = todos.value
+        todos.value = todos.value.filter(t => !target.has(t.id))
+
+        try {
+            await todoApi.deleteMany(unique)
+            await loadStats()
+            return removed.length
+        } catch (e) {
+            // 回滚：按原索引升序插回，恢复原有顺序
+            const restored = [...snapshot]
+            for (const { index, todo } of [...removed].sort((a, b) => a.index - b.index)) {
+                restored.splice(Math.min(index, restored.length), 0, todo)
+            }
+            todos.value = restored
+            error.value = e instanceof Error ? e.message : '批量删除失败'
+            console.error('批量删除 TODO 失败:', e)
+            throw e
+        }
+    }
+
     async function loadStats() {
         try {
             stats.value = await todoApi.getStats()
@@ -228,6 +264,7 @@ export const useTodoStore = defineStore('todo', () => {
         toggleComplete,
         updateTodo,
         deleteTodo,
+        deleteMany,
         loadStats,
         init,
         resetFilters,

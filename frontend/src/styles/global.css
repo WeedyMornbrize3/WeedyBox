@@ -241,6 +241,13 @@ body {
 /* ===== 复选框（TODO 完成态）=====
    放在这里而不是 scoped style：该元素的选中态需要在两套主题下都正确换色，
    用变量集中控制，避免组件内出现硬编码色值。 */
+
+/* 勾号形状提为变量：列表行勾选框与「删除范围」清单的勾选框共用同一形状，
+   避免在多个组件里各抄一遍 data URI（那正是容易写岔的地方）。 */
+:root {
+  --icon-check: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+}
+
 .todo-checkbox {
   background-color: transparent;
 }
@@ -259,9 +266,9 @@ body {
   height: 10px;
   background-color: currentColor;
   opacity: 0;
-  transition: opacity 0.15s ease;
-  -webkit-mask: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
-  mask: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: opacity var(--motion-fast, 160ms) ease;
+  -webkit-mask: var(--icon-check) center / contain no-repeat;
+  mask: var(--icon-check) center / contain no-repeat;
 }
 
 .todo-checkbox:checked::after {

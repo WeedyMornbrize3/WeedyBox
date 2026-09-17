@@ -41,6 +41,12 @@ export const todoApi = {
         await TodoService.Delete(id)
     },
 
+    /** 批量删除（一次 SQL）。后端对空数组直接返回，这里也做一次短路。 */
+    async deleteMany(ids: number[]): Promise<void> {
+        if (ids.length === 0) return
+        await TodoService.DeleteByIDs(ids)
+    },
+
     async getStats(): Promise<TodoStats> {
         return (await TodoService.GetStats()) ?? { total: 0, completed: 0, pending: 0 }
     },
