@@ -2,7 +2,7 @@
 <!-- 统计栏：Flat 卡片，图标全部为矢量图标（lucide），不再使用 emoji 作结构性图标 -->
 <template>
   <section
-    class="flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-2.5 rounded-lg bg-secondary-soft border-theme-light"
+    class="flex flex-wrap items-center gap-x-5 gap-y-2 min-w-0 px-4 py-2.5 rounded-lg bg-secondary-soft border-theme-light"
     aria-label="TODO 统计"
   >
     <span class="flex items-center gap-1.5 text-xs text-tertiary">

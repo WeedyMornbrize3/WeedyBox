@@ -8,8 +8,13 @@
     </header>
 
     <!-- 统计 + 新建优先级 -->
+    <!-- ⚠️ 这里不能让 TodoStats 不可收缩（曾写 flex-shrink-0）：
+         统计栏固有宽度约 271px，优先级选择器约 172px，两者都不可收缩时
+         在容器 <455px（实测 380~452px）下合计超出容器宽度，
+         统计栏内部的 flex-wrap 永远得不到触发，选择器被顶出卡片右边框。
+         改为 flex-1 min-w-0：统计栏吃掉剩余空间、可收缩，空间不足时在内部换行。 -->
     <div class="flex items-center gap-3 mt-3 flex-shrink-0">
-      <TodoStats :stats="todoStore.stats" class="flex-shrink-0" />
+      <TodoStats :stats="todoStore.stats" class="flex-1 min-w-0" />
       <TodoPrioritySelector class="flex-shrink-0" />
     </div>
 
@@ -137,10 +142,10 @@ async function runWithBusy(id: number, action: () => Promise<unknown>, okText: s
 const handleToggle = (id: number) =>
   runWithBusy(id, () => todoStore.toggleComplete(id), '已更新完成状态')
 
+// 删除不再弹确认框：确认动作已由 TodoItem 的「连点两下」承担
+// （第一下进入待确认态，第二下才 emit delete）。
 const handleDelete = (id: number) => {
-  if (confirm('确定要删除这个 TODO 吗？')) {
-    runWithBusy(id, () => todoStore.deleteTodo(id), '已删除')
-  }
+  runWithBusy(id, () => todoStore.deleteTodo(id), '已删除')
 }
 
 onMounted(() => {
