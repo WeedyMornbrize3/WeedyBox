@@ -42,3 +42,27 @@ func (w *WindowService) IsWindowMaximised() bool {
 	}
 	return false
 }
+
+// 窗口控制方法：隐藏到后台（不占任务栏）。
+// ⚠️ 与 MinimizeWindow 的区别：最小化仍留在任务栏，隐藏则完全不可见，
+// 只能靠系统托盘图标唤回——所以托盘必须已创建（见 main.go 的 setupSystemTray）。
+func (w *WindowService) HideWindow() {
+	if w.Window != nil {
+		w.Window.Hide()
+	}
+}
+
+// 窗口控制方法：从后台恢复显示并聚焦
+func (w *WindowService) ShowWindow() {
+	if w.Window != nil {
+		w.Window.Show().Focus()
+	}
+}
+
+// 窗口控制方法：当前是否可见（前端可据此判断自己是否处于后台）
+func (w *WindowService) IsWindowVisible() bool {
+	if w.Window != nil {
+		return w.Window.IsVisible()
+	}
+	return false
+}

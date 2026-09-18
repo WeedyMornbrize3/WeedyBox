@@ -20,6 +20,12 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// 托盘图标：复用构建用的多尺寸 ICO，并在编译期嵌入二进制，
+// 这样运行时不依赖工作目录（应用可能从 bin/ 启动）。
+//
+//go:embed build/windows/icon.ico
+var trayIcon []byte
+
 func init() {
 	// Register a custom event whose associated data type is string.
 	// This is not required, but the binding generator will pick up registered events
@@ -81,6 +87,25 @@ func main() {
 	})
 
 	windowService.Window = win
+
+	// 系统托盘：窗口「隐藏到后台」之后唯一的唤回入口，必须在这里创建。
+	// 用 Wails 的智能默认行为（不再手动设置点击回调）：
+	//   左键单击 → 切换窗口显示/隐藏
+	//   右键      → 弹出下面的菜单
+	// 菜单里额外给一个明确的「退出程序」，否则隐藏后只能靠任务管理器结束。
+	tray := app.SystemTray.New()
+	tray.SetIcon(trayIcon)
+	tray.SetTooltip("WeedyBox")
+	tray.AttachWindow(win)
+	trayMenu := application.NewMenu()
+	trayMenu.Add("显示主窗口").OnClick(func(_ *application.Context) {
+		win.Show().Focus()
+	})
+	trayMenu.AddSeparator()
+	trayMenu.Add("退出程序").OnClick(func(_ *application.Context) {
+		app.Quit()
+	})
+	tray.SetMenu(trayMenu)
 
 	// Create a goroutine that emits an event containing the current time every second.
 	// The frontend can listen to this event and update the UI accordingly.

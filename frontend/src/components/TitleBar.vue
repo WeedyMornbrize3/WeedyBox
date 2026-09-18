@@ -39,12 +39,17 @@
           class="close-pop absolute top-[calc(100%+6px)] right-0 z-[1200] w-56 p-2 rounded-lg bg-card border-theme shadow-theme-heavy"
         >
           <p class="m-0 px-1.5 pb-1.5 text-[11px] text-tertiary">
-            最小化到任务栏，还是退出程序？
+            最小化、隐藏到托盘，还是退出程序？
           </p>
 
           <button type="button" class="close-opt" @click="choose('minimise')">
             <span class="i-lucide-minus icon-sm" aria-hidden="true" />
-            <span class="flex-1 text-left">最小化</span>
+            <span class="flex-1 text-left">最小化到任务栏</span>
+          </button>
+
+          <button type="button" class="close-opt" @click="choose('hide')">
+            <span class="i-lucide-eye-off icon-sm" aria-hidden="true" />
+            <span class="flex-1 text-left">隐藏到托盘</span>
           </button>
 
           <button type="button" class="close-opt close-opt-danger" @click="choose('close')">
@@ -66,6 +71,7 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { 
   MinimizeWindow, 
+  HideWindow,
   ToggleMaximizeWindow, 
   CloseWindow, 
   IsWindowMaximised 
@@ -103,12 +109,24 @@ const quit = async () => {
   }
 }
 
-/** 执行某个关闭动作（最小化或退出） */
+/** 隐藏到系统托盘：窗口完全不可见，靠托盘图标左键唤回 */
+const hideToTray = async () => {
+  try {
+    await HideWindow()
+  } catch (e) {
+    console.error('隐藏失败', e)
+  }
+}
+
+/** 执行某个关闭动作 */
 const runAction = (action: Exclude<CloseAction, 'ask'>) => {
   isPromptOpen.value = false
   remember.value = false
-  if (action === 'minimise') void minimize()
-  else void quit()
+  switch (action) {
+    case 'minimise': return void minimize()
+    case 'hide': return void hideToTray()
+    case 'close': return void quit()
+  }
 }
 
 /**
