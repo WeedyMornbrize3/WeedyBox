@@ -74,7 +74,7 @@ export const useThemeStore = defineStore('theme', () => {
     mediaQuery.addEventListener('change', handler)
     return () => mediaQuery.removeEventListener('change', handler)
   }
-  
+    
   return {
     // State
     mode,

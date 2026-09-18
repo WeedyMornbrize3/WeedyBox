@@ -6,6 +6,7 @@ import App from './App.vue'
 import router from './router'
 import { useThemeStore } from './stores/Theme'
 import { useSidebarStore } from './stores/Sidebar'
+import { useAppStore } from './stores/App'
 
 const pinia = createPinia()
 const app = createApp(App)
@@ -17,6 +18,8 @@ const themeStore = useThemeStore()
 themeStore.restoreState()
 const sidebarStore = useSidebarStore()
 sidebarStore.restoreState()
+const appStore = useAppStore()
+appStore.restoreState()
 
 themeStore.setupSystemListener()
 

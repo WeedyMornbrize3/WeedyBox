@@ -16,6 +16,11 @@
 
     <!-- 通用设置 -->
     <SettingsSection icon="i-lucide-sliders-horizontal" title="通用">
+      <!-- 关闭按钮行为：与 TitleBar 的 X 联动 -->
+      <SettingsItem label="点击关闭时" :description="closeActionDescription">
+        <CloseActionSelect v-model="closeAction" />
+      </SettingsItem>
+
       <SettingsItem label="语言" description="选择界面语言">
         <LanguageSelect v-model="language" />
       </SettingsItem>
@@ -30,11 +35,13 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useThemeStore } from '../stores/Theme'
+import { useAppStore, CLOSE_ACTION_OPTIONS } from '../stores/App'
 import SettingsPage from '../components/settings/SettingsPage.vue'
 import SettingsSection from '../components/settings/SettingsSection.vue'
 import SettingsItem from '../components/settings/SettingsItem.vue'
 import ThemeToggle from '../components/settings/ThemeToggle.vue'
 import ThemeModeSelector from '../components/settings/ThemeModeSelector.vue'
+import CloseActionSelect from '../components/settings/CloseActionSelect.vue'
 import LanguageSelect from '../components/settings/LanguageSelect.vue'
 import VersionInfo from '../components/settings/VersionInfo.vue'
 
@@ -46,6 +53,16 @@ const themeMode = computed({
 
 const modeDes = computed(() => 
   themeStore.isDark ? '深色模式' : '浅色模式'
+)
+
+// 标题栏关闭按钮行为
+const appStore = useAppStore()
+const closeAction = computed({
+  get: () => appStore.closeAction,
+  set: (value) => appStore.setCloseAction(value),
+})
+const closeActionDescription = computed(
+  () => CLOSE_ACTION_OPTIONS.find((o) => o.value === appStore.closeAction)?.description ?? ''
 )
 
 const language = ref('zh-CN')
