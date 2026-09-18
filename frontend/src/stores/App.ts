@@ -6,22 +6,23 @@ import { ref, watch } from 'vue'
 
 /**
  * 关闭按钮（标题栏 X）的行为：
- *   ask       每次询问：弹出浮层让用户选
- *   minimise  最小化到任务栏
- *   hide      隐藏到系统托盘（窗口完全不可见，靠托盘图标唤回）
- *   close     退出程序
+ *   ask    每次询问：弹出浮层让用户选
+ *   hide   隐藏到系统托盘（窗口完全不可见，靠托盘图标唤回）
+ *   close  退出程序
+ *
+ * 注：刻意不提供「最小化到任务栏」——标题栏左侧已有独立的最小化按钮，
+ * 放在关闭行为里属于重复入口，且会让「关闭」这个决定变得含糊。
  */
-export type CloseAction = 'ask' | 'minimise' | 'hide' | 'close'
+export type CloseAction = 'ask' | 'hide' | 'close'
 
 export const CLOSE_ACTION_OPTIONS: { value: CloseAction; label: string; description: string }[] = [
-  { value: 'ask', label: '每次询问', description: '弹出选择：最小化 / 隐藏到托盘 / 退出程序' },
-  { value: 'minimise', label: '最小化', description: '最小化到任务栏，点任务栏图标即可回来' },
+  { value: 'ask', label: '每次询问', description: '弹出选择：隐藏到托盘 / 退出程序' },
   { value: 'hide', label: '隐藏到托盘', description: '窗口完全隐藏，点托盘图标唤回' },
   { value: 'close', label: '退出程序', description: '直接退出程序' },
 ]
 
 const STORAGE_KEY = 'close-action'
-const VALID: CloseAction[] = ['ask', 'minimise', 'hide', 'close']
+const VALID: CloseAction[] = ['ask', 'hide', 'close']
 
 export const useAppStore = defineStore('app', () => {
   const closeAction = ref<CloseAction>('ask')
