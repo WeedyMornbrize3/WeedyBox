@@ -7,9 +7,18 @@
         输入框 + 内嵌图标按钮用同级 flex item 排布（不用 absolute + 手调 padding）：
         两者永不重叠，且图标按钮随输入框高度居中。
         min-w-0 让输入框可收缩，否则长内容会把添加按钮挤出容器。
+
+        ⚠️ 外观必须与 uno.config.ts 的 `input-theme`（测试页搜索框走这条）一致：
+           外壳 = control-h rounded-[10px] bg-secondary border-theme
+                  transition-colors duration-200 focus-within:border-brand
+           内层 = text-sm text-primary placeholder:text-tertiary
+                  （不写纵向 padding：高度已由外壳的 control-h 固定，
+                    再写 py-* 只会把内容撑出固定高度）
+           改这里就要同步改 `input-theme`，反之亦然，否则两个输入框会长得不一样。
+        外壳用 focus-within（不是 focus）：焦点实际落在内层 <input> 上。
       -->
       <div
-        class="flex items-center gap-1 flex-1 min-w-0 pl-3 pr-1 rounded-[10px] bg-secondary border-theme transition-colors duration-200 focus-within:border-brand"
+        class="control-h flex items-center gap-1 flex-1 min-w-0 pl-3 pr-1 rounded-[10px] bg-secondary border-theme transition-colors duration-200 focus-within:border-brand"
       >
         <span class="i-lucide-plus icon-sm text-tertiary flex-shrink-0" aria-hidden="true" />
 
@@ -18,7 +27,7 @@
           type="text"
           :placeholder="showDesc ? '添加新的 TODO 标题…' : '添加新的 TODO…'"
           aria-label="TODO 标题"
-          class="flex-1 min-w-0 bg-transparent border-none outline-none py-2.5 text-sm text-primary placeholder-tertiary"
+          class="flex-1 min-w-0 bg-transparent border-none outline-none text-sm text-primary placeholder:text-tertiary"
           @keyup.enter="handleSubmit"
         />
 
@@ -37,10 +46,13 @@
         </button>
       </div>
 
+      <!-- 提交按钮：与测试页搜索按钮同一套样式（btn-brand shortcut）。
+           唯一额外项是 disabled 态 —— 本按钮在输入为空时是 disabled 的，
+           不写 disabled:* 会看起来「可点但没反应」（btn-brand 本身不含禁用态）。 -->
       <button
         type="button"
         :disabled="!newTodo.trim() || loading"
-        class="flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-[10px] text-sm font-medium transition-colors duration-200 bg-brand text-inverse hover:bg-brand-hover border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        class="btn-brand flex items-center gap-1.5 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
         @click="handleSubmit"
       >
         <span :class="loading ? 'i-lucide-loader-circle icon-sm spin' : 'i-lucide-plus icon-sm'" aria-hidden="true" />
@@ -56,7 +68,7 @@
           v-model="desc"
           placeholder="添加描述（可选）…"
           aria-label="TODO 描述"
-          class="w-full h-[4.5rem] leading-relaxed resize-none outline-none rounded-[10px] px-3 py-2.5 text-xs bg-secondary text-secondary placeholder-tertiary border-theme transition-colors duration-200 focus:border-brand"
+          class="w-full h-[4.5rem] leading-relaxed resize-none outline-none rounded-[10px] px-3 py-2.5 text-xs bg-secondary text-secondary placeholder:text-tertiary border-theme transition-colors duration-200 focus:border-brand"
           @keydown.enter.exact.prevent="handleSubmit"
           @keydown.ctrl.enter.prevent="insertLineBreak"
           @keydown.meta.enter.prevent="insertLineBreak"

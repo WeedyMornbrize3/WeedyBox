@@ -26,11 +26,13 @@ const routes = [
         meta: { title: 'TODO' }
       },
       {
-        path: '/test',
-        name: 'test',
+        path: '/testing',
+        name: 'Testing',
         component: () => import('../views/test.vue'),
-        meta: { title: '测试' }
+        meta: { title: '接口测试' }
       },
+      // 旧路径保留为重定向，避免老书签 404（组件仍是同一个 test.vue）
+      { path: '/test', redirect: '/testing' },
     ]
   }
 ]

@@ -65,3 +65,6 @@ go.sum
 # 日志
 *.log
 logs/
+
+# DLsite 封面下载目录（接口测试页产出，运行时生成，不入库）
+/preImg/

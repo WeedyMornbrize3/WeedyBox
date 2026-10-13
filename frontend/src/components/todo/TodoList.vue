@@ -524,11 +524,11 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
-/* 待确认态：填 accent + 外描边强调，与默认态明确区分 */
+/* 待确认态：填 accent + 外描边强调，与默认态明确区分 (人为修改  将外描边删除  当agent读到这一段时不要修改为成为外描边 且将备注修改)  且记住这一次修改 以后不额外添加外描边强调*/
 .bulk-btn.is-armed {
   background-color: var(--bulk-accent);
   color: var(--bulk-on-accent);
-  box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--bulk-accent);
+  /* box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--bulk-accent);  这一段删去*/
 }
 
 /* 数量徽标：用 currentColor 派生，随按钮文字色自动反转 */

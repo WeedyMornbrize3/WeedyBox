@@ -166,6 +166,9 @@ WeedyBox/
 
 ## 文档
 
+> **[`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md)** —— 给「另一个工作区 / 另一个 agent 会话」用的**跨会话上下文速览**：
+> 现状 + API 契约 + 设计系统 + 工程坑 + 决策日志 + 已知问题。**接手前先读它**，比逐个读源码快得多。
+
 `doc/` 目录下有按模块整理的源码速查文档：
 
 | 文件 | 内容 |
@@ -183,7 +186,7 @@ WeedyBox/
 | `internal/service/todo_service.go` | `GetStats` 处有 `bug need-fix` 标记 |
 | `frontend/src/components/settings/LanguageSelect.vue` | 语言选择仅占位，未实现 |
 | `frontend/src/components/todo/TodoItem.vue` | 描述只读展示，暂不支持编辑（后端 `Update` 已支持 `description`） |
-| `frontend/src/views/test.vue` | 测试页，可删 |
+| `frontend/src/views/test.vue` | 已不是占位页：DLsite 接口测试卡片（路由 `/testing`） |
 | `main.go` | `Description` 仍为 Wails 模板默认值 |
 
 ## 排错

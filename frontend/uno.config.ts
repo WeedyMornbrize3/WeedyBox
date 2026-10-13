@@ -150,8 +150,18 @@ export default defineConfig({
     'card-flat': 'bg-card rounded-xl border-theme',
     'card-hover': 'card hover:border-brand transition-colors duration-200',
 
+    // ---------- 控件高度（输入框与按钮共用一个 token）----------
+    // 2.2rem = 35.2px —— 这是 btn-brand 的固有高度（icon-sm 19.2px 行盒 + py-2 16px），
+    // 输入框必须与它同高。不同高的后果实测过：输入框 41.6px、按钮 35.2px，
+    // 一行 form 里（items-end）底部对齐、顶部错开 6.4px。
+    // ⚠️ 用了固定高度后，控件内部不要再写纵向 padding：固定高度已经决定总高，
+    //    纵向 padding 只会把内容挤出盒子。垂直居中交给 <input> 自身
+    //    或容器的 `items-center`。
+    // ⚠️ 三处必须同源：btn-brand、input-theme、TodoInput.vue 的输入框外壳。
+    'control-h': 'h-[2.2rem]',
+
     // ---------- 按钮 ----------
-    'btn-brand': 'px-4 py-2 bg-brand text-inverse rounded-lg font-medium hover:bg-brand-hover transition-colors duration-200 cursor-pointer border-none',
+    'btn-brand': 'control-h px-4 bg-brand text-inverse rounded-lg font-medium hover:bg-brand-hover transition-colors duration-200 cursor-pointer border-none',
     'btn-ghost': 'px-4 py-2 text-secondary hover:text-primary hover:bg-hover rounded-lg transition-colors duration-200 cursor-pointer border-none bg-transparent',
     // 行内图标按钮（完成 / 删除共用）：只定义尺寸与布局，
     // 颜色与状态一律由调用处的动态 class 决定——shortcut 里写颜色会压掉调用处
@@ -161,7 +171,23 @@ export default defineConfig({
     //    border-style 是 `outset`，于是计算值变成 `1px outset` —— 渲染成 3D 立体边，
     //    而不是我们要的扁平描边（实测“未完成 item 的完成按钮”正是如此）。
     'btn-row': '!w-7 !h-7 !rounded-lg !p-0 flex-center border border-solid transition-colors duration-200 cursor-pointer flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-40',
-    'input-theme': 'bg-secondary rounded-lg px-3 py-2 text-primary placeholder-tertiary border-theme focus:border-brand transition-colors duration-200',
+    // 注意：UnoCSS 没有 `placeholder-<color>` 工具类，写了会被静默丢弃
+    // （构建时只留一行 unmatched 警告，元素上看不出任何异常）。
+    // 占位符颜色必须写成 `placeholder:text-<color>` 变体。
+    // 普通输入框（单元素）。视觉量必须与 TODO 输入框「外壳 + 内层 input」组合件一致：
+    //   TODO 外壳：control-h rounded-[10px] bg-secondary border-theme
+    //              transition-colors duration-200 focus-within:border-brand
+    //   TODO 内层：text-sm text-primary placeholder:text-tertiary（无纵向 padding）
+    // 所以这里是 control-h + rounded-[10px] + px-3 + text-sm + focus:border-brand。
+    // 改这条要同步改 TodoInput.vue，反之亦然（两处外观必须一样）。
+    // ⚠️ 底座 border-theme 与 focus:border-brand 会产出**两条** border 规则，
+    //    这是预期的（底座 + 聚焦态各一条），check-build-css.mjs 正是断言「恰好 2 条」。
+    // ⚠️ 必须带 `outline-none`：global.css:188 有一条全局
+    //    `:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px }`（键盘可达性兜底）。
+    //    本输入框已经用 focus:border-brand 表达焦点，不禁用全局 focus ring 就会
+    //    「边框 + 外圈 outline」同色叠成**两层框**（实测聚焦态 border 0.8px + outline 1.6px，都是 brand 色）。
+    //    TodoInput.vue 的内层 input 同样写了 outline-none，两边必须一致。
+    'input-theme': 'control-h bg-secondary rounded-[10px] px-3 text-sm text-primary placeholder:text-tertiary border-theme outline-none transition-colors duration-200 focus:border-brand',
 
     // ---------- 顶部栏 ----------
     'titlebar': 'fixed top-0 left-0 right-0 h-[30px] flex items-center justify-between px-3 bg-base text-secondary z-[1100] select-none border-b-theme-light',

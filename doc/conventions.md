@@ -100,7 +100,10 @@ cmds:
 > 仍保留 `common:build:server` / `common:run:server`：它们用 `go build -tags server` **纯 Go 编译、不依赖 Docker**，
 > 在本机可用（产出 Windows 可执行文件），不属于"坏任务"。
 
-Go 模块：`WeedyBox`，Wails v3 `v3.0.0-beta.10`，SQLite 走 `modernc.org/sqlite`（**纯 Go，无需 CGO**）。
+Go 模块：`WeedyBox`，`go.mod` 声明 Wails v3 `v3.0.0-beta.10`（本机 CLI 实为 `v3.0.0-beta.20`）。
+SQLite 实际走 **Wails 内置 `github.com/wailsapp/wails/v3/pkg/services/sqlite`**（见 `main.go` 的 `sqlite.NewWithConfig`），
+`modernc.org/sqlite` 只是它带进来的**传递依赖（indirect）**，不是本项目直接使用——早前记成「走 modernc.org/sqlite」不准确。
+底层仍是纯 Go、无需 CGO。
 
 ## 扫描范围
 
@@ -126,7 +129,9 @@ Go 模块：`WeedyBox`，Wails v3 `v3.0.0-beta.10`，SQLite 走 `modernc.org/sql
 | `internal/service/todo_service.go:284` | 注释标记 `bug need-fix`（`GetStats`） |
 | `frontend/src/components/settings/LanguageSelect.vue` | 仅占位，未实现 |
 | `frontend/src/components/todo/TodoItem.vue` | 描述只读展示，**尚不能编辑**（后端 `Update` 已支持 `description`） |
-| `frontend/src/views/test.vue` | 测试页，可删 |
+| `frontend/src/views/test.vue` | 已不是占位页：DLsite 接口测试卡片（路由 `/testing`） |
 | `README.md` | 仍为 Wails 模板原文，未更新为项目说明 |
 | `main.go:56` | `Description` 仍是 `"A demo of using raw HTML & CSS"` |
-| `global.css:8` | `body` 背景硬编码 `#1A1A22`（深色值），浅色主题下启动会闪深色 |
+| `doc/styles.md` | 「无效工具类」表里 `top-50%` / `right-2` 两行是错的（实际合法生成）；`doc/frontend.md` 提到的 `desc-hint` 在模板里不存在 |
+| `doc/frontend.md` | 窗口服务行号未含新增的 `HideWindow` / `ShowWindow` / `IsWindowVisible` |
+| `global.css:29` | **已澄清**：`html,body,#app` 的 `#101418` 是「启动底色」（与窗口 `BackgroundColour` 一致，避免启动闪白），两套主题下都保持深色，不是缺陷 |

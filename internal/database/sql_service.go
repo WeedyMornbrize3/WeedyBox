@@ -18,18 +18,18 @@ type SQLiteService struct {
 // ===== 实现 application.Service 接口 =====
 
 func (s *SQLiteService) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
-	log.Println("🔧 初始化数据库服务...")
+	log.Println("初始化数据库服务...")
 	// 直接使用 s.DB.Execute 测试连接
 	if err := s.DB.Open(); err != nil {
 		// 如果连接失败，尝试重新创建
-		log.Printf("⚠️ 数据库连接失败，尝试重新创建: %v", err)
+		log.Printf("数据库连接失败，尝试重新创建: %v", err)
 		// 注意：在 Wails v3 中，ServiceStartup 时连接可能还未建立
 		// 解决方法：在窗口创建后再初始化
 	}
 	if err := initAllTables(application.Get().Context(), s); err != nil {
 		log.Fatal("初始化表失败", err)
 	}
-	log.Println("✅ 数据库服务已注册")
+	log.Println("数据库服务已注册")
 	return nil
 }
 

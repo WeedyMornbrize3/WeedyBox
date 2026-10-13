@@ -20,7 +20,7 @@ Hash 模式。父级 `/` → `MainLayout`，子路由：
 | `/` | Home | `views/HomePage.vue` | 首页 |
 | `/settings` | Settings | `views/SettingPage.vue` | 设置 |
 | `/todo` | Todo | `views/TodoPage.vue` | TODO |
-| `/test` | test | `views/test.vue` | 测试 |
+| `/testing` | Testing | `views/test.vue` | 接口测试（旧路径 `/test` 重定向到此） |
 
 ## Store
 

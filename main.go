@@ -5,6 +5,7 @@ import (
 
 	"WeedyBox/internal/database"
 	"WeedyBox/internal/service"
+	"WeedyBox/internal/service/getMeta"
 	"log"
 	"time"
 
@@ -51,10 +52,15 @@ func main() {
 		DB: dbService,
 	}
 
+	// 元数据抓取服务：只在「测试」页的接口测试卡片里用。
+	// 封面图片会落到工作目录下的相对路径 preImg/。
+	metaService := &getmeta.MetaApiService{}
+
 	applicationServices := []application.Service{
 		application.NewService(windowService),
 		application.NewService(todoService),
 		application.NewService(dbService),
+		application.NewService(metaService),
 	}
 
 	app := application.New(application.Options{

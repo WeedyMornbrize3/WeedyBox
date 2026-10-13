@@ -102,6 +102,66 @@ for (const [name, own, zeros] of sideRules) {
 }
 console.log(sideBad === 0 ? `OK: 单侧边框 ${sideRules.length} 条均显式置零其余边` : `${sideBad} 项单侧边框断言失败`)
 
+// ===== 搜索框 / 表单类专项断言 =====
+// 回归背景：
+//  1. `placeholder-<color>` 不是 UnoCSS 的合法工具类，写了会被静默丢弃
+//     （只在构建时留一行 unmatched 警告），占位符颜色必须写 `placeholder:text-<color>`。
+//     曾出现在 `input-theme` shortcut 与 TodoInput.vue 的两个输入框上。
+//  2. 输入框的边框必须由**一条**自带三件套的规则提供（`border-theme`），
+//     聚焦态只覆盖同一属性；若再加一条改 `border` 的类，UnoCSS 只会保留其一。
+// 注意 minify 后选择器会被分组写成 `.input-theme,[input-theme=""]{…}`，
+// 所以不能拿 `.input-theme:focus{…}` 这种整串去 includes（会假失败）。
+const formRules = [
+  ['input-theme 底座边框', 'border:1px solid var(--color-border)'],
+  ['input-theme 聚焦态', 'border:1px solid var(--color-primary)'],
+  ['占位符颜色变体（不是 placeholder-<color>）', '::placeholder{color:var(--color-text-tertiary)}'],
+]
+let formBad = 0
+for (const [name, needle] of formRules) {
+  if (!css.includes(needle)) { formBad++; console.log(`  MISSING  ${name}  (${needle})`) }
+}
+// 反向断言：不允许出现 `placeholder-<color>` 这种无效工具类
+const badPlaceholder = css.match(/\.placeholder-[a-z]+\b/g)
+if (badPlaceholder) { formBad++; console.log(`  ❌ 出现无效工具类 ${[...new Set(badPlaceholder)].join(', ')}（应为 placeholder:text-*）`) }
+// 反向断言：`.input-theme` 的 border 只能出现在「底座」与「聚焦」两条规则上
+// （多于两条 = 同一元素上有重复的 border 来源，会出现 hover/focus 显示异常）
+{
+  const blocks = css.match(/[^{}]*\.input-theme[^{}]*\{[^}]*\}/g) ?? []
+  const withBorder = blocks.filter((b) => /\bborder\b/.test(b))
+  if (withBorder.length !== 2) {
+    formBad++
+    console.log(`  ⚠️ .input-theme 含 border 的规则有 ${withBorder.length} 条（应为 2：底座 + 聚焦）`)
+    for (const b of withBorder) console.log('      ' + b.slice(0, 140))
+  }
+  const baseBlocks = blocks.filter((b) => /\.input-theme[,\s{]/.test(b) && /border:1px solid var\(--color-border\)/.test(b))
+  if (baseBlocks.length !== 1) {
+    formBad++
+    console.log(`  ⚠️ .input-theme 底座边框规则有 ${baseBlocks.length} 条（应为 1）`)
+  }
+}
+// ===== 控件高度一致性 =====
+// 回归背景：输入框曾用 `py-2.5`、按钮用 `py-2`，高度由「内容高 + 纵向 padding」撑出，
+// 实测同一行 form（items-end）里 41.6px vs 35.2px，底部对齐时顶部错开 6.4px。
+// 现在三处统一走 `control-h`（h-[2.2rem] = 35.2px），因此**控件内部不能再有纵向 padding**：
+// 固定高度下它不再影响盒高（border-box），只会把内容挤出盒子。
+{
+  const ruleOf = (sel) => (css.match(new RegExp(`[^{}]*\\.${sel}[^{}]*\\{[^}]*\\}`)) ?? [''])[0]
+  for (const sel of ['control-h', 'input-theme', 'btn-brand']) {
+    const body = ruleOf(sel)
+    if (!body) { formBad++; console.log(`  ❌ 缺少 .${sel} 规则`); continue }
+    if (!body.includes('height:2.2rem')) { formBad++; console.log(`  ❌ .${sel} 未使用统一高度 2.2rem（control-h）`) }
+    if (/(^|;)padding-(top|bottom):/.test(body)) { formBad++; console.log(`  ❌ .${sel} 带纵向 padding，会挤坏统一高度`) }
+  }
+  const todoSrc = readFileSync(join(process.cwd(), 'src', 'components', 'todo', 'TodoInput.vue'), 'utf8')
+  if (!/<div[^>]*class="control-h[^"]*"/.test(todoSrc)) {
+    formBad++
+    console.log('  ❌ TodoInput.vue 输入框外壳未挂 control-h（会与 input-theme 不同高）')
+  }
+  const innerCls = (todoSrc.match(/<input\b[\s\S]*?class="([^"]*)"/) ?? [])[1] ?? ''
+  if (/\bpy-\d/.test(innerCls)) { formBad++; console.log(`  ❌ TodoInput.vue 内层 input 仍带纵向 padding：${innerCls}`) }
+}
+console.log(formBad === 0 ? `OK: 搜索框/表单 ${formRules.length} 项断言通过（无重复 border、无无效 placeholder 类）` : `${formBad} 项表单断言失败`)
+
 // ===== 模板静态扫描的公共部分 =====
 const SRC = join(process.cwd(), 'src')
 function walk(dir) {
