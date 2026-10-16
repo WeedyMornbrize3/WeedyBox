@@ -238,4 +238,4 @@ node -e "console.log(require('./frontend/node_modules/vite/package.json').versio
 
 **列表能显示但数据为空 / 前端报错**
 
-只跑 `npm run dev` 时没有 Wails 后端，属正常现象，请用 `wails3 dev`。
+只跑 `npm run dev` 时没有 Wails 后端，属正常现象，请用 `wails3 dev`。。
