@@ -50,6 +50,7 @@ go.sum
 *.sqlite3
 *.wal
 *.shm
+.dsh-meow/
 
 # 环境变量
 .env

@@ -52,10 +52,12 @@ internal/service/getMeta/meta_service.go   Wails 包装层 MetaApiService（搜�
 internal/service/getMeta/testdata/        两个真实作品页 fixture（离线回归用）
 internal/service/window_service.go WindowService：最小化 / 最大化 / 关闭 / 隐藏 / 显示 / 可见性
 frontend/src/main.ts             Pinia + router + 三个 store 的 restoreState()
-frontend/src/router/index.ts     hash 路由，MainLayout 下挂 4 个子页
-frontend/src/stores/             todoStore.ts · Sidebar.ts · Theme.ts · App.ts
+frontend/src/router/index.ts     hash 路由，MainLayout 下挂 5 个子页（/ · /works · /todo · /testing · /settings）
+frontend/src/stores/             todoStore.ts · metaStore.ts · Sidebar.ts · Theme.ts · App.ts
 frontend/src/services/todoService.ts  Wails 绑定封装：todoApi（含 ensure() 兜底 null）
 frontend/src/services/metaService.ts  Wails 绑定封装：metaApi（DLsite 搜索/抓取/下载封面）
+frontend/src/utils/metaFormat.ts 元数据展示纯函数：toMessage / formatBytes / fileUrl / buildSummaryRows（+ MetaRow 类型）
+frontend/src/components/meta/    作品库与调试页共用的高粒度积木（MetaSection/搜索行/封面/键值表/明细…，见 §4.6）
 frontend/src/components/todo/    TodoList · TodoItem · TodoInput · TodoStats · FilterBar · FilterChipGroup · TodoPrioritySelector
 frontend/src/components/settings/ CloseActionSelect · ThemeModeSelector · ThemeToggle · LanguageSelect(占位) · SettingsSection/Item/Page · VersionInfo
 frontend/src/components/         Sidebar.vue · TitleBar.vue
@@ -113,8 +115,14 @@ doc/                             README/backend/frontend/styles/conventions + ne
 
 **图片落地位置**：`const preImgDir = "preImg"` 是**相对路径**，实际落点取决于进程工作目录（开发态从仓库根目录跑 → `WeedyBox/preImg/`）。返回值同时给 `path`（相对，展示用）和 `absPath`（绝对，对照用）。后缀按**真实内容**判定（RIFF/WEBP、JPEG SOI、PNG 签名…）→ `Content-Type` → URL 扩展名 → `.jpg`；硬编码 `.jpg` 是错的，因为存在 `.webp` 封面。
 
-**前端页面**：路由 `/testing`（name `Testing`；旧路径 `/test` 保留为重定向）。视图层 `frontend/src/views/test.vue` 只是个薄壳（与 `TodoPage.vue` → `TodoList.vue` 同一结构），实际内容在 **`frontend/src/components/test/MetaApiTestCard.vue`**。四张卡片：请求 / 精确命中（含封面预览与下载）/ 模糊搜索候选 / 原始 JSON（可复制）。
-该页**自带滚动容器**：根元素为 `w-full max-w-4xl mx-auto h-full min-h-0 overflow-y-auto scrollbar-theme pr-2 flex flex-col gap-4 select-text`。原因是 `frontend/src/layouts/MainLayout.vue:6` 的 router-view 是 `overflow-hidden`，页面必须自己提供滚动；而 `frontend/src/styles/global.css:207-213` 用 `!important` 全局隐藏了滚动条，只有 `.scrollbar-theme` 能恢复（`scrollbar-width: thin` + 带 `!important` 的 `::-webkit-scrollbar`）。`pr-2` 给 8px 滚动条留位。实测：内容 1684px / 视口 881px 时 `scrollTop` 可正常设置，无第二层滚动条。
+**前端页面（两个）**：共用 `stores/metaStore.ts`（状态与请求）与 `components/meta/*`（积木），只是排布不同：
+
+| 路由 | 视图 | 定位与排布 |
+| --- | --- | --- |
+| `/testing`（name `Testing`；旧路径 `/test` 重定向） | `views/test.vue`（薄壳，只渲染 `MetaApiTestCard`） | **调试页**：单列四卡 —— 请求 / 精确命中（含封面预览与下载）/ 模糊搜索候选 / **原始 JSON（可复制，只在这里出现）** |
+| `/works`（name `Works`） | `views/WorksPage.vue` | **作品库**：搜索区常驻 + 结果区双列 `md:grid-cols-[minmax(0,1fr)_280px]`（左详情或候选 / 右候选栏 + 封面保存位置）。**不放示例 chips**（示例只在调试页） |
+
+两页都**自带滚动容器**：`MainLayout.vue:6` 的 router-view 是 `overflow-hidden`，页面必须自己提供滚动；而 `global.css:207-213` 用 `!important` 全局隐藏了滚动条，只有 `.scrollbar-theme` 能恢复（`scrollbar-width: thin` + 带 `!important` 的 `::-webkit-scrollbar`）。`pr-2` 给 8px 滚动条留位。
 
 ### 3.4 获取外部元数据（`internal/service/getMeta/getFromDlsite.go`，package `getmeta`）
 
@@ -215,8 +223,9 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 | `stores/Sidebar.ts` | `sidebar` | `barWidth=72`、`barWidthCollapsed=250`；**命名反直觉**：`isCollapsed=true` → 宽度 250。localStorage 键 `sidebar-collapsed` |
 | `stores/Theme.ts` | `theme` | `ThemeMode='light'|'dark'|'system'`(默认 system)；`effectiveTheme`；`applyTheme()` 用 `documentElement[data-theme="dark"]`；localStorage `theme-mode`；`setupSystemListener()` 监听 `prefers-color-scheme` |
 | `stores/App.ts` | `app` | `CloseAction='ask'|'hide'|'close'`（默认 `ask`）；localStorage `close-action`；`VALID` 数组判定，**非法值/旧值 `minimise` 一律回落 `ask`**；导出 `CLOSE_ACTION_OPTIONS`；`setCloseAction` + `restoreState` + `watch` 兜底落盘 |
+| `stores/metaStore.ts` | `meta` | DLsite 元数据：State `keyword·loading·downloading·error·status·work·candidates·saved·preImgPath·raw`；Getters `rawJson·hasResult`；Actions `runSearch(query?)·loadById(id)·searchBySample(s)·downloadCover()·refreshPreImgDir()·ensurePreImgDir()·clearResult({keepCandidates})`；导出 `META_SAMPLES`。**作品库与调试页共用同一个 store**，切页不丢结果 |
 
-> ⚠️ 命名不一致：`Sidebar.ts`/`Theme.ts` 大写开头，`todoStore.ts`/`App.ts` 小写/大写混用 —— 新增 store 时 import 大小写要**手写对**。
+> ⚠️ 命名不一致：`Sidebar.ts`/`Theme.ts` 大写开头，`todoStore.ts`/`App.ts`/`metaStore.ts` 混用 —— 新增 store 时 import 大小写要**手写对**。
 
 ### 4.4 services/ 封装层（不是 store，是所有后端调用的唯一入口）
 
@@ -227,7 +236,22 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 
 > `downloadCover` 的返回值后端是 `map[string]any`，绑定层生成的是 `{ [k: string]?: any }`，需要在封装层 `as DownloadResult` 收窄（否则 `vue-tsc` 报 TS2345）。
 
-### 4.5 TODO 组件公开接口
+### 4.5 `components/meta/*` 积木（作品库与调试页共用）
+
+| 组件 | 作用 |
+| --- | --- |
+| `MetaSection` | 卡片外壳（`section-header` + 图标/标题/`#actions` 插槽 + `bodyClass` 内容区），全站唯一的"卡片长相"定义 |
+| `MetaSearchBar` | 搜索行（`input-theme` + `btn-brand`），受控 `v-model` + `@submit`，不发请求 |
+| `MetaSampleChips` / `MetaMessage` | 快捷示例 chips / 一行提示（`tone=info|error|success`，字面量表映射图标与颜色） |
+| `MetaCover` / `MetaCoverFigure` | 封面缩略图（`sm` 44px / `md` 140×105，失败退占位图，`src` 变化复位）/ 封面 + URL 标注 |
+| `MetaKeyValueList` / `MetaTags` / `MetaSubsection` / `MetaTextBlock` | 两列键值表（`dense`/`scrollable`）/ 不可点标签云 / 小标题块 / 长文本块（`whitespace-pre-wrap` + 限高） |
+| `MetaWorkOverview` / `MetaWorkDetails` | 详情上半（封面+名称+关键字段+标签+下载+回执）/ 下半（summary + outline） |
+| `MetaDownloadButton` / `MetaSavedNotice` / `MetaPreImgPath` | 下载按钮三态 / 成功回执 + `file://` 打开 / 封面落地目录（失败静默留空） |
+| `MetaCandidateList` / `MetaRawJson` / `MetaEmptyState` | 候选行（`@select` 出编号）/ 原始 JSON + 复制 / 空态 |
+
+拆分层级：**store = 拿数据 → 积木 = 长什么样 → views = 放哪**。加新页面只需组合积木，不用再写请求。
+
+### 4.6 TODO 组件公开接口
 
 `TodoItem.vue`（`props: todo, isUpdating?, isDeleting?, selected?`；`emits: toggle[id], delete[id], select[id]`）—— 共 3 个 emit，**没有 `error` emit**。
 
@@ -318,13 +342,13 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 | --- | --- | --- |
 | 结构 | `<input class="input-theme">`，盒模型全在 shortcut 里 | 外层壳 `div` 承边框/圆角/底色，内层无边框 `input` |
 | 边框 | `border-theme` + `focus:border-brand` | 壳 `border-theme` + `focus-within:border-brand` |
-| 用于 | 测试页搜索框（`components/test/MetaApiTestCard.vue:24`） | TODO 添加框（`components/todo/TodoInput.vue`） |
+| 用于 | 搜索框（`components/meta/MetaSearchBar.vue`，作品库与调试页共用） | TODO 添加框（`components/todo/TodoInput.vue`） |
 
 **控件高度统一走 `control-h`**（`uno.config.ts:161`，`h-[2.2rem]` = **35.2px**）：`btn-brand`（`uno.config.ts:164`）、`input-theme`、`TodoInput.vue` 的外壳三处都挂它，因此三者同高。⚠️ **挂了固定高度就不要再写纵向 padding** —— 总高已由 `control-h` 决定，`py-*` 不会再改变盒高，只会把内容挤出盒子（`TodoInput.vue` 内层 input 因此不带 `py-*`，垂直居中交给外壳的 `items-center`）。历史教训：输入框曾用 `py-2.5`、按钮用 `py-2`，高度由「内容高 + 纵向 padding」撑出，实测 41.6px vs 35.2px，同一行 form（`items-end`）底部对齐时顶部错开 6.4px。
 
-两者实测盒模型**逐项相同**：`border-radius: 10px`、`padding: 10px 12px`、`font-size: 14px`、`line-height: 20px`、`border: 0.8px solid var(--color-border)`、总高 **35.2px**；聚焦时边框都变 `var(--color-brand)`。**任一项（内边距 / 圆角 / 字号 / 行高 / 边框色 / 聚焦色 / 高度）都必须在两处同步修改**，否则两个输入框的圆角与高度会分叉。`TodoInput.vue` 顶部与 `MetaApiTestCard.vue` 分别写了互相指向的注释。
+两者实测盒模型**逐项相同**：`border-radius: 10px`、`padding: 10px 12px`、`font-size: 14px`、`line-height: 20px`、`border: 0.8px solid var(--color-border)`、总高 **35.2px**；聚焦时边框都变 `var(--color-brand)`。**任一项（内边距 / 圆角 / 字号 / 行高 / 边框色 / 聚焦色 / 高度）都必须在两处同步修改**，否则两个输入框的圆角与高度会分叉。
 
-**提交按钮统一走 `btn-brand`**（`uno.config.ts:164`）：TODO 的「添加」与测试页的「搜索」类串同为 `btn-brand flex items-center gap-1.5 shrink-0`，TODO 额外带 `disabled:opacity-50 disabled:cursor-not-allowed`（短输入要能看出来不可点，`btn-brand` 本身不含禁用态）。`HomePage.vue:10` 也用它 —— 即全站按钮已统一到这一个 shortcut，不要再手写 `rounded-lg px-4 py-2 ...`。
+**提交按钮统一走 `btn-brand`**（`uno.config.ts:164`）：TODO 的「添加」与作品库/调试页的「搜索」类串同为 `btn-brand flex items-center gap-1.5 shrink-0`（搜索按钮在 `components/meta/MetaSearchBar.vue`），TODO 额外带 `disabled:opacity-50 disabled:cursor-not-allowed`（短输入要能看出来不可点，`btn-brand` 本身不含禁用态）。`HomePage.vue:10` 也用它 —— 即全站按钮已统一到这一个 shortcut，不要再手写 `rounded-lg px-4 py-2 ...`。
 
 ### 7.3 布局高度链（缺一环就整页溢出）
 
@@ -391,7 +415,8 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 | --- | --- |
 | `frontend/src/components/settings/LanguageSelect.vue` | 仅占位，i18n 未实现 |
 | `frontend/src/components/todo/TodoItem.vue` | 描述**只读展示，尚不能编辑**（后端 `Update` 已支持 `description`） |
-| `frontend/src/views/test.vue` | **已不是占位页**，且已是薄壳（只渲染 `MetaApiTestCard`）；DLsite 接口测试卡片在 `frontend/src/components/test/MetaApiTestCard.vue`（路由 `/testing`，见 §3.3） |
+| `frontend/src/views/test.vue` | 薄壳（只渲染 `MetaApiTestCard`），DLsite **调试页**（路由 `/testing`，见 §3.3） |
+| `frontend/src/views/WorksPage.vue` | 作品库（路由 `/works`）：搜索 + 双列详情/候选栏。**尚未做**收藏、列表分页、批量下载、历史记录；候选行没有"选中"高亮 |
 | `internal/service/todo_service.go:315` | 一行 `// bug need-fix` 注释（`GetStats`），逻辑本身正确，属陈旧标记 |
 | `main.go:62` | `Description` 仍是 `"A demo of using raw HTML & CSS"` |
 | `build/config.yml` | 仍是模板（`companyName="My Company"`、`productName="My Product"`、`version 0.0.1`） |
@@ -441,6 +466,8 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 | emoji 全面换 lucide | emoji 跨平台渲染不一致、无法用主题变量控色；lucide 经 `presetIcons` 构建期内联，离线可用且零运行时请求 |
 | 不引外部字体 | 桌面端离线优先 |
 | 图标尺寸提为 5 档 token | 原代码混用 `text-sm`/`text-xl` 控图标大小，语义错位 |
+| 作品库与调试页**共用** `stores/metaStore.ts` 与 `components/meta/*`，而不是各写一份 | 用户要求「MetaApiTestCard.vue 内容高度组件化，方便重新排列使用」。拆三层：**store 拿数据 / 积木定长相 / views 定排布**。两页因此只是同一批积木的两种组合：调试页单列四卡（含原始 JSON），作品库双列（详情+候选栏）。请求、错误兜底、封面下载等逻辑只有一处，改一次两页同步 |
+| 状态放 **Pinia store** 而不是 composable（`composables/useMetaSearch.ts` 已删） | 用户明确要求「本项目使用了 pinia 所以状态管理相关尽量写在 stores 文件夹中」。附带好处：同一个 store 实例被两个页面共享，切页不丢搜索结果 |
 
 ---
 

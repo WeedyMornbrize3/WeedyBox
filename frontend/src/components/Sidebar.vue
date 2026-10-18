@@ -86,6 +86,7 @@ interface MenuItem {
 // emoji 依赖字体、跨平台渲染不一致，且无法用主题变量控色。
 const menuItemsUp = ref<MenuItem[]>([
   { path: '/', label: '首页', icon: 'i-lucide-house' },
+  { path: '/works', label: '作品库', icon: 'i-lucide-library-big' },
   { path: '/todo', label: 'TODO', icon: 'i-lucide-list-todo' },
   { path: '/testing', label: '测试', icon: 'i-lucide-flask-conical' }
 ])

@@ -26,6 +26,12 @@ const routes = [
         meta: { title: 'TODO' }
       },
       {
+        path: '/works',
+        name: 'Works',
+        component: () => import('../views/WorksPage.vue'),
+        meta: { title: '作品库' }
+      },
+      {
         path: '/testing',
         name: 'Testing',
         component: () => import('../views/test.vue'),

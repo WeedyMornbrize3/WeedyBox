@@ -8,7 +8,8 @@
         两者永不重叠，且图标按钮随输入框高度居中。
         min-w-0 让输入框可收缩，否则长内容会把添加按钮挤出容器。
 
-        ⚠️ 外观必须与 uno.config.ts 的 `input-theme`（测试页搜索框走这条）一致：
+        ⚠️ 外观必须与 uno.config.ts 的 `input-theme`（作品库/调试页的搜索框
+           MetaSearchBar.vue 走这条）一致：
            外壳 = control-h rounded-[10px] bg-secondary border-theme
                   transition-colors duration-200 focus-within:border-brand
            内层 = text-sm text-primary placeholder:text-tertiary
