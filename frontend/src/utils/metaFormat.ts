@@ -46,6 +46,15 @@ export function fileUrl(absPath: string): string {
 }
 
 /**
+ * 输入像是作品编号吗（RJ01721474 / RE… / VJ…）。
+ * 与后端 getmeta.NormalizeDLsiteID 的口径保持一致：有编号就走精确抓取，
+ * 没有就按作品名模糊搜索 —— 前端先判断一次，才能决定调哪个接口。
+ */
+export function looksLikeWorkId(text: string): boolean {
+  return /(?:RJ|RE|VJ)\d{4,}/i.test(text.trim())
+}
+
+/**
  * 详情卡最常看的几行字段。
  * 刻意只挑"人想一眼确认"的：社团、系列、形式、年龄分级、文件、容量、发售日、价格、评分、抓取时间；
  * 各种内部 id 之类看调试页的原始 JSON 即可，不必都塞进卡片。

@@ -87,6 +87,7 @@ interface MenuItem {
 const menuItemsUp = ref<MenuItem[]>([
   { path: '/', label: '首页', icon: 'i-lucide-house' },
   { path: '/works', label: '作品库', icon: 'i-lucide-library-big' },
+  { path: '/library', label: '游戏库', icon: 'i-lucide-gamepad-2' },
   { path: '/todo', label: 'TODO', icon: 'i-lucide-list-todo' },
   { path: '/testing', label: '测试', icon: 'i-lucide-flask-conical' }
 ])

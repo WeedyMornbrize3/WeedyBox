@@ -32,6 +32,12 @@ const routes = [
         meta: { title: '作品库' }
       },
       {
+        path: '/library',
+        name: 'Library',
+        component: () => import('../views/LibraryPage.vue'),
+        meta: { title: '游戏库' }
+      },
+      {
         path: '/testing',
         name: 'Testing',
         component: () => import('../views/test.vue'),

@@ -11,7 +11,9 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { metaApi } from '../services/metaService'
 import type { DownloadResult, SearchCandidate, WorkMeta } from '../services/metaService'
-import { toMessage } from '../utils/metaFormat'
+import { libraryApi } from '../services/libraryService'
+import type { LibraryMeta } from '../services/libraryService'
+import { looksLikeWorkId, toMessage } from '../utils/metaFormat'
 
 /** 快捷示例：省得每次手打编号（编号精确抓取 + 作品名模糊搜索各来一个） */
 export const META_SAMPLES = ['RJ01721474', 'RJ01682332', 'エルフ パラダイス']
@@ -27,6 +29,11 @@ export const useMetaStore = defineStore('meta', () => {
   const candidates = ref<SearchCandidate[]>([])
   const saved = ref<DownloadResult | null>(null)
   const preImgPath = ref('')
+
+  /** 当前作品是不是从本地库读出来的（没联网）。详情卡据此显示「缓存」标记 */
+  const cached = ref(false)
+  /** 当前作品在库里的入库 / 更新时间（空 = 不在库里） */
+  const libraryUpdatedAt = ref('')
 
   /** 后端返回的完整结构（原样展示，调试页用） */
   const raw = ref<unknown>(null)
@@ -50,11 +57,17 @@ export const useMetaStore = defineStore('meta', () => {
     error.value = ''
     status.value = ''
     raw.value = null
+    cached.value = false
+    libraryUpdatedAt.value = ''
     if (!opts.keepCandidates) candidates.value = []
   }
 
-  /** 搜索：关键词含 RJ/RE/VJ 编号走精确抓取，否则模糊搜索返回候选 */
-  async function runSearch(query?: string) {
+  /**
+   * 搜索：关键词含 RJ/RE/VJ 编号走精确抓取（**缓存优先**，库里有的不打网络），
+   * 否则走模糊搜索（一定联网 —— 搜索本身就是问 DLsite 有哪些作品，没有缓存的意义）。
+   * refresh = true 时跳过本地库强制联网（调试页用，要核对后端解析结果）。
+   */
+  async function runSearch(query?: string, refresh = false) {
     const q = (query ?? keyword.value).trim()
     if (!q) {
       error.value = '请输入作品名或 RJ 编号'
@@ -64,13 +77,20 @@ export const useMetaStore = defineStore('meta', () => {
     clearResult()
     loading.value = true
     try {
+      if (looksLikeWorkId(q)) {
+        const data = await libraryApi.fetch(q, '', refresh)
+        applyWork(data)
+        status.value = cached.value
+          ? `按编号 ${data.id} 从本地库读取（缓存）`
+          : `按编号 ${data.id} 精确抓取成功，已存入游戏库`
+        return
+      }
       const resp = await metaApi.searchWorks(q)
       raw.value = resp
       status.value = resp.message ?? ''
       candidates.value = resp.results ?? []
-      // 按编号精确抓取时后端会带上 work
-      work.value = resp.work ?? null
-      if (work.value) candidates.value = []
+      // 模糊搜索命中单个作品时后端也会带上 work
+      if (resp.work) applyWork(resp.work)
     } catch (err) {
       error.value = toMessage(err)
     } finally {
@@ -78,16 +98,30 @@ export const useMetaStore = defineStore('meta', () => {
     }
   }
 
-  /** 点候选的「详情」：按编号精确抓（保留候选列表，方便连着换） */
-  async function loadById(id: string) {
+  /** 把取回来的作品塞进 state（同时记住"这是不是缓存"） */
+  function applyWork(data: WorkMeta) {
+    const meta = data as LibraryMeta
+    work.value = data
+    raw.value = data
+    cached.value = Boolean(meta.cached)
+    libraryUpdatedAt.value = meta.libraryUpdatedAt ?? ''
+    if (work.value) candidates.value = candidates.value.filter((c) => c.id !== work.value?.id)
+  }
+
+  /**
+   * 点候选的「详情」：按编号精确抓（保留候选列表，方便连着换）。
+   * refresh = true 时跳过本地库，强制联网重新抓一份（并覆盖库里的旧数据）。
+   */
+  async function loadById(id: string, refresh = false) {
     clearResult({ keepCandidates: true })
     keyword.value = id
     loading.value = true
     try {
-      const data = await metaApi.fetchWork('', id)
-      work.value = data
-      raw.value = data
-      status.value = `按编号 ${id} 精确抓取成功`
+      const data = await libraryApi.fetch('', id, refresh)
+      applyWork(data)
+      status.value = cached.value
+        ? `按编号 ${id} 从本地库读取（缓存）`
+        : `按编号 ${id} 精确抓取成功，已存入游戏库`
     } catch (err) {
       error.value = toMessage(err)
     } finally {
@@ -95,9 +129,9 @@ export const useMetaStore = defineStore('meta', () => {
     }
   }
 
-  /** 点示例：填进输入框再搜一次 */
-  function searchBySample(sample: string) {
-    void runSearch(sample)
+  /** 点示例：填进输入框再搜一次（调试页传 refresh=true 走真联网） */
+  function searchBySample(sample: string, refresh = false) {
+    void runSearch(sample, refresh)
   }
 
   /** 下载封面到 preImg/ */
@@ -142,6 +176,8 @@ export const useMetaStore = defineStore('meta', () => {
     saved,
     preImgPath,
     raw,
+    cached,
+    libraryUpdatedAt,
     // Getters
     rawJson,
     hasResult,

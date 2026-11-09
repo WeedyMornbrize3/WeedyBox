@@ -33,7 +33,7 @@ Wails v3 (Go) + Vue 3 + Pinia + UnoCSS 的无边框 Windows 桌面应用，目�
 - **`frontend/bindings/` 与 `go.sum` 都被 `.gitignore` 忽略且不在版本控制内**（`.gitignore:18` 是 `go.sum`）。
   → 换机器 / 重新 clone 后**必须先**：`wails3 generate bindings -clean=true -ts -i`，否则前端找不到 `HideWindow` 等新方法。
   该命令恒输出 1 条无害警告：`package WeedyBox/internal/database: function types are not supported by encoding/json`。
-  实测输出：`Processed: 275 Packages, 3 Services, 23 Methods, 0 Enums, 4 Models, 1 Event`。
+  实测输出：`Processed: 280 Packages, 5 Services, 36 Methods, 0 Enums, 10 Models, 1 Event`。
 - 本机环境坑：未装 Docker；`gh` CLI 已装但**未登录**；`task` CLI **未安装**（用 `wails3 task <name>` 替代）；系统代理 `127.0.0.1:7890` 会偶发拦截 TLS（`SELF_SIGNED_CERT_IN_CHAIN`），重试即可。
 - 本机 `devicePixelRatio = 1.25`：**源码里的 `1px`/`2px` 是正确写法**，DevTools 显示 `0.8px`/`1.6px` 只是缩放后的计算值。
 - 浏览器里跑 `npm run dev` **没有 Wails 后端**：所有写操作必然失败，只能验证「是否发请求 / 是否回滚 / UI 状态」，**不能验证落库**。
@@ -45,17 +45,21 @@ Wails v3 (Go) + Vue 3 + Pinia + UnoCSS 的无边框 Windows 桌面应用，目�
 ```
 main.go                          应用入口：服务注册 / 窗口 / 系统托盘
 internal/model/todo.go           Todo · CreateTodoDTO · UpdateTodoDTO · TodoStats
-internal/database/sql_service.go SQLiteService：Execute / Query / QueryRow / GetLastInsertID / Transaction + initAllTables
+internal/database/sql_service.go SQLiteService：Execute / Query / QueryRow / GetLastInsertID / Transaction + initAllTables（**只建 todos**，游戏库表惰性创建）
+internal/database/library_repo.go 游戏库持久层：ensureLibraryTables（惰性建表）/ Find / List / Upsert / Delete / RecordCoverFile
+internal/database/library_repo_test.go 游戏库仓储测试（惰性建表、先读先删、并发首用、来源隔离、封面指针）
 internal/service/todo_service.go TodoService：全部 CRUD + 批量删除 + 统计
+internal/service/library_service.go LibraryService：**缓存优先**取作品 / 列游戏库 / 删除 / 本地封面转 data URL
 internal/service/getMeta/getFromDlsite.go  DLsite 元数据解析（MetaService，package getmeta）
-internal/service/getMeta/meta_service.go   Wails 包装层 MetaApiService（搜索/抓取/下载封面到 preImg/）
+internal/service/getMeta/meta_service.go   Wails 包装层 MetaApiService（搜索/抓取/下载封面到 preImg/，下载后记账到库）
 internal/service/getMeta/testdata/        两个真实作品页 fixture（离线回归用）
 internal/service/window_service.go WindowService：最小化 / 最大化 / 关闭 / 隐藏 / 显示 / 可见性
-frontend/src/main.ts             Pinia + router + 三个 store 的 restoreState()
-frontend/src/router/index.ts     hash 路由，MainLayout 下挂 5 个子页（/ · /works · /todo · /testing · /settings）
-frontend/src/stores/             todoStore.ts · metaStore.ts · Sidebar.ts · Theme.ts · App.ts
+frontend/src/main.ts             Pinia + router + store 的 restoreState()
+frontend/src/router/index.ts     hash 路由，MainLayout 下挂 7 个子页（/ · /works · /library · /todo · /testing · /settings + /test 重定向）
+frontend/src/stores/             todoStore.ts · metaStore.ts · libraryStore.ts · Sidebar.ts · Theme.ts · App.ts
 frontend/src/services/todoService.ts  Wails 绑定封装：todoApi（含 ensure() 兜底 null）
-frontend/src/services/metaService.ts  Wails 绑定封装：metaApi（DLsite 搜索/抓取/下载封面）
+frontend/src/services/metaService.ts  Wails 绑定封装：metaApi（**永远联网**：搜索/抓取/下载封面）
+frontend/src/services/libraryService.ts Wails 绑定封装：libraryApi（**缓存优先**：fetch/list/remove/coverDataUrl）
 frontend/src/utils/metaFormat.ts 元数据展示纯函数：toMessage / formatBytes / fileUrl / buildSummaryRows（+ MetaRow 类型）
 frontend/src/components/meta/    作品库与调试页共用的高粒度积木（MetaSection/搜索行/封面/键值表/明细…，见 §4.6）
 frontend/src/components/todo/    TodoList · TodoItem · TodoInput · TodoStats · FilterBar · FilterChipGroup · TodoPrioritySelector
@@ -72,7 +76,7 @@ doc/                             README/backend/frontend/styles/conventions + ne
 
 ## 3. 后端 API 契约（Go → TS）
 
-服务注册在 `main.go:54-58`：`application.NewService(windowService / todoService / dbService)`。
+服务注册在 `main.go:54-60`：`application.NewService(windowService / todoService / dbService / metaService / libraryService)`。
 
 ### 3.1 TODO（`TodoService`，全部方法内建 3s `context.WithTimeout`）
 
@@ -102,7 +106,7 @@ doc/                             README/backend/frontend/styles/conventions + ne
 
 ⚠️ **不做数据加工**：返回给前端的 `work` 是 `DLsiteWork` 的 **json 编码**（走 `toRawMap` 一个 `Marshal`+`Unmarshal` 往返，字段名与 json tag 完全一致），前端直接展示原始 JSON。这是刻意的——测试页的用途就是对着 DLsite 页面核对解析结果。
 
-已在 `main.go:57` 注册：`metaService := &getmeta.MetaApiService{}`，`main.go:63` 加入 `applicationServices`（服务总数 4，方法 27）。结构体用 `&MetaApiService{}` 直接构造（不走 `NewMetaApiService()`），因此内部有 `ensure()` 惰性兜底 `meta` 字段。
+已在 `main.go` 注册：`metaService := &getmeta.MetaApiService{DB: dbService}`（持有 DB 是为了下载封面后记账进游戏库），`applicationServices` 加入后服务总数 5、方法 36（与 §8 的 `wails3 generate bindings` 输出一致）。结构体直接字面量构造（不走 `NewMetaApiService()`），因此内部有 `ensure()` 惰性兜底 `meta` 字段。
 
 | 方法 | 签名 | 行为 |
 | --- | --- | --- |
@@ -120,9 +124,29 @@ doc/                             README/backend/frontend/styles/conventions + ne
 | 路由 | 视图 | 定位与排布 |
 | --- | --- | --- |
 | `/testing`（name `Testing`；旧路径 `/test` 重定向） | `views/test.vue`（薄壳，只渲染 `MetaApiTestCard`） | **调试页**：单列四卡 —— 请求 / 精确命中（含封面预览与下载）/ 模糊搜索候选 / **原始 JSON（可复制，只在这里出现）** |
-| `/works`（name `Works`） | `views/WorksPage.vue` | **作品库**：搜索区常驻 + 结果区双列 `md:grid-cols-[minmax(0,1fr)_280px]`（左详情或候选 / 右候选栏 + 封面保存位置）。**不放示例 chips**（示例只在调试页） |
+| `/works`（name `Works`） | `views/WorksPage.vue` | **作品库**：搜索区常驻 + 结果区双列 `md:grid-cols-[minmax(0,1fr)_280px]`（左详情或候选 / 右候选栏 + 封面保存位置 + 游戏库入口）。缓存命中时标题旁有「缓存」badge 与「重新抓取」按钮。**不放示例 chips**（示例只在调试页） |
+| `/library`（name `Library`） | `views/LibraryPage.vue` | **游戏库**：已入库作品列表（封面走 `library.covers` 的 data URL），每行「查看详情」（跳 `/works` 并 `loadById`）与二次确认删除；顶部计数 + 刷新 |
 
 两页都**自带滚动容器**：`MainLayout.vue:6` 的 router-view 是 `overflow-hidden`，页面必须自己提供滚动；而 `global.css:207-213` 用 `!important` 全局隐藏了滚动条，只有 `.scrollbar-theme` 能恢复（`scrollbar-width: thin` + 带 `!important` 的 `::-webkit-scrollbar`）。`pr-2` 给 8px 滚动条留位。
+
+⚠️ 但**数据不再直连 MetaApiService**：`/works` 走 `stores/metaStore.ts` → `libraryApi`（缓存优先），只有 `/testing` 用 `refresh=true` 强制联网核对解析；`/testing` 的原始 JSON 因此会多出 `cached/workId/cover*` 等库侧键（后端注入，不是解析结果变化）。
+
+### 3.7 游戏库服务（`internal/service/library_service.go`，`LibraryService`）
+
+与 §3.3 的 `MetaApiService` **语义相反**（这是刻意的，见 §10）：`MetaApiService` 永远联网，`LibraryService` **缓存优先** —— 库里有的直接返回，没有才联网，抓完自动入库。所有方法都带 `source` 参数（当前唯一值 `dlsite`，为将来接别的源留位）。
+
+| 方法 | 签名 | 行为 |
+| --- | --- | --- |
+| `Fetch` | `(ctx, req FetchWorkRequest) (map[string]any, error)` | `FetchWorkRequest{keyword, workId, source, refresh}`。有编号且 `refresh=false` 时先查库；命中则用 `raw_json` 还原 + 注入 `cached=true` 与封面字段；未命中（或 `refresh=true`）走 `meta.FetchWork`，入库后注入 `cached=false`。**入库失败只打日志，不挡浏览** |
+| `List` | `(ctx, source string) ([]LibraryWork, error)` | `source` 空 = 所有来源；`ORDER BY created_at DESC, id DESC` |
+| `Remove` | `(ctx, workID, source string) error` | **只删库记录，不删磁盘图片**（那是用户自己的文件） |
+| `CoverDataURL` | `(ctx, workID, source string) string` | 读 `cover_abs_path` → `data:<mime>;base64,…`；文件不存在返回空串（不算错误） |
+
+**为什么封面用 base64 data URL 而不是 `file://`**：Wails webview 对本地文件协议的支持没实机验证过，data URL 一定可用；封面就几十~几百 KB，一次列表请求可接受。
+
+**封面记账**：`MetaApiService.DownloadCover` 落盘后若持有 `DB` 就调 `RecordCoverFile` 写一行 `library_cover_files` 并把作品的 `cover_*` 指针指向它（`writeFileUnique` 会加 `-2/-3` 后缀，事后猜不出文件名，所以必须当时记账）。
+
+**测试**：`internal/database/library_repo_test.go`（10 个用例）覆盖惰性建表、首写前先读/先删、**并发首次使用**（曾真实复现 `database is locked (5) (SQLITE_BUSY)`，见 §10）、来源隔离、封面指针更新。
 
 ### 3.4 获取外部元数据（`internal/service/getMeta/getFromDlsite.go`，package `getmeta`）
 
@@ -183,11 +207,36 @@ type TodoStats struct { Total, Completed, Pending int64 }
 
 > `rowToTodo` / `rowToStats` 依赖 SQLite 返回 **`int64` / `time.Time`**，改列类型会 panic。
 
-### 3.6 表结构（`internal/database/sql_service.go:45-53`）
+`internal/model/library.go`：
 
-`todos(id INTEGER PK AUTOINCREMENT, title TEXT NOT NULL, description TEXT, priority INTEGER DEFAULT 1, completed INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`
+```go
+type LibraryWork struct {   // 来源无关：公共列 + 来源专有字段整份进 RawJSON
+    Source string           // "dlsite"（当前唯一值）
+    WorkID string           // RJ01721474
+    Name, Maker, MakerID, Series, SeriesID, WorkType, AgeRating, ReleaseDate,
+    CoverURL, SourceURL, RawJSON string
+    FetchedAt, CreatedAt, UpdatedAt time.Time
+    CoverDir, CoverPath, CoverAbsPath, CoverSuffix string
+    CoverBytes int64
+}
+type CoverFile struct {     // 每次下载一行，作品表的 cover_* 指向最新一行
+    ID int64; Source, WorkID, Dir, Path, AbsPath, Suffix, CoverURL string
+    Bytes int64; CreatedAt time.Time
+}
+```
 
-DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DBSource: "WeedyBoxDB.db"}`）；本机调试 11xx 字节级别。
+### 3.6 表结构
+
+**`todos`**（`internal/database/sql_service.go:45-53`）：`todos(id INTEGER PK AUTOINCREMENT, title TEXT NOT NULL, description TEXT, priority INTEGER DEFAULT 1, completed INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`
+
+**游戏库两张表**：**不在 `initAllTables` 里建**，改由 `internal/database/library_repo.go` 的 `ensureLibraryTables(ctx)` 在**每次读写前** `CREATE TABLE IF NOT EXISTS`（幂等）——这是用户要求的「当需要保存到库中时 即是需要下载数据才新建表 节约空间」。
+
+- `library_works`：`id PK / source / work_id / name / maker / maker_id / series / series_id / work_type / age_rating / release_date / cover_url / source_url / raw_json / fetched_at / cover_dir / cover_path / cover_abs_path / cover_bytes / cover_suffix / created_at / updated_at`，唯一键 `UNIQUE(source, work_id)`
+- `library_cover_files`：`id PK / source / work_id / dir / path / abs_path / bytes / suffix / cover_url / created_at`，索引 `idx_library_cover_files_work(source, work_id)`
+
+`UpsertLibraryWork` 用 `INSERT … ON CONFLICT(source, work_id) DO UPDATE SET …`，且**不覆盖 `cover_*` 列**（那些由 `RecordCoverFile` 维护，重新抓元数据不该把封面指针清空）。
+
+DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DBSource: "WeedyBoxDB.db"}`）。
 
 ---
 
@@ -198,7 +247,13 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 ```
 组件 → stores/todoStore.ts → services/todoService.ts → bindings/…/todoservice.ts
      → Go service.TodoService → database.SQLiteService → SQLite
+
+组件 → stores/metaStore.ts → services/libraryService.ts → bindings/…/libraryservice.ts
+     → Go service.LibraryService ─┬→ database/library_repo.go → SQLite（缓存命中）
+                                  └→ getmeta.MetaApiService → DLsite（未命中/强制刷新）
 ```
+
+调试页（`/testing`）是唯一例外：它用 `refresh=true` 让 `LibraryService` 跳过缓存，等价于直连解析器。
 
 `services/todoService.ts` 导出一个 `todoApi`：`getAll · getByID · create · update · toggleComplete · delete · deleteMany(ids) · getStats`，用本地 `ensure<T>(value, message)` 把绑定层的 `T | null` 收成 `T`。
 
@@ -223,16 +278,18 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 | `stores/Sidebar.ts` | `sidebar` | `barWidth=72`、`barWidthCollapsed=250`；**命名反直觉**：`isCollapsed=true` → 宽度 250。localStorage 键 `sidebar-collapsed` |
 | `stores/Theme.ts` | `theme` | `ThemeMode='light'|'dark'|'system'`(默认 system)；`effectiveTheme`；`applyTheme()` 用 `documentElement[data-theme="dark"]`；localStorage `theme-mode`；`setupSystemListener()` 监听 `prefers-color-scheme` |
 | `stores/App.ts` | `app` | `CloseAction='ask'|'hide'|'close'`（默认 `ask`）；localStorage `close-action`；`VALID` 数组判定，**非法值/旧值 `minimise` 一律回落 `ask`**；导出 `CLOSE_ACTION_OPTIONS`；`setCloseAction` + `restoreState` + `watch` 兜底落盘 |
-| `stores/metaStore.ts` | `meta` | DLsite 元数据：State `keyword·loading·downloading·error·status·work·candidates·saved·preImgPath·raw`；Getters `rawJson·hasResult`；Actions `runSearch(query?)·loadById(id)·searchBySample(s)·downloadCover()·refreshPreImgDir()·ensurePreImgDir()·clearResult({keepCandidates})`；导出 `META_SAMPLES`。**作品库与调试页共用同一个 store**，切页不丢结果 |
+| `stores/metaStore.ts` | `meta` | DLsite 元数据：State `keyword·loading·downloading·error·status·work·candidates·saved·preImgPath·raw·cached·libraryUpdatedAt`；Getters `rawJson·hasResult`；Actions `runSearch(query?, refresh=false)·loadById(id, refresh=false)·searchBySample(s, refresh=false)·downloadCover()·refreshPreImgDir()·ensurePreImgDir()·clearResult({keepCandidates})`；导出 `META_SAMPLES`。**缓存优先**（走 `libraryApi`）；作品库与调试页共用同一个 store，切页不丢结果，调试页传 `refresh=true` 强制联网 |
+| `stores/libraryStore.ts` | `library` | 游戏库列表：State `works·loading·error·covers(id→dataURL)·removingId·loaded`；Getters `count·withCoverCount`；Actions `load(force=false)·loadCovers()·remove(workId)·refreshCover(workId)·has(workId)` |
 
-> ⚠️ 命名不一致：`Sidebar.ts`/`Theme.ts` 大写开头，`todoStore.ts`/`App.ts`/`metaStore.ts` 混用 —— 新增 store 时 import 大小写要**手写对**。
+> ⚠️ 命名不一致：`Sidebar.ts`/`Theme.ts` 大写开头，`todoStore.ts`/`App.ts`/`metaStore.ts`/`libraryStore.ts` 混用 —— 新增 store 时 import 大小写要**手写对**。
 
 ### 4.4 services/ 封装层（不是 store，是所有后端调用的唯一入口）
 
 | 文件 | 导出 | 说明 |
 | --- | --- | --- |
 | `frontend/src/services/todoService.ts` | `todoApi` | `getAll · getByID · create · update · toggleComplete · delete · deleteMany(ids) · getStats`；用本地 `ensure<T>(value, message)` 把绑定层的 `T | null` 收成 `T` |
-| `frontend/src/services/metaService.ts` | `metaApi` | `searchWorks(keyword) · fetchWork(keyword, workId?) · downloadCover(workId, coverUrl) · preImgDir()`；同样用 `ensure()` 兜底 null |
+| `frontend/src/services/metaService.ts` | `metaApi` | **永远联网**：`searchWorks(keyword) · fetchWork(keyword, workId?) · downloadCover(workId, coverUrl) · preImgDir()`；同样用 `ensure()` 兜底 null |
+| `frontend/src/services/libraryService.ts` | `libraryApi` | **缓存优先**：`fetch(keyword, workId?, refresh=false) · list(source?) · remove(workId, source?) · coverDataUrl(workId, source?)`；导出 `LIBRARY_SOURCE_DLSITE='dlsite'` 与 `LibraryMeta`（= `WorkMeta` + `cached/workId/cover*`） |
 
 > `downloadCover` 的返回值后端是 `map[string]any`，绑定层生成的是 `{ [k: string]?: any }`，需要在封装层 `as DownloadResult` 收窄（否则 `vue-tsc` 报 TS2345）。
 
@@ -416,7 +473,10 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 | `frontend/src/components/settings/LanguageSelect.vue` | 仅占位，i18n 未实现 |
 | `frontend/src/components/todo/TodoItem.vue` | 描述**只读展示，尚不能编辑**（后端 `Update` 已支持 `description`） |
 | `frontend/src/views/test.vue` | 薄壳（只渲染 `MetaApiTestCard`），DLsite **调试页**（路由 `/testing`，见 §3.3） |
-| `frontend/src/views/WorksPage.vue` | 作品库（路由 `/works`）：搜索 + 双列详情/候选栏。**尚未做**收藏、列表分页、批量下载、历史记录；候选行没有"选中"高亮 |
+| `frontend/src/views/WorksPage.vue` | 作品库（路由 `/works`）：搜索 + 双列详情/候选栏，缓存优先。**尚未做**收藏、列表分页、批量下载、历史记录；候选行没有"选中"高亮 |
+| `frontend/src/views/LibraryPage.vue` | 游戏库（路由 `/library`）：已入库列表 + 删除 + 跳详情。**尚未做**排序/搜索/分页、批量删除、本地文件关联（打开作品所在文件夹）、封面缺失时自动补下 |
+| `internal/service/library_service.go` | 游戏库只跑了离线单元测试（`internal/database/library_repo_test.go`），**Wails 端的真实接线未实机验证** |
+| `internal/service/getMeta/*_test.go` + `testdata/` | 本工作区当前是**已从磁盘删除（未提交）**状态（属用户「裁剪」清理），恢复：`git checkout -- internal/service/getMeta` |
 | `internal/service/todo_service.go:315` | 一行 `// bug need-fix` 注释（`GetStats`），逻辑本身正确，属陈旧标记 |
 | `main.go:62` | `Description` 仍是 `"A demo of using raw HTML & CSS"` |
 | `build/config.yml` | 仍是模板（`companyName="My Company"`、`productName="My Product"`、`version 0.0.1`） |
@@ -468,6 +528,12 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 | 图标尺寸提为 5 档 token | 原代码混用 `text-sm`/`text-xl` 控图标大小，语义错位 |
 | 作品库与调试页**共用** `stores/metaStore.ts` 与 `components/meta/*`，而不是各写一份 | 用户要求「MetaApiTestCard.vue 内容高度组件化，方便重新排列使用」。拆三层：**store 拿数据 / 积木定长相 / views 定排布**。两页因此只是同一批积木的两种组合：调试页单列四卡（含原始 JSON），作品库双列（详情+候选栏）。请求、错误兜底、封面下载等逻辑只有一处，改一次两页同步 |
 | 状态放 **Pinia store** 而不是 composable（`composables/useMetaSearch.ts` 已删） | 用户明确要求「本项目使用了 pinia 所以状态管理相关尽量写在 stores 文件夹中」。附带好处：同一个 store 实例被两个页面共享，切页不丢搜索结果 |
+| 游戏库表**来源无关**（`source` 列 + `raw_json`），而不是 `dlsite_works` 专表 | 用户要求「表存储元数据来源 来源于dlsite则为dlsite字段 剩下存储为id等作品信息」。公共列存跨来源可比的元数据（id/名称/社团/系列/发售日），来源特有字段整份塞 `raw_json`；唯一键 `UNIQUE(source, work_id)`，将来接别的源加一行常量即可，不动表结构 |
+| 游戏库表**惰性创建**（`ensureLibraryTables` 每次读写前 `CREATE TABLE IF NOT EXISTS`），不在 `initAllTables` 里建 | 用户要求「当需要保存到库中时 即是需要下载数据才新建表 节约空间」。代价是每次多条 DDL 语句（幂等，代价可忽略）；换来的是从不用游戏库的用户库里不会凭空多两张空表 |
+| `SQLiteService` 的 `Execute`/`Query` 加 `mu sync.Mutex` **串行化** | 惰性建表让「并发首次使用」天然撞上 DDL 竞争，实测 `go test ./internal/database/` 报 `database is locked (5) (SQLITE_BUSY)` —— 正是用户提醒的「使用表时可能会导致数据库异常」。SQLite 多连接并发写同一文件必 BUSY；桌面端串行化开销可忽略，`Query` 一次性取完行不把锁泄给调用方 |
+| 游戏库封面走 **base64 `data:` URL**（`CoverDataURL`），不用 `file://` | Wails webview 对本地文件协议的支持没实机验证过（§9.2 第 5 项把握最低），data URL 一定可用；封面几十~几百 KB，一次列表请求可接受 |
+| **删除库记录不删磁盘图片** | 图片是用户自己的文件，应用删库记录属于"清理索引"，顺手删文件是不可逆的越权操作 |
+| 缓存优先放**新服务** `LibraryService`，不往 `MetaApiService` 加开关 | 两个语义相反：调试页要**永远联网**（否则解析改动被缓存掩盖），作品库/游戏库要**缓存优先**。混在一个方法里只能靠布尔开关，调用方永远搞不清这次到底走没走网络；两个服务各自语义单一，前端 `metaApi` / `libraryApi` 一眼可辨 |
 
 ---
 

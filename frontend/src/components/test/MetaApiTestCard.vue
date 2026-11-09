@@ -18,8 +18,8 @@
         <span class="text-xs text-tertiary font-mono">MetaApiService</span>
       </template>
 
-      <MetaSearchBar v-model="meta.keyword" :loading="meta.loading" @submit="meta.runSearch()" />
-      <MetaSampleChips :samples="META_SAMPLES" @pick="meta.searchBySample" />
+      <MetaSearchBar v-model="meta.keyword" :loading="meta.loading" @submit="meta.runSearch(undefined, true)" />
+      <MetaSampleChips :samples="META_SAMPLES" @pick="pickSample" />
       <MetaPreImgPath :path="meta.preImgPath" @refresh="meta.refreshPreImgDir" />
       <MetaMessage v-if="meta.error" tone="error" :text="meta.error" />
       <MetaMessage v-if="meta.status" :text="meta.status" />
@@ -63,7 +63,7 @@
       <template #actions>
         <span class="text-xs text-tertiary">点「详情」按编号精确抓取</span>
       </template>
-      <MetaCandidateList :candidates="meta.candidates" @select="meta.loadById" />
+      <MetaCandidateList :candidates="meta.candidates" @select="loadCandidate" />
     </MetaSection>
 
     <!-- ── 卡片 4：原始数据 ───────────────────────────────────────── -->
@@ -86,6 +86,16 @@ import MetaWorkDetails from '../meta/MetaWorkDetails.vue'
 import MetaWorkOverview from '../meta/MetaWorkOverview.vue'
 
 const meta = useMetaStore()
+
+// 调试页刻意**跳过缓存**（refresh=true）：这一页的存在意义就是「对着 DLsite 页面核对
+// 后端解析得对不对」，读本地缓存会掩盖解析改动。要验证缓存效果去作品库（/works）。
+function pickSample(sample: string) {
+  meta.searchBySample(sample, true)
+}
+
+function loadCandidate(id: string) {
+  void meta.loadById(id, true)
+}
 
 onMounted(() => meta.ensurePreImgDir())
 </script>

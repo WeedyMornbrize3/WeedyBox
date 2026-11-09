@@ -9,6 +9,8 @@
 package getmeta
 
 import (
+	"WeedyBox/internal/database"
+	"WeedyBox/internal/model"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -30,6 +32,9 @@ const preImgDir = "preImg"
 // MetaApiService 是暴露给前端的服务。
 type MetaApiService struct {
 	meta *MetaService
+	// DB 用来把「封面落到哪个目录/文件」记进游戏库（dlsite_cover_files）。
+	// 允许为 nil：调试页/单元测试直接 &MetaApiService{} 也能下载，只是不记录。
+	DB *database.SQLiteService
 }
 
 // NewMetaApiService 创建服务。
@@ -181,6 +186,26 @@ func (s *MetaApiService) DownloadCover(ctx context.Context, workID, coverURL str
 	}
 
 	absPath, _ := filepath.Abs(savedPath)
+
+	// 把这次落地位置写进游戏库：以后要显示本地封面/找文件，直接查库，
+	// 不必再猜文件名（重名会加 -2 / -3，猜不出来）。
+	// 记录失败只打日志：图已经存好了，不该因为记账失败让用户重下一遍。
+	if ok && s.DB != nil {
+		record := &model.CoverFile{
+			Source:   database.SourceDLsite,
+			WorkID:   id,
+			Dir:      preImgDir,
+			Path:     filepath.ToSlash(savedPath),
+			AbsPath:  absPath,
+			Bytes:    int64(len(data)),
+			Suffix:   ext,
+			CoverURL: coverURL,
+		}
+		if rerr := s.DB.RecordCoverFile(ctx, record); rerr != nil {
+			fmt.Printf("记录封面落地位置失败（文件已保存，本次仍算成功）: %v\n", rerr)
+		}
+	}
+
 	return map[string]any{
 		"id":       id,
 		"dir":      preImgDir,                   // 相对工作目录

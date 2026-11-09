@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/services/sqlite"
@@ -13,6 +14,16 @@ import (
 // SQLiteService 通用数据库服务（使用 Wails 内置 SQLite，无需 CGO）
 type SQLiteService struct {
 	DB *sqlite.SQLiteService
+
+	// mu 串行化所有 SQL 语句。
+	//
+	// 为什么必须要有：SQLite 在同一文件上被多个连接并发写时会直接返回
+	// `database is locked (5) (SQLITE_BUSY)`。游戏库的表是**惰性创建**的
+	// （第一次读写才 CREATE TABLE IF NOT EXISTS），所以并发首次使用天然就是
+	// 一次 DDL 竞争 —— 无锁时实测 8 个 goroutine 同时首用必定有若干次 BUSY。
+	// 桌面端所有访问都来自同一个进程、同一个人，串行化的代价可以忽略；
+	// 而且 Query 是一次性把行全部取完再返回，持锁期间不会把锁泄漏给调用方。
+	mu sync.Mutex
 }
 
 // ===== 实现 application.Service 接口 =====
@@ -51,6 +62,12 @@ func initAllTables(ctx context.Context, s *SQLiteService) error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+
+		// ── 游戏库的表**不在这里建** ──────────────────────────────────────
+		// 库里的作品是"下载/入库"才会有的数据，没人用的时候建两张空表只是白占
+		// 数据库页（SQLite 每张表至少一个 page）。所以 game library 的两张表
+		// 改为**惰性创建**：第一次真正读写时才建，见 library_repo.go 的
+		// ensureLibraryTables()。这里只留一个注释，避免下次有人以为漏了。
 	}
 
 	for _, query := range queries {
@@ -64,15 +81,19 @@ func initAllTables(ctx context.Context, s *SQLiteService) error {
 // ===== 通用执行方法 =====
 
 func (s *SQLiteService) Execute(ctx context.Context, query string, args ...interface{}) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.DB.Execute(query, args...)
 }
 
 func (s *SQLiteService) Query(ctx context.Context, query string, args ...interface{}) ([]map[string]interface{}, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.DB.QueryContext(ctx, query, args...)
 }
 
 func (s *SQLiteService) QueryRow(ctx context.Context, query string, args ...interface{}) (map[string]interface{}, error) {
-	rows, err := s.DB.QueryContext(ctx, query, args...)
+	rows, err := s.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

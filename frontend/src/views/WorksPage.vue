@@ -23,8 +23,24 @@
             <template #title>
               <code class="font-mono">{{ meta.work.id }}</code>
               <span class="text-xs text-tertiary font-normal ml-2">作品详情</span>
+              <!-- 缓存标记：库里已有就直接读，不联网 -->
+              <span
+                v-if="meta.cached"
+                class="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-secondary text-tertiary border-theme-light"
+                :title="meta.libraryUpdatedAt ? `入库时间：${new Date(meta.libraryUpdatedAt).toLocaleString()}` : '来自本地游戏库'"
+              >
+                缓存
+              </span>
             </template>
             <template #actions>
+              <button
+                class="text-xs text-secondary hover:text-primary flex items-center gap-1 cursor-pointer bg-transparent border-none"
+                :disabled="meta.loading"
+                @click="meta.loadById(meta.work.id, true)"
+              >
+                <span class="i-lucide-refresh-cw icon-xs" aria-hidden="true" />
+                重新抓取
+              </button>
               <a
                 v-if="meta.work.sourceUrl"
                 :href="meta.work.sourceUrl"
@@ -41,7 +57,7 @@
               :work="meta.work"
               :downloading="meta.downloading"
               :saved="meta.saved"
-              @download="meta.downloadCover"
+              @download="handleDownload"
             />
             <MetaWorkDetails :work="meta.work" />
           </MetaSection>
@@ -73,6 +89,20 @@
           <MetaSection icon="i-lucide-folder-open" title="封面保存位置" body-class="p-5">
             <MetaPreImgPath :path="meta.preImgPath" @refresh="meta.refreshPreImgDir" />
           </MetaSection>
+
+          <!-- 游戏库入口：这里只放"有多少、在不在库里"，完整列表在 /library -->
+          <MetaSection icon="i-lucide-gamepad-2" title="游戏库" body-class="p-5 flex flex-col gap-3">
+            <p class="m-0 text-sm text-secondary">
+              已入库 <span class="text-primary font-medium">{{ library.count }}</span> 部作品
+            </p>
+            <p v-if="meta.work" class="m-0 text-xs text-tertiary">
+              {{ library.has(meta.work.id) ? '当前作品已在库中' : '当前作品尚未入库（抓取成功即自动入库）' }}
+            </p>
+            <RouterLink to="/library" class="text-xs text-brand hover:underline flex items-center gap-1">
+              <span class="i-lucide-arrow-right icon-xs" aria-hidden="true" />
+              去游戏库看全部
+            </RouterLink>
+          </MetaSection>
         </div>
       </div>
 
@@ -89,6 +119,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useMetaStore } from '../stores/metaStore'
+import { useLibraryStore } from '../stores/libraryStore'
 import MetaCandidateList from '../components/meta/MetaCandidateList.vue'
 import MetaEmptyState from '../components/meta/MetaEmptyState.vue'
 import MetaMessage from '../components/meta/MetaMessage.vue'
@@ -100,6 +131,20 @@ import MetaWorkOverview from '../components/meta/MetaWorkOverview.vue'
 
 // 状态与请求全在 store 里；本页面只做排布。
 const meta = useMetaStore()
+const library = useLibraryStore()
 
-onMounted(() => meta.ensurePreImgDir())
+/**
+ * 下载封面 → 顺手刷新游戏库里这条作品的本地封面。
+ * 后端下载完会把落地位置写进库（cover_* 指针），前端这边要把新封面重新取成 data URL，
+ * 否则游戏库里的缩略图还停在"没有封面"。
+ */
+async function handleDownload() {
+  await meta.downloadCover()
+  if (meta.saved && meta.work) await library.refreshCover(meta.work.id)
+}
+
+onMounted(() => {
+  meta.ensurePreImgDir()
+  void library.load()
+})
 </script>

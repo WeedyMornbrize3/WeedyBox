@@ -52,15 +52,23 @@ func main() {
 		DB: dbService,
 	}
 
-	// 元数据抓取服务：只在「测试」页的接口测试卡片里用。
-	// 封面图片会落到工作目录下的相对路径 preImg/。
-	metaService := &getmeta.MetaApiService{}
+	// 元数据抓取服务：调试页（/testing）用它「每次真去 DLsite 抓一遍」核对解析结果。
+	// 封面图片会落到工作目录下的相对路径 preImg/，并把落地位置记进游戏库。
+	metaService := &getmeta.MetaApiService{DB: dbService}
+
+	// 游戏库服务：作品库（/works）与游戏库（/library）用。
+	// 与 metaService 的区别是**缓存优先** —— 库里有的作品不再联网。
+	libraryService := &service.LibraryService{
+		DB:   dbService,
+		Meta: metaService,
+	}
 
 	applicationServices := []application.Service{
 		application.NewService(windowService),
 		application.NewService(todoService),
 		application.NewService(dbService),
 		application.NewService(metaService),
+		application.NewService(libraryService),
 	}
 
 	app := application.New(application.Options{
