@@ -84,9 +84,10 @@ interface MenuItem {
 // 上导航菜单项（从上到下排列）
 // icon 存 UnoCSS 图标类名（presetIcons 按需内联），不再使用 emoji——
 // emoji 依赖字体、跨平台渲染不一致，且无法用主题变量控色。
+// 注意：**作品库（/works）刻意不出现在侧栏** —— 它只从游戏库点封面进入
+// （见 views/LibraryPage.vue 的 openWork），免得导航里出现两个"库"让人分不清。
 const menuItemsUp = ref<MenuItem[]>([
   { path: '/', label: '首页', icon: 'i-lucide-house' },
-  { path: '/works', label: '作品库', icon: 'i-lucide-library-big' },
   { path: '/library', label: '游戏库', icon: 'i-lucide-gamepad-2' },
   { path: '/todo', label: 'TODO', icon: 'i-lucide-list-todo' },
   { path: '/testing', label: '测试', icon: 'i-lucide-flask-conical' }

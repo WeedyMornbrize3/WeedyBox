@@ -3,7 +3,8 @@
      由 views/test.vue 挂载（视图层只留一个薄壳，与 TodoPage → TodoList 同一结构）。
 
      定位：这是"调试用"的单列排布 —— 原始 JSON 只在这里出现，方便对着 DLsite 页面核对解析结果。
-     真正浏览作品去作品库（views/WorksPage.vue）。两者共用：
+     作品库（/works）的路由已摘掉、页面文件保留（views/WorksPage.vue 与 components/meta/* 后续复用）；
+     现阶段抓取入口只剩本页。两者共用：
        stores/metaStore.ts   状态 + 请求
        components/meta/*     卡片外壳、搜索行、封面、键值表等积木
      所以本文件现在只描述"摆什么"，不再自己写请求逻辑。
@@ -48,7 +49,8 @@
         :work="meta.work"
         :downloading="meta.downloading"
         :saved="meta.saved"
-        @download="meta.downloadCover"
+        :stored="meta.stored"
+        @download="meta.storeIn"
       />
       <MetaWorkDetails :work="meta.work" />
     </MetaSection>
@@ -63,7 +65,11 @@
       <template #actions>
         <span class="text-xs text-tertiary">点「详情」按编号精确抓取</span>
       </template>
-      <MetaCandidateList :candidates="meta.candidates" @select="loadCandidate" />
+      <MetaCandidateList
+        :candidates="meta.candidates"
+        :covers="meta.candidateCovers"
+        @select="loadCandidate"
+      />
     </MetaSection>
 
     <!-- ── 卡片 4：原始数据 ───────────────────────────────────────── -->
@@ -88,7 +94,7 @@ import MetaWorkOverview from '../meta/MetaWorkOverview.vue'
 const meta = useMetaStore()
 
 // 调试页刻意**跳过缓存**（refresh=true）：这一页的存在意义就是「对着 DLsite 页面核对
-// 后端解析得对不对」，读本地缓存会掩盖解析改动。要验证缓存效果去作品库（/works）。
+// 后端解析得对不对」，读本地缓存会掩盖解析改动；抓到的作品仍会正常入库（游戏库 /library 可见）。
 function pickSample(sample: string) {
   meta.searchBySample(sample, true)
 }

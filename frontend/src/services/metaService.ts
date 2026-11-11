@@ -51,6 +51,14 @@ export interface SearchResponse {
   message?: string
   work?: WorkMeta
   results?: SearchCandidate[] | null
+  /** 当前页（从 1 开始） */
+  page?: number
+  /** DLsite 搜索的总页数（后端从分页块解析） */
+  pageCount?: number
+  /** 每页条数（DLsite 固定 30，改 per_page 无效） */
+  perPage?: number
+  /** 搜索结果总数（页面 data-search-result-count，精确值） */
+  total?: number
 }
 
 export interface DownloadResult {
@@ -75,9 +83,12 @@ function ensure<T>(value: T | null | undefined, message: string): T {
 }
 
 export const metaApi = {
-  /** 关键词含 RJ/RE/VJ 编号 → 精确抓详情；否则模糊搜索返回候选 */
-  async searchWorks(keyword: string): Promise<SearchResponse> {
-    return ensure(await MetaApiService.SearchWorks(keyword), '搜索返回为空')
+  /**
+   * 关键词含 RJ/RE/VJ 编号 → 精确抓详情；否则模糊搜索返回候选。
+   * page = 第几页（DLsite 每页固定 30 条，翻到哪页才取哪页，结果总数因此不受 30 限制）。
+   */
+  async searchWorks(keyword: string, page = 1): Promise<SearchResponse> {
+    return ensure(await MetaApiService.SearchWorks(keyword, page), '搜索返回为空')
   },
 
   /** 只抓一个作品：workId 优先，否则按 keyword 搜到最匹配的再抓 */
@@ -85,15 +96,16 @@ export const metaApi = {
     return ensure<WorkMeta>(await MetaApiService.FetchWork({ keyword, workId }), '未返回作品数据')
   },
 
-  /** 下载封面到工作目录的相对路径 preImg/ 下（原样保存，不转格式） */
-  async downloadCover(workId: string, coverUrl: string): Promise<DownloadResult> {
-    // 后端返回 map[string]any，绑定层生成的是 { [k: string]?: any }，字段名由服务端保证
-    const result = await MetaApiService.DownloadCover(workId, coverUrl)
-    return ensure<DownloadResult>(result as DownloadResult | null, '下载封面失败：后端未返回结果')
-  },
-
   /** 图片落地目录的绝对路径 */
   async preImgDir(): Promise<string> {
     return (await MetaApiService.PreImgDir()) ?? 'preImg'
-  }
+  },
+
+  /**
+   * 搜索结果缩略图：后端把它缓存到工作目录的 `cache/`（目录不存在会建），返回 data URL。
+   * 已缓存过的作品不会重复联网；拿不到图时返回空串（列表退回远程直链）。
+   */
+  async cacheCover(workId: string, coverUrl: string): Promise<string> {
+    return (await MetaApiService.CacheCover(workId, coverUrl)) ?? ''
+  },
 }

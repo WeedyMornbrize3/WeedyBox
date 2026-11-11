@@ -13,6 +13,7 @@ import (
 	"WeedyBox/internal/model"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,11 @@ import (
 // 返回值里同时给出这个相对路径和解析后的绝对路径，避免"到底存哪了"的猜测。
 // 如果没有该文件夹就新建  -needcheck
 const preImgDir = "preImg"
+
+// cacheDir 是「搜索结果缩略图」的本地缓存目录（相对工作目录，不存在就建）。
+// 刻意与 preImg 分开：preImg 是**入库后的正式封面**（要记账、不能丢），
+// cache 只是搜索列表里瞄一眼用的临时图，随时可以整目录删掉重下。
+const cacheDir = "cache"
 
 // MetaApiService 是暴露给前端的服务。
 type MetaApiService struct {
@@ -60,6 +66,12 @@ type searchResponse struct {
 	Message string             `json:"message,omitempty"`
 	Work    any                `json:"work,omitempty"`
 	Results []DLsiteSearchItem `json:"results,omitempty"`
+	// 分页信息：DLsite 每页固定 30 条，前端按需翻页（见 SearchWorks 的 page 参数）。
+	Page      int `json:"page"`
+	PageCount int `json:"pageCount"`
+	PerPage   int `json:"perPage"`
+	// Total 是搜索结果总数（页面 data-search-result-count），前端据此算总页数
+	Total int `json:"total"`
 }
 
 // WorkRequest 是前端的入参。测试页同时支持「按编号」和「按名字模糊」，
@@ -108,21 +120,33 @@ func (s *MetaApiService) FetchWork(ctx context.Context, req WorkRequest) (any, e
 
 // SearchWorks 搜索作品：
 //   - 关键词里含 RJ/RE/VJ 编号 → 按编号精确抓详情（kind = "id"），并附带该关键词的搜索结果列表
-//   - 否则 → 模糊搜索，返回候选列表（kind = "keyword"），不自动抓详情
+//   - 否则 → 模糊搜索，返回**第 page 页**候选（kind = "keyword"），不自动抓详情
+//
+// 分页：DLsite 每页固定 30 条（per_page 改大无效，实测 60/120 也只回 30），
+// 所以这里显式收 page 参数并回 PageCount —— 前端翻到哪页才取哪页，结果总数因此不受 30 限制。
 //
 // 这样测试页能一次看到「搜索返回了什么」和「详情解析出了什么」。
-func (s *MetaApiService) SearchWorks(ctx context.Context, keyword string) (*searchResponse, error) {
+func (s *MetaApiService) SearchWorks(ctx context.Context, keyword string, page int) (*searchResponse, error) {
 	svc := s.ensure()
 	keyword = strings.TrimSpace(keyword)
 	if keyword == "" {
 		return nil, errors.New("请输入作品名或 RJ 编号")
 	}
+	if page < 1 {
+		page = 1
+	}
 
-	resp := &searchResponse{Query: keyword}
+	resp := &searchResponse{Query: keyword, Page: page, PerPage: searchPerPage}
 
 	// 列表页：失败不算致命（例如按编号搜列表页可能直接没有结果），只记录原因。
-	items, searchErr := svc.SearchWorkByName(ctx, keyword)
+	items, pageCount, total, searchErr := svc.SearchResultPage(ctx, keyword, page)
 	resp.Results = items
+	if pageCount > 0 {
+		resp.PageCount = pageCount
+	} else {
+		resp.PageCount = 1
+	}
+	resp.Total = total
 
 	if id, ok := NormalizeDLsiteID(keyword); ok {
 		resp.Kind = "id"
@@ -148,11 +172,18 @@ func (s *MetaApiService) SearchWorks(ctx context.Context, keyword string) (*sear
 		return nil, searchErr
 	}
 	if len(items) == 0 {
-		resp.Message = fmt.Sprintf("没有搜到与 %q 匹配的作品", keyword)
+		if page == 1 {
+			resp.Message = fmt.Sprintf("没有搜到与 %q 匹配的作品", keyword)
+		} else {
+			resp.Message = fmt.Sprintf("第 %d 页没有更多结果", page)
+		}
 		return resp, nil
 	}
 	// 名称搜索不自动抓详情：候选可能有多个，由用户决定看哪个。
-	resp.Message = fmt.Sprintf("按名字模糊搜索到 %d 个候选（搜索接口只返回 id/name/cover）", len(items))
+	resp.Message = fmt.Sprintf(
+		"第 %d / %d 页（每页 %d 个，共 %d 个结果）",
+		page, resp.PageCount, searchPerPage, resp.Total,
+	)
 	return resp, nil
 }
 
@@ -224,6 +255,117 @@ func (s *MetaApiService) PreImgDir() string {
 		return preImgDir
 	}
 	return abs
+}
+
+// CacheCover 把**搜索结果缩略图**缓存到 cache/ 并返回 data URL（给 <img> 直接用）。
+//
+// 为什么要缓存：DLsite 的封面直链在 webview 里不一定加载得出来（Referer/成人确认），
+// 而搜索候选只是一排小图，落一份到本地最稳；目录不存在就建。
+// 已缓存过的作品**不再联网**：文件名固定 <编号>_cover.<ext>（缓存语义，允许覆盖，
+// 不像 preImg 那样加 -2 后缀 —— 那是"存档"，一份都不能丢）。
+func (s *MetaApiService) CacheCover(ctx context.Context, workID, coverURL string) (string, error) {
+	id, ok := NormalizeDLsiteID(workID)
+	if !ok {
+		return "", nil
+	}
+
+	// ① 已缓存：直接读回（后缀可能是 jpg/webp/png，不能假定）
+	if path, ext := findCachedCover(id); path != "" {
+		if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
+			return dataURL(data, ext), nil
+		}
+	}
+
+	coverURL = strings.TrimSpace(coverURL)
+	if coverURL == "" || strings.HasPrefix(coverURL, "data:") {
+		// 空 / 内联占位图（搜索页的懒加载 gif）没有下载价值，直接当作"没有封面"
+		return "", nil
+	}
+
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return "", fmt.Errorf("创建目录 %s 失败: %w", cacheDir, err)
+	}
+
+	// ② 下载后落到 cache/，再转成 data URL 返回
+	data, ext, err := s.fetchImage(ctx, coverURL)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(cacheDir, id+"_cover"+ext)
+	if werr := os.WriteFile(path, data, 0o644); werr != nil {
+		return "", fmt.Errorf("写入缓存 %s 失败: %w", path, werr)
+	}
+	return dataURL(data, ext), nil
+}
+
+// CacheDir 返回缩略图缓存目录的绝对路径（目录不存在时会先创建，失败也只返回相对路径）。
+func (s *MetaApiService) CacheDir() string {
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		fmt.Printf("创建缓存目录 %s 失败: %v\n", cacheDir, err)
+		return cacheDir
+	}
+	abs, err := filepath.Abs(cacheDir)
+	if err != nil {
+		return cacheDir
+	}
+	return abs
+}
+
+// ClearCacheDir 清空 cache/ 下的所有文件（目录本身保留）。
+//
+// 搜索缩略图只是"省一次网络请求"的临时图：退出应用时删掉，既不让它长期占盘，
+// 也避免下次启动看到过期封面。目录不存在算成功（本来就没缓存）。
+func ClearCacheDir() error {
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("读取缓存目录失败: %w", err)
+	}
+	var failed []string
+	for _, entry := range entries {
+		path := filepath.Join(cacheDir, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			failed = append(failed, entry.Name())
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("有 %d 个缓存文件删不掉: %v", len(failed), failed)
+	}
+	return nil
+}
+
+// findCachedCover 在 cache/ 下找该作品的缩略图，返回路径与真实后缀。
+func findCachedCover(id string) (string, string) {
+	matches, err := filepath.Glob(filepath.Join(cacheDir, id+"_cover.*"))
+	if err != nil || len(matches) == 0 {
+		return "", ""
+	}
+	return matches[0], strings.ToLower(filepath.Ext(matches[0]))
+}
+
+// dataURL 把图片字节拼成 data:<mime>;base64,…（webview 里一定显示得出来）。
+func dataURL(data []byte, ext string) string {
+	return "data:" + mimeByExt(ext) + ";base64," + base64.StdEncoding.EncodeToString(data)
+}
+
+// mimeByExt 按文件后缀给 MIME；认不出的一律 image/jpeg（与落盘时的兜底一致）。
+func mimeByExt(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".webp":
+		return "image/webp"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".avif":
+		return "image/avif"
+	case ".bmp":
+		return "image/bmp"
+	default:
+		return "image/jpeg"
+	}
 }
 
 // ===== 内部实现 =====

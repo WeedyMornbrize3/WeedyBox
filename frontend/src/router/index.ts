@@ -26,16 +26,17 @@ const routes = [
         meta: { title: 'TODO' }
       },
       {
-        path: '/works',
-        name: 'Works',
-        component: () => import('../views/WorksPage.vue'),
-        meta: { title: '作品库' }
-      },
-      {
         path: '/library',
         name: 'Library',
         component: () => import('../views/LibraryPage.vue'),
         meta: { title: '游戏库' }
+      },
+      {
+        // 作品库：游戏库卡片点击后进这里看详情（views/WorksPage.vue 复用）
+        path: '/works',
+        name: 'Works',
+        component: () => import('../views/WorksPage.vue'),
+        meta: { title: '作品库' }
       },
       {
         path: '/testing',

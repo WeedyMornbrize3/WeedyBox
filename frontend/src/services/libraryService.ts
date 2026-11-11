@@ -5,7 +5,7 @@
 // 与 metaService.ts 的分工（很重要，别合并）：
 //   metaApi    —— 永远联网。调试页 /testing 用它，为的是核对「后端解析得对不对」。
 //   libraryApi —— 缓存优先。作品库 /works 与游戏库 /library 用它：库里有的直接给，
-//                 没有才联网，抓完自动入库。
+//                 没有才联网；但**抓取不会自动入库**，只有 storeIn() 才写库。
 //
 // 注意：frontend/bindings/ 是 wails3 generate bindings 生成的（已被 .gitignore 忽略），
 // 新克隆仓库后必须先跑一次生成命令，否则下面的 import 会解析失败。
@@ -45,8 +45,9 @@ function ensure<T>(value: T | null | undefined, message: string): T {
 
 export const libraryApi = {
   /**
-   * 取一个作品：**缓存优先**。
+   * 取一个作品：**缓存优先**（只读）。
    * refresh = true 表示"我要最新的，别给我缓存"，会跳过本地库直接联网。
+   * 注意：这一步**不会**把作品写进游戏库 —— 入库是 `storeIn()` 的事。
    */
   async fetch(keyword: string, workId = '', refresh = false): Promise<LibraryMeta> {
     const result = await LibraryService.Fetch({
@@ -56,6 +57,16 @@ export const libraryApi = {
       refresh,
     })
     return ensure<LibraryMeta>(result as LibraryMeta | null, '未返回作品数据')
+  },
+
+  /**
+   * 入库：**只有这一步会把作品收进游戏库** ——
+   * 后端抓文本元数据、把封面原样落到 `preImg/`、写进 `library_works`。
+   * 搜索与打开详情（fetch）都只读不写，所以游戏库里只会出现"点过入库"的作品。
+   */
+  async storeIn(workId: string, source = LIBRARY_SOURCE_DLSITE): Promise<LibraryMeta> {
+    const result = await LibraryService.Store({ workId, source })
+    return ensure<LibraryMeta>(result as LibraryMeta | null, '入库失败：后端未返回作品数据')
   },
 
   /** 列出游戏库里已入库的作品（最近入库的在前）；source 传空串 = 所有来源 */

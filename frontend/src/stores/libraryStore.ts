@@ -27,11 +27,8 @@ export const useLibraryStore = defineStore('library', () => {
   const loaded = ref(false)
 
   // ===== Getters =====
+  /** 已入库作品数（游戏库顶栏右侧显示） */
   const count = computed(() => works.value.length)
-  /** 有封面的作品数，用来在空列表旁说明"封面还没下载" */
-  const withCoverCount = computed(
-    () => works.value.filter((w) => covers.value[w.workId]).length,
-  )
 
   // ===== Actions =====
 
@@ -113,7 +110,6 @@ export const useLibraryStore = defineStore('library', () => {
     loaded,
     // Getters
     count,
-    withCoverCount,
     // Actions
     load,
     loadCovers,

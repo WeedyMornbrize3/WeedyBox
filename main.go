@@ -54,6 +54,7 @@ func main() {
 
 	// 元数据抓取服务：调试页（/testing）用它「每次真去 DLsite 抓一遍」核对解析结果。
 	// 封面图片会落到工作目录下的相对路径 preImg/，并把落地位置记进游戏库。
+	// 搜索结果按 DLsite 分页逐页取（每页固定 30 条，per_page 改大无效），page 参数由前端传。
 	metaService := &getmeta.MetaApiService{DB: dbService}
 
 	// 游戏库服务：作品库（/works）与游戏库（/library）用。
@@ -145,6 +146,14 @@ func main() {
 			time.Sleep(time.Second)
 		}
 	}()
+
+	// 退出前清空搜索缩略图缓存：cache/ 只是"省一次网络请求"的临时图，
+	// 下次搜索会自动重下，没必要长期占盘（preImg/ 是入库存档，不能碰）。
+	app.OnShutdown(func() {
+		if err := getmeta.ClearCacheDir(); err != nil {
+			log.Printf("清理缩略图缓存失败: %v", err)
+		}
+	})
 
 	// Run the application. This blocks until the application has been exited.
 	err := app.Run()

@@ -4,8 +4,9 @@
 //
 // 分工：
 //   - 抓取/解析      internal/service/getMeta（不知道数据库的存在）
-//   - 持久化         internal/database/dlsite_repo.go（只搬数据）
-//   - 缓存策略       ← 本文件（先查库，没有再联网，抓回来顺手入库）
+//   - 持久化         internal/database/library_repo.go（只搬数据）
+//   - 缓存与入库策略 ← 本文件：Fetch 只读（库里有的直接给，没有才联网，**不写库**）；
+//     Store 才是"入库"（抓文本 + 下封面 + 写库），只有用户点「入库」时调用。
 //
 // 为什么单独一个服务而不是塞进 MetaApiService：
 // 调试页要的恰恰是「每次真去 DLsite 抓一遍」，拿它来核对解析结果；
@@ -54,12 +55,14 @@ func (s *LibraryService) ensureMeta() *getmeta.MetaApiService {
 
 // ===== 对外方法 =====
 
-// Fetch 取一个作品：**缓存优先**。
+// Fetch 取一个作品：**缓存优先**（只读）。
 //
 //  1. 能确定编号时先查 library_works（按 source + work_id），命中就把 raw_json
 //     还原成 map 返回（不打网络）；
-//  2. 没命中（或 Refresh=true）才联网抓取，抓回来 upsert 入库；
-//  3. 返回值里额外注入 cached / cover* 几个键，前端据此显示「缓存」标记与本地封面。
+//  2. 没命中（或 Refresh=true）才联网抓取；
+//  3. **不写库**：搜索/浏览不该悄悄把作品塞进游戏库，入库是用户点「入库」的显式动作
+//     （见 Store）；
+//  4. 返回值里额外注入 cached / cover* 几个键，前端据此显示「缓存」标记与本地封面。
 //
 // 返回的 map 与 metaApi.FetchWork 的字段完全一致（就是同一份 DLsiteWork 的 json），
 // 只是多了上面那几个键 —— 这样两个服务的返回类型对前端是兼容的。
@@ -87,11 +90,11 @@ func (s *LibraryService) Fetch(ctx context.Context, req FetchWorkRequest) (map[s
 			if work, ok := workFromRawJSON(row); ok {
 				return decorate(work, row, true), nil
 			}
-			// raw_json 坏了（手改过库/旧数据）→ 当作没缓存，重新抓一份覆盖掉
+			// raw_json 坏了（手改过库/旧数据）→ 当作没缓存，重新抓一份
 		}
 	}
 
-	// ② 联网
+	// ② 联网（**只返回，不写库**：写库是「入库」按钮的事）
 	data, err := s.ensureMeta().FetchWork(ctx, getmeta.WorkRequest{Keyword: keyword, WorkID: workID})
 	if err != nil {
 		return nil, err
@@ -101,15 +104,84 @@ func (s *LibraryService) Fetch(ctx context.Context, req FetchWorkRequest) (map[s
 		return nil, errors.New("后端返回了无法识别的作品数据")
 	}
 
-	// ③ 入库（失败不影响这次展示：缓存是"下次更快"，不该挡住当前结果）
-	row := rowFromWork(source, work)
-	if err := s.DB.UpsertLibraryWork(ctx, &row); err != nil {
-		fmt.Printf("写入游戏库失败（本次结果仍会返回）: %v\n", err)
-	} else if saved, ferr := s.DB.FindLibraryWork(ctx, source, row.WorkID); ferr == nil && saved != nil {
-		row = *saved // 取回库里那份，才能拿到已有的 cover_* 与时间戳
+	return decorate(work, nil, false), nil
+}
+
+// StoreRequest 是「入库」的入参：只需要来源 + 编号。
+type StoreRequest struct {
+	WorkID string `json:"workId"`
+	Source string `json:"source"` // 空 = dlsite
+}
+
+// Store 把作品**真正收进游戏库**（只有用户点「入库」时才走这里）：
+//
+//   - 文本：联网抓一份元数据（库里已有 raw_json 时直接复用，不重复下载），写进 library_works；
+//   - 图片：DownloadCover 原样落到 preImg/，并把落地位置记进库。
+//
+// 与 Fetch 的分工：Fetch 只读不写，Store 才写 —— 搜索、点开详情都不会再自动入库。
+// 幂等：已入库且封面也在了，直接返回库里那份（不会重复下图；writeFileUnique 不覆盖，
+// 重复调用只会多出 -2 后缀的重复文件）。
+func (s *LibraryService) Store(ctx context.Context, req StoreRequest) (map[string]any, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second) // 要抓文本 + 下图，给足时间
+	defer cancel()
+
+	if s.DB == nil {
+		return nil, errors.New("数据库未就绪")
+	}
+	workID := strings.ToUpper(strings.TrimSpace(req.WorkID))
+	if workID == "" {
+		return nil, errors.New("作品编号为空，无法入库")
+	}
+	source := req.Source
+	if strings.TrimSpace(source) == "" {
+		source = database.SourceDLsite
 	}
 
-	return decorate(work, &row, false), nil
+	// ① 库里已有文本：不再抓；封面也在了就直接返回
+	if row, err := s.DB.FindLibraryWork(ctx, source, workID); err == nil && row != nil {
+		if work, ok := workFromRawJSON(row); ok {
+			if strings.TrimSpace(row.CoverAbsPath) == "" {
+				if coverURL := strOf(work["coverUrl"]); coverURL != "" {
+					if _, derr := s.ensureMeta().DownloadCover(ctx, workID, coverURL); derr != nil {
+						return nil, fmt.Errorf("封面下载失败: %w", derr)
+					}
+				}
+			}
+			saved, ferr := s.DB.FindLibraryWork(ctx, source, workID)
+			if ferr == nil && saved != nil {
+				return decorate(work, saved, true), nil
+			}
+			return decorate(work, row, true), nil
+		}
+	}
+
+	// ② 全新作品：联网抓文本
+	data, err := s.ensureMeta().FetchWork(ctx, getmeta.WorkRequest{WorkID: workID})
+	if err != nil {
+		return nil, err
+	}
+	work, ok := data.(map[string]any)
+	if !ok {
+		return nil, errors.New("后端返回了无法识别的作品数据")
+	}
+
+	row := rowFromWork(source, work)
+	// 入库失败必须报给用户：这一步就是在"载入数据库"，不能像浏览那样只打日志
+	if err := s.DB.UpsertLibraryWork(ctx, &row); err != nil {
+		return nil, fmt.Errorf("写入游戏库失败: %w", err)
+	}
+
+	// ③ 封面：原样落到 preImg/ 并记账（文本已入库，这里失败时前端会提示重试）
+	if coverURL := strOf(work["coverUrl"]); coverURL != "" {
+		if _, derr := s.ensureMeta().DownloadCover(ctx, workID, coverURL); derr != nil {
+			return nil, fmt.Errorf("元数据已入库，但封面下载失败: %w", derr)
+		}
+	}
+
+	if saved, ferr := s.DB.FindLibraryWork(ctx, source, workID); ferr == nil && saved != nil {
+		return decorate(work, saved, false), nil
+	}
+	return decorate(work, nil, false), nil
 }
 
 // List 列出游戏库里所有作品（最近入库的在前）。source 传空串 = 所有来源。

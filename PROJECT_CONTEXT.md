@@ -51,16 +51,18 @@ internal/database/library_repo_test.go 游戏库仓储测试（惰性建表、�
 internal/service/todo_service.go TodoService：全部 CRUD + 批量删除 + 统计
 internal/service/library_service.go LibraryService：**缓存优先**取作品 / 列游戏库 / 删除 / 本地封面转 data URL
 internal/service/getMeta/getFromDlsite.go  DLsite 元数据解析（MetaService，package getmeta）
-internal/service/getMeta/meta_service.go   Wails 包装层 MetaApiService（搜索/抓取/下载封面到 preImg/，下载后记账到库）
+internal/service/getMeta/meta_service.go   Wails 包装层 MetaApiService（搜索/抓取/封面下载：入库图落 preImg/、搜索缩略图落 cache/，下载后记账到库）
 internal/service/getMeta/testdata/        两个真实作品页 fixture（离线回归用）
 internal/service/window_service.go WindowService：最小化 / 最大化 / 关闭 / 隐藏 / 显示 / 可见性
 frontend/src/main.ts             Pinia + router + store 的 restoreState()
-frontend/src/router/index.ts     hash 路由，MainLayout 下挂 7 个子页（/ · /works · /library · /todo · /testing · /settings + /test 重定向）
-frontend/src/stores/             todoStore.ts · metaStore.ts · libraryStore.ts · Sidebar.ts · Theme.ts · App.ts
+frontend/src/router/index.ts     hash 路由，MainLayout 下挂 7 个子页（/ · /library · /works · /todo · /testing · /settings + /test 重定向）
+frontend/src/stores/             todoStore.ts · metaStore.ts · libraryStore.ts · autoHeightStore.ts · Sidebar.ts · Theme.ts · App.ts
+frontend/src/views/WorksPage.vue 作品库页面（**侧栏无入口**，只从游戏库点封面进入；见 §3.3）
 frontend/src/services/todoService.ts  Wails 绑定封装：todoApi（含 ensure() 兜底 null）
-frontend/src/services/metaService.ts  Wails 绑定封装：metaApi（**永远联网**：搜索/抓取/下载封面）
-frontend/src/services/libraryService.ts Wails 绑定封装：libraryApi（**缓存优先**：fetch/list/remove/coverDataUrl）
+frontend/src/services/metaService.ts  Wails 绑定封装：metaApi（**永远联网**：搜索/抓取 + 缩略图缓存 CacheCover）
+frontend/src/services/libraryService.ts Wails 绑定封装：libraryApi（fetch **只读**缓存优先 · **storeIn 才入库** · list/remove/coverDataUrl）
 frontend/src/utils/metaFormat.ts 元数据展示纯函数：toMessage / formatBytes / fileUrl / buildSummaryRows（+ MetaRow 类型）
+frontend/src/utils/clipboard.ts 复制统一入口 copyText()：Clipboard API → execCommand 兜底，失败抛错（调用方提示）
 frontend/src/components/meta/    作品库与调试页共用的高粒度积木（MetaSection/搜索行/封面/键值表/明细…，见 §4.6）
 frontend/src/components/todo/    TodoList · TodoItem · TodoInput · TodoStats · FilterBar · FilterChipGroup · TodoPrioritySelector
 frontend/src/components/settings/ CloseActionSelect · ThemeModeSelector · ThemeToggle · LanguageSelect(占位) · SettingsSection/Item/Page · VersionInfo
@@ -106,38 +108,45 @@ doc/                             README/backend/frontend/styles/conventions + ne
 
 ⚠️ **不做数据加工**：返回给前端的 `work` 是 `DLsiteWork` 的 **json 编码**（走 `toRawMap` 一个 `Marshal`+`Unmarshal` 往返，字段名与 json tag 完全一致），前端直接展示原始 JSON。这是刻意的——测试页的用途就是对着 DLsite 页面核对解析结果。
 
-已在 `main.go` 注册：`metaService := &getmeta.MetaApiService{DB: dbService}`（持有 DB 是为了下载封面后记账进游戏库），`applicationServices` 加入后服务总数 5、方法 36（与 §8 的 `wails3 generate bindings` 输出一致）。结构体直接字面量构造（不走 `NewMetaApiService()`），因此内部有 `ensure()` 惰性兜底 `meta` 字段。
+已在 `main.go` 注册：`metaService := &getmeta.MetaApiService{DB: dbService}`（持有 DB 是为了下载封面后记账进游戏库），`applicationServices` 加入后服务总数 5、方法 39（与 §8 的 `wails3 generate bindings` 输出一致）。结构体直接字面量构造（不走 `NewMetaApiService()`），因此内部有 `ensure()` 惰性兜底 `meta` 字段。
 
 | 方法 | 签名 | 行为 |
 | --- | --- | --- |
 | `FetchWork` | `(ctx, req WorkRequest) (any, error)` | `workId` 优先，否则拿 `keyword`；关键词里含 RJ/RE/VJ 编号则按编号精确抓，否则模糊搜索后抓**第一个**候选。返回 `map[string]any` |
-| `SearchWorks` | `(ctx, keyword string) (*searchResponse, error)` | 关键词含编号 → `kind="id"` 且带回 `work` 详情 + 列表候选；否则 `kind="keyword"`，**只返回候选列表不自动抓详情**（由用户决定看哪个） |
-| `DownloadCover` | `(ctx, workID, coverURL string) (map[string]any, error)` | 下载封面**原样**存入相对路径 `preImg/`，返回 `{id, dir, path, absPath, bytes, suffix, coverUrl}`；重名加 `-2/-3` 后缀，**不覆盖已有文件** |
-| `PreImgDir` | `() string` | `preImg/` 的绝对路径，前端用来显示"存到哪了" |
+| `SearchWorks` | `(ctx, keyword string, page int) (*searchResponse, error)` | 关键词含编号 → `kind="id"` 且带回 `work` 详情 + 列表候选；否则 `kind="keyword"`，返回**第 page 页**候选（不自动抓详情）。DLsite 每页固定 30 条（`per_page` 传 60/120 实测也只回 30），所以分页靠 `.../per_page/30/page/N/` 逐页取；响应里带 **`total`（页面 `data-search-result-count`，精确总数）** 与 `pageCount`（优先由 total 算出，取不到才退回分页块最大页码）—— **结果不再受 30 条限制** |
+| `DownloadCover` | `(ctx, workID, coverURL string) (map[string]any, error)` | 下载封面**原样**存入相对路径 `preImg/`，返回 `{id, dir, path, absPath, bytes, suffix, coverUrl}`；重名加 `-2/-3` 后缀，**不覆盖已有文件**。日常由 `LibraryService.Store`（入库）和调试页调用 |
+| `CacheCover` | `(ctx, workID, coverURL string) (string, error)` | **搜索缩略图**：缓存到相对路径 `cache/`（不存在就建），返回 `data:<mime>;base64,…`；已缓存过就不再联网。固定文件名 `<编号>_cover.<ext>`（允许覆盖，缓存语义） |
+| `PreImgDir` / `CacheDir` | `() string` | `preImg/` / `cache/` 的绝对路径（后者顺带创建目录） |
+| `ClearCacheDir` | `() error`（包级函数，`getmeta.ClearCacheDir`） | 清空 `cache/` 下的所有文件（目录保留，不存在算成功）。`main.go` 里挂在 `app.OnShutdown`：**每次退出软件前清掉搜索缩略图** |
 
 `WorkRequest{keyword, workId string}` 是前端入参——Wails 绑定不擅长可选参数，所以两个字段都给、服务端自己选。
 
 **图片落地位置**：`const preImgDir = "preImg"` 是**相对路径**，实际落点取决于进程工作目录（开发态从仓库根目录跑 → `WeedyBox/preImg/`）。返回值同时给 `path`（相对，展示用）和 `absPath`（绝对，对照用）。后缀按**真实内容**判定（RIFF/WEBP、JPEG SOI、PNG 签名…）→ `Content-Type` → URL 扩展名 → `.jpg`；硬编码 `.jpg` 是错的，因为存在 `.webp` 封面。
 
+**缩略图缓存目录 `cache/`**（`const cacheDir = "cache"`，也是相对路径）与 `preImg/` 分开：`preImg/` 是**入库后的正式封面**（记账、不覆盖、不能丢）；`cache/` 只是搜索列表里瞄一眼用的临时图，可在退出时整体清掉（`getmeta.ClearCacheDir`），`.gitignore` 已忽略。**搜索结果每页 10 个，只给当前页下预览图**；DLsite 源数据每面 30 条，因此第 1~3 页用第 1 面、4~6 页用第 2 面……**用到哪面才取哪面**，翻到组末页（3/6/9…）时预取下一面（见 §4.3 `loadSourcePage` / `setCandidatePage`）。
+
 **前端页面（两个）**：共用 `stores/metaStore.ts`（状态与请求）与 `components/meta/*`（积木），只是排布不同：
 
 | 路由 | 视图 | 定位与排布 |
 | --- | --- | --- |
-| `/testing`（name `Testing`；旧路径 `/test` 重定向） | `views/test.vue`（薄壳，只渲染 `MetaApiTestCard`） | **调试页**：单列四卡 —— 请求 / 精确命中（含封面预览与下载）/ 模糊搜索候选 / **原始 JSON（可复制，只在这里出现）** |
-| `/works`（name `Works`） | `views/WorksPage.vue` | **作品库**：搜索区常驻 + 结果区双列 `md:grid-cols-[minmax(0,1fr)_280px]`（左详情或候选 / 右候选栏 + 封面保存位置 + 游戏库入口）。缓存命中时标题旁有「缓存」badge 与「重新抓取」按钮。**不放示例 chips**（示例只在调试页） |
-| `/library`（name `Library`） | `views/LibraryPage.vue` | **游戏库**：已入库作品列表（封面走 `library.covers` 的 data URL），每行「查看详情」（跳 `/works` 并 `loadById`）与二次确认删除；顶部计数 + 刷新 |
+| `/testing`（name `Testing`；旧路径 `/test` 重定向） | `views/test.vue`（薄壳，只渲染 `MetaApiTestCard`） | **调试页**：单列四卡 —— 请求 / 精确命中（含封面预览与「入库」）/ 模糊搜索候选 / **原始 JSON（可复制，只在这里出现）**。抓取入口在这一页；按钮与作品库同语义（`meta.storeIn()`，会写库） |
+| `/works`（name `Works`；**侧栏无入口**） | `views/WorksPage.vue` | **作品库**：**只剩作品信息**（单个 `MetaSection` + `MetaWorkOverview` + `MetaWorkDetails`）。没有搜索卡、没有候选栏、没有「封面保存位置」卡、没有「游戏库」卡。缓存命中时标题旁有「缓存」badge 与「重新抓取」按钮。只能从游戏库点封面进入 |
+| `/library`（name `Library`） | `views/LibraryPage.vue` | **游戏库**：顶栏是**单行** `MetaSection`（只有标题 + 右侧「已入库 N 款」+ 刷新 + 搜索，无内容区）；封面网格 `grid-cols-[repeat(auto-fill,minmax(150px,1fr))]`，hover 时半透明名称面板从下方淡入；点封面 → `openWork()` 跳 `/works` 并 `loadById`（缓存优先）；右上角删除按钮连点两下确认（**移开鼠标或失焦即撤销待确认态**）。**搜索在这里做**：点「搜索」弹居中弹窗（`Teleport` 到 body，遮罩 `color-mix` + `backdrop-blur(8px)`，**只有 ✕ 与 Esc 能关，点遮罩不关**），内含搜索行 + 提示文案 + 候选（**每页 10 个**、分页条在候选下方，**只给当前页下 `cache/` 预览图**；分页条 = 上一页/下一页 + 前 3 页/当前页/后 3 页（中间省略号）+ 输入页码跳转）；命中作品即关窗跳 `/works`；读取失败的错误条显示在顶栏卡片下方 |
 
-两页都**自带滚动容器**：`MainLayout.vue:6` 的 router-view 是 `overflow-hidden`，页面必须自己提供滚动；而 `global.css:207-213` 用 `!important` 全局隐藏了滚动条，只有 `.scrollbar-theme` 能恢复（`scrollbar-width: thin` + 带 `!important` 的 `::-webkit-scrollbar`）。`pr-2` 给 8px 滚动条留位。
+三页都**自带滚动容器**：`MainLayout.vue:6` 的 router-view 是 `overflow-hidden`，页面必须自己提供滚动；而 `global.css:207-213` 用 `!important` 全局隐藏了滚动条，只有 `.scrollbar-theme` 能恢复（`scrollbar-width: thin` + 带 `!important` 的 `::-webkit-scrollbar`）。`pr-2` 给 8px 滚动条留位。
 
-⚠️ 但**数据不再直连 MetaApiService**：`/works` 走 `stores/metaStore.ts` → `libraryApi`（缓存优先），只有 `/testing` 用 `refresh=true` 强制联网核对解析；`/testing` 的原始 JSON 因此会多出 `cached/workId/cover*` 等库侧键（后端注入，不是解析结果变化）。
+⚠️ 但**数据不再直连 MetaApiService**：页面都走 `stores/metaStore.ts` → `libraryApi`（缓存优先、**只读**），只有 `/testing` 用 `refresh=true` 强制联网核对解析；`/testing` 的原始 JSON 因此会多出 `cached/workId/cover*` 等库侧键（后端注入，不是解析结果变化）。**现状：搜索入口是 `/library` 顶部的「搜索」弹窗；搜索与点开详情都只读，只有点「入库」才会抓文本 + 下封面写库 —— 作品因此只会在入库后出现在 `/library`，点卡片进 `/works` 看详情；`/testing` 只作调试核对。**
+
+**「下载」字样已改为「入库」，且入库成功后按钮变「已入库」并禁用**：`MetaDownloadButton` 默认文案 `入库` / `入库中`（原来叫「下载封面」），库里已有封面时文案变 `已入库`、图标换勾、按钮 `disabled`（`stores/metaStore.ts` 的 `stored` = 本次会话下载过 `saved` 或后端注入的 `coverAbsPath` 非空）。真正的写入在 `LibraryService.Store`（抓文本 + 封面落 `preImg/` + 写库），两个页面都走同一个 `metaStore.storeIn()`；前端不再有"只下图不写库"的独立入口。禁用是刻意的：`writeFileUnique` 不覆盖同名文件，再点只会多出一份 `-2` 后缀的重复图。
 
 ### 3.7 游戏库服务（`internal/service/library_service.go`，`LibraryService`）
 
-与 §3.3 的 `MetaApiService` **语义相反**（这是刻意的，见 §10）：`MetaApiService` 永远联网，`LibraryService` **缓存优先** —— 库里有的直接返回，没有才联网，抓完自动入库。所有方法都带 `source` 参数（当前唯一值 `dlsite`，为将来接别的源留位）。
+与 §3.3 的 `MetaApiService` **语义相反**（这是刻意的，见 §10）：`MetaApiService` 永远联网，`LibraryService` **缓存优先** —— 库里有的直接返回，没有才联网。**但读取不等于入库**：`Fetch` 只读不写，`Store` 才是"入库"（唯一会写库的方法）。所有方法都带 `source` 参数（当前唯一值 `dlsite`，为将来接别的源留位）。
 
 | 方法 | 签名 | 行为 |
 | --- | --- | --- |
-| `Fetch` | `(ctx, req FetchWorkRequest) (map[string]any, error)` | `FetchWorkRequest{keyword, workId, source, refresh}`。有编号且 `refresh=false` 时先查库；命中则用 `raw_json` 还原 + 注入 `cached=true` 与封面字段；未命中（或 `refresh=true`）走 `meta.FetchWork`，入库后注入 `cached=false`。**入库失败只打日志，不挡浏览** |
+| `Fetch` | `(ctx, req FetchWorkRequest) (map[string]any, error)` | `FetchWorkRequest{keyword, workId, source, refresh}`。有编号且 `refresh=false` 时先查库；命中则用 `raw_json` 还原 + 注入 `cached=true` 与封面字段；未命中（或 `refresh=true`）走 `meta.FetchWork`，**只返回、不写库**（注入 `cached=false`） |
+| `Store` | `(ctx, req StoreRequest) (map[string]any, error)` | **入库**：`StoreRequest{workId, source}`。库里已有 `raw_json` 就复用（不再抓文本），否则联网抓一份 → `UpsertLibraryWork` → `DownloadCover` 把封面落到 `preImg/` 并记账。封面已存在时幂等返回。写库失败**直接报错**（这一步就是在"载入数据库"） |
 | `List` | `(ctx, source string) ([]LibraryWork, error)` | `source` 空 = 所有来源；`ORDER BY created_at DESC, id DESC` |
 | `Remove` | `(ctx, workID, source string) error` | **只删库记录，不删磁盘图片**（那是用户自己的文件） |
 | `CoverDataURL` | `(ctx, workID, source string) string` | 读 `cover_abs_path` → `data:<mime>;base64,…`；文件不存在返回空串（不算错误） |
@@ -157,7 +166,7 @@ doc/                             README/backend/frontend/styles/conventions + ne
 | `NewMetaService(options ...MetaOption)` | 默认 `http.Client{Timeout: 20s}`、`tagLimit=24` |
 | `WithHTTPClient(*http.Client)` / `WithTagLimit(int)` | 注入客户端 / 限制标签数 |
 | `GetWorkByID` | `(ctx, id string) (*DLsiteWork, error)` —— 按 RJ/RE/VJ 取单个作品 |
-| `SearchWorkByName` | `(ctx, keyword string) ([]DLsiteSearchItem, error)` —— 每项只有 `ID`/`Name`/`Cover` |
+| `SearchWorkByName` | `(ctx, keyword string) ([]DLsiteSearchItem, error)` —— 第一页候选（`SearchResultPage(ctx, keyword, page)` 返回该页 30 条 + 总页数 + 总数）；每项只有 `ID`/`Name`/`Cover`。⚠️ 缩略图在页面里是 Vue 组件 `<thumb-with-ng-filter-block :thumb-candidates="['//img…webp','//img…jpg']">`，**不是** `<img>` 的 `src`/`data-src`；块内那个 `<img>` 只是弹层占位图（`src` 是内联 gif data URL）。`extractSearchItemCover` 因此优先读 `:thumb-candidates` 的第一项并补成 `https://`，退路才看传统图片属性且跳过 `data:` 占位 —— 曾经的"搜索结果不出图、点详情才有图"就是这个坑 |
 | `GetWorkByName` | `(ctx, keyword string) (*DLsiteWork, error)` —— 搜索取首个再抓详情 |
 | `NormalizeDLsiteID` | `(raw string) (string, bool)` —— 抽编号，转大写、**保留前导零** |
 
@@ -278,8 +287,9 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 | `stores/Sidebar.ts` | `sidebar` | `barWidth=72`、`barWidthCollapsed=250`；**命名反直觉**：`isCollapsed=true` → 宽度 250。localStorage 键 `sidebar-collapsed` |
 | `stores/Theme.ts` | `theme` | `ThemeMode='light'|'dark'|'system'`(默认 system)；`effectiveTheme`；`applyTheme()` 用 `documentElement[data-theme="dark"]`；localStorage `theme-mode`；`setupSystemListener()` 监听 `prefers-color-scheme` |
 | `stores/App.ts` | `app` | `CloseAction='ask'|'hide'|'close'`（默认 `ask`）；localStorage `close-action`；`VALID` 数组判定，**非法值/旧值 `minimise` 一律回落 `ask`**；导出 `CLOSE_ACTION_OPTIONS`；`setCloseAction` + `restoreState` + `watch` 兜底落盘 |
-| `stores/metaStore.ts` | `meta` | DLsite 元数据：State `keyword·loading·downloading·error·status·work·candidates·saved·preImgPath·raw·cached·libraryUpdatedAt`；Getters `rawJson·hasResult`；Actions `runSearch(query?, refresh=false)·loadById(id, refresh=false)·searchBySample(s, refresh=false)·downloadCover()·refreshPreImgDir()·ensurePreImgDir()·clearResult({keepCandidates})`；导出 `META_SAMPLES`。**缓存优先**（走 `libraryApi`）；作品库与调试页共用同一个 store，切页不丢结果，调试页传 `refresh=true` 强制联网 |
-| `stores/libraryStore.ts` | `library` | 游戏库列表：State `works·loading·error·covers(id→dataURL)·removingId·loaded`；Getters `count·withCoverCount`；Actions `load(force=false)·loadCovers()·remove(workId)·refreshCover(workId)·has(workId)` |
+| `stores/metaStore.ts` | `meta` | DLsite 元数据：State `keyword·loading·downloading·error·status·work·saved·preImgPath·candidateCovers(id→dataURL)·sourcePages(DLsite页号→30条)·sourcePageCount·searchTotal·pageLoading·candidatePage·raw·cached·libraryUpdatedAt·coverAbsPath`；Getters `rawJson·hasResult·stored·candidates(已加载拼接)·candidateTotal(后端精确总数)·candidatePageCount·pagedCandidates`；Actions `runSearch(query?, refresh=false)·loadById(id, refresh=false)·searchBySample(s, refresh=false)·loadCandidateCovers(list)·loadSourcePage(page, silent?)·setCandidatePage(page)·storeIn()（**入库**）·refreshPreImgDir()·ensurePreImgDir()·clearResult({keepCandidates})`；导出 `META_SAMPLES`。**缓存优先**（走 `libraryApi`）；调试页传 `refresh=true` 强制联网。`keyword` 不参与"打开作品"（`loadById` 不写回），搜索弹窗开/关都会清空它（见 §10）。**候选分页每页 10 条，总页数按后端给的结果总数算；30/10=3，所以第 1~3 页对应 DLsite 第 1 面、4~6 页对应第 2 面……用到哪面才取哪面，翻到组末页（3/6/9…）时预取下一面** |
+| `stores/libraryStore.ts` | `library` | 游戏库列表：State `works·loading·error·covers(id→dataURL)·removingId·loaded`；Getters `count`；Actions `load(force=false)·loadCovers()·remove(workId)·refreshCover(workId)·has(workId)` |
+| `stores/autoHeightStore.ts` | `autoHeight` | `<Transition>` 的高度自适应钩子（原 `composables/useAutoHeight.ts`，已按约定搬进 stores）：`duration`（读 `--motion-slow`）+ `enter·afterEnter·leave·afterLeave`；用法 `@enter="collapse.enter"`，`const collapse = useAutoHeightStore()` |
 
 > ⚠️ 命名不一致：`Sidebar.ts`/`Theme.ts` 大写开头，`todoStore.ts`/`App.ts`/`metaStore.ts`/`libraryStore.ts` 混用 —— 新增 store 时 import 大小写要**手写对**。
 
@@ -288,23 +298,23 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 | 文件 | 导出 | 说明 |
 | --- | --- | --- |
 | `frontend/src/services/todoService.ts` | `todoApi` | `getAll · getByID · create · update · toggleComplete · delete · deleteMany(ids) · getStats`；用本地 `ensure<T>(value, message)` 把绑定层的 `T | null` 收成 `T` |
-| `frontend/src/services/metaService.ts` | `metaApi` | **永远联网**：`searchWorks(keyword) · fetchWork(keyword, workId?) · downloadCover(workId, coverUrl) · preImgDir()`；同样用 `ensure()` 兜底 null |
-| `frontend/src/services/libraryService.ts` | `libraryApi` | **缓存优先**：`fetch(keyword, workId?, refresh=false) · list(source?) · remove(workId, source?) · coverDataUrl(workId, source?)`；导出 `LIBRARY_SOURCE_DLSITE='dlsite'` 与 `LibraryMeta`（= `WorkMeta` + `cached/workId/cover*`） |
+| `frontend/src/services/metaService.ts` | `metaApi` | **永远联网**：`searchWorks(keyword, page=1)`（返回该页 30 条 + `pageCount`）` · fetchWork(keyword, workId?) · preImgDir() · cacheCover(workId, coverUrl)`（后者返回 `cache/` 里的缩略图 data URL）；同样用 `ensure()` 兜底 null |
+| `frontend/src/services/libraryService.ts` | `libraryApi` | `fetch(keyword, workId?, refresh=false)`（**只读**缓存优先） · `storeIn(workId, source?)`（**入库，唯一写库入口**） · `list(source?) · remove(workId, source?) · coverDataUrl(workId, source?)`；导出 `LIBRARY_SOURCE_DLSITE='dlsite'` 与 `LibraryMeta`（= `WorkMeta` + `cached/workId/cover*`） |
 
-> `downloadCover` 的返回值后端是 `map[string]any`，绑定层生成的是 `{ [k: string]?: any }`，需要在封装层 `as DownloadResult` 收窄（否则 `vue-tsc` 报 TS2345）。
+> 绑定层返回的是 `map[string]any` / `{ [k: string]?: any }`，封装层用 `as LibraryMeta` 收窄（否则 `vue-tsc` 报 TS2345）。注意 `frontend/bindings/` 是**生成物**：`wails3 generate bindings` 在 beta.24 下产出的是 `.js`（旧版本产出 `.ts`），`tsconfig` 的 `exclude` 已包含 `**/*.js`，所以这些绑定对 `vue-tsc` 是 untyped 模块 —— 新克隆仓库后先跑一次生成命令，缺文件会直接解析失败。
 
 ### 4.5 `components/meta/*` 积木（作品库与调试页共用）
 
 | 组件 | 作用 |
 | --- | --- |
-| `MetaSection` | 卡片外壳（`section-header` + 图标/标题/`#actions` 插槽 + `bodyClass` 内容区），全站唯一的"卡片长相"定义 |
+| `MetaSection` | 卡片外壳（`section-header` + 图标/标题/`#actions` 插槽 + `bodyClass` 内容区），全站唯一的"卡片长相"定义。**没有默认插槽内容时不渲染 body**，并把上下内边距交给 header（`pt-4` → `py-3`）—— 用于「只有标题 + 右侧动作」的顶栏卡片，避免空 body 把卡片撑高 |
 | `MetaSearchBar` | 搜索行（`input-theme` + `btn-brand`），受控 `v-model` + `@submit`，不发请求 |
 | `MetaSampleChips` / `MetaMessage` | 快捷示例 chips / 一行提示（`tone=info|error|success`，字面量表映射图标与颜色） |
 | `MetaCover` / `MetaCoverFigure` | 封面缩略图（`sm` 44px / `md` 140×105，失败退占位图，`src` 变化复位）/ 封面 + URL 标注 |
 | `MetaKeyValueList` / `MetaTags` / `MetaSubsection` / `MetaTextBlock` | 两列键值表（`dense`/`scrollable`）/ 不可点标签云 / 小标题块 / 长文本块（`whitespace-pre-wrap` + 限高） |
 | `MetaWorkOverview` / `MetaWorkDetails` | 详情上半（封面+名称+关键字段+标签+下载+回执）/ 下半（summary + outline） |
 | `MetaDownloadButton` / `MetaSavedNotice` / `MetaPreImgPath` | 下载按钮三态 / 成功回执 + `file://` 打开 / 封面落地目录（失败静默留空） |
-| `MetaCandidateList` / `MetaRawJson` / `MetaEmptyState` | 候选行（`@select` 出编号）/ 原始 JSON + 复制 / 空态 |
+| `MetaCandidateList` / `MetaPager` / `MetaRawJson` / `MetaEmptyState` | 候选行（`@select` 出编号）/ 分页条（`page · pageCount · total` → `@change`，页码显示前 3 + 当前 + 后 3 并带省略号，另有输入页码跳转，复用 `chip`/`chip-active`）/ 原始 JSON + 复制 / 空态 |
 
 拆分层级：**store = 拿数据 → 积木 = 长什么样 → views = 放哪**。加新页面只需组合积木，不用再写请求。
 
@@ -333,6 +343,7 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 8. **三个批量按钮严格同构**（`.bulk-btn`，只有 accent 语义色不同）：默认透明底 + accent 描边/文字 → hover 填 accent + 反色文字 → 待确认 `.is-armed` 填 accent + 外描边环。accent：完成 `--color-success`、**取消完成 `--color-warning`（「回退」语义与「推进」区分）**、删除 `--color-danger`。反色文字走 `--bulk-on-accent`。数量徽标 `color-mix(in srgb, currentColor 22%, transparent)`。
 9. **关闭行为**：标题栏 X 按 `appStore.closeAction` 分流 —— `ask` 弹出标题栏内小面板（**刻意不是模态框**，因为这是两个不同意图的二选一），选项只有「隐藏到托盘」/「退出程序」+「记住我的选择」；`hide`/`close` 直接执行。独立的最小化按钮**不受影响**。
 10. **托盘左键 = 只唤回、永不隐藏**（`main.go:102-112`）：`win.IsVisible()` 时直接 `return`；否则 `tray.PositionWindow(win, 0)` + `Show()` + `UnMinimise()` + `Focus()`。不可用 Wails 默认的 `ToggleWindow`（它的语义是「显示则隐藏、否则显示」，会导致手滑再点一下窗口又没了）。隐藏统一走标题栏 X 或设置里的「隐藏到托盘」。
+11. **点击卡片 = 复制「标题 + 描述」**（用户要求）：`TodoItem` 根 `<div>` 绑 `@click`，拼成 `标题\n描述` 后 emit `copy`，由 `TodoList.handleCopy` 走 `utils/clipboard.ts` 的 `copyText()`（Clipboard API 失败退 `execCommand`）并弹 toast「文本已复制到剪贴板」。**刻意不加 `cursor-pointer`** —— 指针保持默认，整行不暗示可点；选择框加 `@click.stop`、行内按钮本来就有 `.stop`，点它们不会误复制。
 
 ---
 
@@ -473,8 +484,8 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 | `frontend/src/components/settings/LanguageSelect.vue` | 仅占位，i18n 未实现 |
 | `frontend/src/components/todo/TodoItem.vue` | 描述**只读展示，尚不能编辑**（后端 `Update` 已支持 `description`） |
 | `frontend/src/views/test.vue` | 薄壳（只渲染 `MetaApiTestCard`），DLsite **调试页**（路由 `/testing`，见 §3.3） |
-| `frontend/src/views/WorksPage.vue` | 作品库（路由 `/works`）：搜索 + 双列详情/候选栏，缓存优先。**尚未做**收藏、列表分页、批量下载、历史记录；候选行没有"选中"高亮 |
-| `frontend/src/views/LibraryPage.vue` | 游戏库（路由 `/library`）：已入库列表 + 删除 + 跳详情。**尚未做**排序/搜索/分页、批量删除、本地文件关联（打开作品所在文件夹）、封面缺失时自动补下 |
+| `frontend/src/views/WorksPage.vue` | 作品库：**只剩作品信息**（详情卡），缓存优先。**侧栏无入口**，只从游戏库点封面进入（用户要求）。搜索已搬到游戏库顶部弹窗。**尚未做**收藏、列表分页、批量入库、历史记录；从游戏库进来后没有显式「返回游戏库」按钮（靠侧栏点游戏库） |
+| `frontend/src/views/LibraryPage.vue` | 游戏库（路由 `/library`）：已入库列表 + 删除 + 跳详情 + 搜索弹窗（候选每页 10 个）。**尚未做**游戏库列表排序/分页、批量删除、本地文件关联（打开作品所在文件夹）、封面缺失时自动补下 |
 | `internal/service/library_service.go` | 游戏库只跑了离线单元测试（`internal/database/library_repo_test.go`），**Wails 端的真实接线未实机验证** |
 | `internal/service/getMeta/*_test.go` + `testdata/` | 本工作区当前是**已从磁盘删除（未提交）**状态（属用户「裁剪」清理），恢复：`git checkout -- internal/service/getMeta` |
 | `internal/service/todo_service.go:315` | 一行 `// bug need-fix` 注释（`GetStats`），逻辑本身正确，属陈旧标记 |
@@ -487,9 +498,12 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 - **DLsite 测试页（`/testing`）**：浏览器里没有 Wails 后端，`/wails/runtime` 一律 404，因此**所有真实调用都必须实机验证**（用户明确说「由于网络限制因素 不需要测试 完成后我手动测试」，故本地未跑任何联网调用）。需要确认的点：
   1. 按 `RJ01721474` 精确抓取 → 元数据是否与页面一致、`coverUrl` 是否已是 `_img_main.jpg`（560×420 那一档，不再是 240×240）；
   2. 封面在 webview 里能否直接显示（`Referer` 已设为 `https://www.dlsite.com/`，`<img referrerpolicy="no-referrer">`）；
-  3. 点「下载封面」是否真的在**工作目录下**生成 `preImg/`，文件名形如 `RJ01721474_cover.jpg`；卡片里显示的是 `absPath`，以那个为准；
+  3. 点「入库」是否真的在**工作目录下**生成 `preImg/`，文件名形如 `RJ01721474_cover.jpg`；卡片里显示的是 `absPath`，以那个为准；入库成功后按钮应立刻变「已入库」并禁用，且**退出再进 `/works` 仍是「已入库」**（此时靠后端注入的 `coverAbsPath`，不是会话内缓存）；
   4. 模糊搜索（如 `エルフ パラダイス`）是否返回候选列表；
-  5. 「打开已保存的图片」的 `file:///` 链接在 Wails webview 里是否可用（**把握最低的一项**，不可用不影响主流程）。
+  5. 「打开已保存的图片」的 `file:///` 链接在 Wails webview 里是否可用（**把握最低的一项**，不可用不影响主流程）；
+  6. **搜索候选缩略图**：首次搜索会把图缓存到工作目录的 `cache/`（目录自动创建），列表里的小图应能显示；删掉 `cache/` 再搜一次仍能显示（重新下载）；结果多于 10 个时出现分页条，翻到哪页才下哪页的图（看 `cache/` 文件数增加）；
+  7. **退出清缓存**：正常退出应用后 `cache/` 应为空（目录还在），`preImg/` 里的入库封面不能被删；
+  8. **只有点「入库」才进游戏库**：搜到的作品不应出现在 `/library`；点「入库」后 `preImg/` 生成图、库里多出一张带封面的卡片，`/works` 的按钮变「已入库」并禁用。
 
 ### 9.3 `doc/*.md` 的已确认错误（本文件 §5/§6/§7 优先于它们）
 
@@ -510,7 +524,7 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 | 关闭行为只有 `ask/hide/close`，**没有 `minimise`** | 标题栏左侧已有独立最小化按钮，放在关闭行为里是重复入口，且让「关闭」这个决定含糊 |
 | 接口测试服务**不做数据加工**，`work` 原样返回 `DLsiteWork` 的 json | 测试页的用途就是「对着 DLsite 页面核对解析结果」。任何二次加工（改字段名、拍平、只挑几个字段）都会让「后端解析错了」和「展示层挑错了」变得无法区分。格式化交给前端 `JSON.stringify(raw, null, 2)` |
 | `preImg` 用**相对路径**而不是 `os.UserConfigDir()` 之类的绝对路径 | 用户明确要求「保存在工作区目录下的 preImg 使用相对路径」。代价是落点随进程工作目录变化（开发态是仓库根），所以返回值同时给 `path`（相对）与 `absPath`（绝对），界面上直接显示 `absPath`，不留"到底存哪了"的歧义 |
-| 下载封面**不覆盖**已有文件，同名加 `-2/-3` 后缀 | 测试页会被反复点击，覆盖会把上一次下到的图悄悄冲掉；`O_EXCL` 还能顺带防止两次并发请求写同一个文件 |
+| 下载封面**不覆盖**已有文件，同名加 `-2/-3` 后缀 | 同一部作品可能被反复入库（库记录被删后重收、调试页重复点），覆盖会把上一次下到的图悄悄冲掉；`O_EXCL` 还能顺带防止两次并发请求写同一个文件 |
 | 托盘左键**只唤回不隐藏** | Wails 默认 `ToggleWindow` 是「可见则隐藏、否则显示」，会让「唤回」后手滑再点一下窗口又消失 |
 | 关闭询问用**标题栏内小面板**而非模态框 | 这是「两个不同意图的二选一」，用模态打断不值得 |
 | 行左侧 checkbox 改为**选择**、完成移为行右侧独立按钮 | 原设计里「勾选」同时承担完成与选择，语义冲突；且旧版勾选框 `w-0 h-0` 完全隐藏、键盘不可操作 |
@@ -534,6 +548,19 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 | 游戏库封面走 **base64 `data:` URL**（`CoverDataURL`），不用 `file://` | Wails webview 对本地文件协议的支持没实机验证过（§9.2 第 5 项把握最低），data URL 一定可用；封面几十~几百 KB，一次列表请求可接受 |
 | **删除库记录不删磁盘图片** | 图片是用户自己的文件，应用删库记录属于"清理索引"，顺手删文件是不可逆的越权操作 |
 | 缓存优先放**新服务** `LibraryService`，不往 `MetaApiService` 加开关 | 两个语义相反：调试页要**永远联网**（否则解析改动被缓存掩盖），作品库/游戏库要**缓存优先**。混在一个方法里只能靠布尔开关，调用方永远搞不清这次到底走没走网络；两个服务各自语义单一，前端 `metaApi` / `libraryApi` 一眼可辨 |
+| **`composables/` 目录取消**，唯一残留的 `useAutoHeight.ts` 改名 `stores/autoHeightStore.ts`（`useAutoHeightStore`），`TodoList.vue` 改 `collapse.enter` 等 | 用户要求「本项目 vue3 已经引入了 pinia 所以 composable 应该封装进 store 中 记得调整相关使用了该函数的库的相对路径及其名称」。项目里共享逻辑只认 stores 一个入口，避免两套目录各放一半 |
+| **作品库 `/works` 在侧栏没有入口**，只能从游戏库点封面进入（路由保留） | 用户要求「保留 router 中游戏库相关前端 删去作品库（仅仅只是在 router 中 后面要复用作品库相关 component）」，随后明确「不在 sidebar 显示 而是通过游戏库进入」。于是：路由留着（游戏库 `openWork()` 要跳它）、侧栏只留「游戏库」，导航里不会出现两个"库"让人分不清；`WorksPage.vue` 与 `components/meta/*` 一行没删 |
+| 游戏库卡片 = **封面网格 + hover 浮现名称 + 右上角删除**，点封面进作品库 | 用户要求「预览图横向排列、在预览图下方显示名称（hover 时半透明界面从下方淡入）、点击预览图进入原本的作品库界面、右上角添加删除按钮」。实现要点：半透明背景只能走 scoped 的 `color-mix(in srgb, var(--color-bg-base) 88%, transparent)`（UnoCSS rules 精确匹配，`bg-secondary/50` 会被静默丢弃）；名称面板用 `translate-y-full → group-hover:translate-y-0` 做"从下淡入"；删除按钮与封面按钮是**同级兄弟**（button 不能嵌套 button），用 `@click.stop` 隔离点击。**连点两下的待确认态在 `@mouseleave` / `@blur` 时自动撤销**（用户要求「在移开时取消二次确认 仿照 todoitem 的删除按钮逻辑」，`cancelArm()` 与 TodoItem 的 `cancelDelete()` 同款）。外观也与 TodoItem 对齐：形状走 `btn-row`，静息 `opacity-75`、hover/聚焦提亮到 100，颜色状态（红描边 → hover 填红 → armed 填红 + `scale-110`、文字用 `--color-text-on-danger`）写在 `.lib-del`，**与 `.row-btn-delete` 必须同步改** |
+| **搜索移到游戏库顶部的居中弹窗**，作品库不再有搜索卡 | 用户要求「移除上方作品库·DLsite元数据卡片（搜索功能保留 并添加在游戏库界面的上方 通过按钮显示搜索 通过悬浮窗弹出提示搜索 弹窗在中央 显示时周围模糊）」。因此 `/works` 只剩作品信息（也去掉了「封面保存位置」「游戏库」两张卡）；弹窗用 `Teleport to="body"` + `z-[1300]` 避免被页面层级/overflow 裁掉，遮罩 `color-mix(...) + backdrop-filter: blur(8px)`；**关闭只留 ✕ 与 Esc，点遮罩不关**（用户要求「取消…点击搜索卡片以外区域会退出搜索界面的逻辑」，避免手滑点旁边就把搜索关掉） |
+| 「下载封面」文案改成**「入库」** | 用户要求「下载封面字样改为"入库"功能不变（下载文本数据 图片 并加入库 载入数据库相关数据）」。`MetaDownloadButton` 默认 `入库` / `入库中`。**注：随后用户又要求"搜索结果不能自动入库"，语义已升级为"点入库才写库"（见下面一行），本行只保留文案变更的历史** |
+| **搜索/浏览只读，只有「入库」才写库** | 用户要求「搜索内容只有在点击入库后才会下载封面并且在游戏库中显示 在搜索内容后点开就会自动入库 去除该逻辑 文本和图片在点击入库后才下载并载入数据库中」。`LibraryService.Fetch` 去掉 upsert（搜索、点开详情都不再写库），新增 `Store` 负责"抓文本 + 下封面到 preImg + 写库"，前端只有 `metaStore.storeIn()` 调它。代价：打开未入库作品每次都联网（没有缓存可命中），换来的是游戏库只装用户显式收的作品 |
+| **搜索缩略图缓存在 `cache/`，与 `preImg/` 分开** | 用户要求「并且显示在搜索界面的缩略图(载入缓存文件夹cache中 没有就创建一个)」。`MetaApiService.CacheCover` 把候选小图落到工作目录的相对路径 `cache/`（不存在就 `MkdirAll`）并返回 data URL；文件名固定 `<编号>_cover.<ext>`（缓存语义，允许覆盖，已缓存不重复联网）。与 `preImg/` 的区别：`preImg/` 是入库后的正式存档（`-2/-3` 不覆盖），`cache/` 可以整目录删掉重下 |
+| 游戏库顶栏压成**单行**：标题 + 右侧「已入库 N 款」+ 搜索 + 刷新 | 用户要求「将游戏库界面顶部卡片文字高度居中 并缩减卡片高度 并在游戏库右边显示已经入库多少款游戏」。做法：`MetaSection` 在没有默认插槽内容时不渲染 body，header 上下内边距改 `py-3`（有 body 时仍是 `pt-4`），卡片高度因此只剩「按钮 35.2px + 24px」；标题/数量/按钮同处 `items-center` 的 header，天然垂直居中。数量用 `count`（`withCoverCount` 随之删除，页面上不再有"多少部已下载封面"）。之后按用户要求把「刷新」调到「搜索」左边 |
+| **搜索列表直接显示预览图**（不再"点详情才有图"） | 用户要求「原本要点击详情才加载预览图 现在在搜索界面直接显示预览图」，并明确要载入 `cache/`。根因不在前端：DLsite 搜索页的缩略图是 Vue 组件 `:thumb-candidates="['//img…']"`，旧的 `parseSearchItem` 抓的是块内那个 `src="data:image/gif…"` 的弹层占位图 → `Cover` 是个内联 gif，`CacheCover` 拿到 `data:` URL 直接放弃（http 请求不认这个 scheme），所以列表永远空白、cache 里也没有文件。修复：解析 `:thumb-candidates`（`extractSearchItemCover`），`CacheCover` 显式跳过 `data:` 占位图；前端仍用 `covers[id]`（cache → data URL）优先、远程直链兜底 |
+| 搜索结果**每页 10 条**，只给当前页下预览图；**退出时清空 `cache/`** | 用户要求「搜索卡片分页 每10个搜索结果为一页 只有当前页面需要加载预览图 以节约网络资源 每次退出软件前 清除cache中文件」。分页状态放 store（`candidatePage` / `pagedCandidates` / `setCandidatePage`），`setCandidatePage` 只对当前页调 `loadCandidateCovers`，已缓存过的直接命中 `cache/` 不再联网；清理挂在 Go 的 `app.OnShutdown` → `getmeta.ClearCacheDir()`（只删 `cache/` 里的文件，`preImg/` 不动）。分页条本身在 `MetaPager`：前 3 页 / 当前页 / 后 3 页 + 输入页码跳转（用户后续要求「前三页和后三页可以跳转 并支持输入数字跳转到相应页面」） |
+| 搜索**不再受 30 条限制**：按 DLsite 源数据页懒加载（1~3 页取第 1 面，4~6 页取第 2 面…） | 用户要求「检查搜索结果是否有限制 如果有则取消 可能是30个搜索结果加载限制」，随后明确「DLsite搜索界面每一面只有30条 能否在本页面在3页内时加载DLsite源数据页第一面 后三的倍数页加载第二面」，并要求「首先获取搜索结果个数调整页面数量 在需要加载源数据第二面内容时才重新爬取加载」。实测 `per_page` 无效（传 60/120 仍只回 30 条），只能翻页：`SearchWorks` 加 `page` 入参，返回 `pageCount` 与**精确总数** `total`（页面 `data-search-result-count`，如 1710 → 57 页）；前端 `sourcePages` 存"DLsite 页号→30 条"，总页数直接由精确总数算，`ceil(前端页/3)` 决定需要哪一面，**用到才取**；翻到第 3/6/9…页时静默预取下一面 |
+| 「入库」按钮在**已入库后变 `已入库` + 禁用** | 用户要求「作评库界面的入库按钮 在打开界面时如果已经入库则显示已入库 并将按钮的状态改为不可按下」。判定用**库里已有封面文件**（后端注入的 `coverAbsPath` 非空，或本次会话刚下过 `saved`），而不是"在游戏库里" —— 元数据随抓取就入库、`/works` 又只从游戏库进入，按"在库里"判定会让按钮永远不可点、封面永远下不来。禁用还顺手挡掉重复下载：`writeFileUnique` 不覆盖同名文件，重名加 `-2/-3` 后缀，多点一次就多一份重复图 |
+| `loadById` **不把编号写回搜索框**，且搜索弹窗**每次打开都清空输入框** | 用户要求「在打开游戏库中游戏时 搜索界面会自动填入作品rj号 取消该逻辑」。两处一起收拾：①`loadById` 原本顺手 `keyword = id`；②`runSearch` 会把搜过的关键词（常是 RJ）留在 store 里，弹窗重开就带出来。现在 `openSearch()` 与 `finishSearch()` 都清 `meta.keyword`，搜索框只反映"这次开窗后自己输入的"。代价：不再"沿用上次关键词方便反复调整"；失败的搜索仍留在框里，便于改错 |
 
 ---
 

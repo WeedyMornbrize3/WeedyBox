@@ -55,6 +55,7 @@ go.sum
 # 尾部斜杠表示目录：`.dsh-meow/` 连同其中所有内容一并忽略。
 # 注意：已被跟踪的文件不受新增忽略规则影响，需 `git rm -r --cached .dsh-meow` 一次性移出索引。
 .dsh-meow/
+cache/
 
 # 环境变量
 .env

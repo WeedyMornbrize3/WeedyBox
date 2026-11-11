@@ -5,7 +5,9 @@
        2. 「完成」是行右侧的独立按钮，位于删除按钮左侧，两种状态互换图标与语义。
        3. 根元素是 <div> 而不是 <label>：旧版把删除按钮放在 <label> 内部，
           点删除会先触发 label 的默认行为，行为不可靠；现在控件之间是同级 flex item。
-       4. 选择框是原生 input（键盘可达、有可见焦点环）。 -->
+       4. 选择框是原生 input（键盘可达、有可见焦点环）。
+       5. 点击卡片空白/文字区 = 复制「标题 + 描述」（emit copy，父组件弹 toast）；
+          指针保持默认（不加 cursor-pointer），行内控件都 .stop 冒泡，避免误复制。 -->
 <template>
   <div
     class="group flex items-start gap-3 px-3 py-2.5 rounded-lg bg-card border-theme transition-colors duration-200"
@@ -13,6 +15,7 @@
       todo.completed ? 'opacity-60' : '',
       selected ? 'border-brand bg-brand-light' : 'hover:border-brand',
     ]"
+    @click="handleCopy"
   >
     <!-- 选择框：只表示「已选中」，用来做批量操作；不改变完成状态 -->
     <input
@@ -22,6 +25,7 @@
       :disabled="isUpdating"
       :aria-label="selected ? `取消选择「${todo.title}」` : `选择「${todo.title}」`"
       @change="emit('select', todo.id)"
+      @click.stop
     />
 
     <!-- 主内容区：标题主行 + 描述块 -->
@@ -130,7 +134,27 @@ const emit = defineEmits<{
   toggle: [id: number]
   delete: [id: number]
   select: [id: number]
+  /** 点击卡片复制标题+描述：把拼好的文本交给父组件去写剪贴板并弹提示 */
+  copy: [text: string]
 }>()
+
+/**
+ * 点击卡片复制「标题 + 描述」。
+ *
+ * 设计取舍：
+ *   - 卡片是整块点击区，但**刻意不加 cursor-pointer**：用户要求不把指针变成手型，
+ *     免得整行看起来像按钮；按钮类控件（选择框 / 完成 / 删除）各自 `.stop` 掉冒泡，
+ *     所以点它们不会误触发复制。
+ *   - 真正的剪贴板写入与 toast 放在父组件（TodoList）里：错误提示与其它操作共用同一套 toast，
+ *     这里只负责"该复制什么"。
+ */
+function handleCopy() {
+  const title = props.todo.title?.trim() ?? ''
+  const desc = props.todo.description?.trim() ?? ''
+  const text = [title, desc].filter(Boolean).join('\n')
+  if (!text) return
+  emit('copy', text)
+}
 
 // ===== 连点两下删除 =====
 // armed = 已点第一下、正在等待第二下确认；移开鼠标或失焦会自动撤销。

@@ -240,7 +240,7 @@ export default defineConfig({
     'settings-title': 'text-2xl font-semibold text-primary mb-5 tracking-[0.5px]',
     'settings-container': 'flex flex-col gap-5',
     'settings-section': 'bg-card rounded-xl border-theme p-4',
-    'section-header': 'flex items-center gap-2.5 mb-3 pb-2.5 border-b-theme-light',
+    'section-header': 'flex items-center gap-2.5',
     'section-icon': 'text-brand flex-center',
     'section-title': 'text-[15px] font-semibold text-primary m-0',
     'settings-item': 'flex items-center justify-between py-2.5 border-b-theme-light last:border-none last:pb-0',

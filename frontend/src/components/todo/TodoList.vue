@@ -118,10 +118,10 @@
       <!-- 筛选面板（唯一的下拉面板） -->
       <Transition
         name="collapse"
-        @enter="collapseEnter"
-        @after-enter="collapseAfterEnter"
-        @leave="collapseLeave"
-        @after-leave="collapseAfterLeave"
+        @enter="collapse.enter"
+        @after-enter="collapse.afterEnter"
+        @leave="collapse.leave"
+        @after-leave="collapse.afterLeave"
       >
         <div v-show="isFilterOpen" id="todo-filter-panel">
           <FilterBar class="mt-2 flex-shrink-0 scrollbar-theme" />
@@ -192,6 +192,7 @@
           @select="toggleSelected"
           @toggle="handleToggle"
           @delete="handleDelete"
+          @copy="handleCopy"
         />
       </TransitionGroup>
     </div>
@@ -201,19 +202,17 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useTodoStore } from '../../stores/todoStore'
+import { useAutoHeightStore } from '../../stores/autoHeightStore'
+import { copyText } from '../../utils/clipboard'
 import TodoInput from './TodoInput.vue'
 import TodoItem from './TodoItem.vue'
 import TodoStats from './TodoStats.vue'
 import TodoPrioritySelector from './TodoPrioritySelector.vue'
 import FilterBar from './FilterBar.vue'
-import {
-  collapseEnter,
-  collapseAfterEnter,
-  collapseLeave,
-  collapseAfterLeave,
-} from '../../composables/useAutoHeight'
 
 const todoStore = useTodoStore()
+// 展开/收起过渡钩子（原 composables/useAutoHeight，按项目约定搬进 stores）
+const collapse = useAutoHeightStore()
 
 const hasTodos = computed(() => todoStore.todos.length > 0)
 
@@ -407,6 +406,17 @@ const handleToggle = (id: number) =>
 // 单条删除：确认动作由 TodoItem 的「连点两下」承担，这里不弹确认框
 const handleDelete = (id: number) => {
   runWithBusy(id, () => todoStore.deleteTodo(id), '已删除')
+}
+
+// 点击卡片复制「标题 + 描述」。
+// 复制能力与提示文案集中在这里：写剪贴板失败时用同一条 toast 报错，不弹系统对话框。
+async function handleCopy(text: string) {
+  try {
+    await copyText(text)
+    showToast('success', '文本已复制到剪贴板')
+  } catch {
+    showToast('error', '复制失败：剪贴板不可用')
+  }
 }
 
 onMounted(() => {

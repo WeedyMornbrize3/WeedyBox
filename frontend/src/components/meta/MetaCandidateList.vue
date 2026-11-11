@@ -1,6 +1,8 @@
 <!-- frontend/src/components/meta/MetaCandidateList.vue
      模糊搜索候选列表：小封面 + 名称 + 编号 + 「详情」。
      点「详情」emit 编号，由页面决定"精确抓取"还是别的行为 —— 列表本身不关心。
+     封面优先用 `covers[id]`（后端缓存在 workdir 的 cache/ 里、转成 data URL），
+     没有再退回 DLsite 直链 —— 直链在 webview 里不一定加载得出来。
      行分隔用 border-b-theme-light + last:border-none，最后一行不留尾巴。 -->
 <template>
   <ul class="list-none m-0 p-0">
@@ -9,7 +11,7 @@
       :key="item.id"
       class="flex items-center gap-3 px-5 py-3 border-b-theme-light last:border-none"
     >
-      <MetaCover :src="item.cover" :alt="item.name" size="sm" />
+      <MetaCover :src="covers[item.id] || item.cover" :alt="item.name" size="sm" />
       <div class="flex-1 min-w-0">
         <p class="m-0 text-sm text-primary truncate" :title="item.name">{{ item.name }}</p>
         <p class="m-0 text-xs text-tertiary font-mono">{{ item.id }}</p>
@@ -23,7 +25,10 @@
 import type { SearchCandidate } from '../../services/metaService'
 import MetaCover from './MetaCover.vue'
 
-defineProps<{ candidates: SearchCandidate[] }>()
+withDefaults(
+  defineProps<{ candidates: SearchCandidate[]; covers?: Record<string, string> }>(),
+  { covers: () => ({}) }
+)
 
 const emit = defineEmits<{ select: [id: string] }>()
 </script>

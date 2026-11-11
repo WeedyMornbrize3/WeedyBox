@@ -34,10 +34,14 @@ const (
 	dlsiteBaseURL      = "https://www.dlsite.com"
 	dlsiteManiaxWork   = dlsiteBaseURL + "/maniax/work/=/product_id/%s.html"
 	dlsiteProWork      = dlsiteBaseURL + "/pro/work/=/product_id/%s.html"
-	dlsiteSearchManiax = dlsiteBaseURL + "/maniax/fsr/=/language/jp/keyword/%s/work_type_category/game/"
+	// 搜索页模板：per_page 固定 30 —— DLsite 对 per_page 有硬上限（实测传 60/120 也只回 30 条），
+	// 想要更多结果只能翻页，因此后端按 page 逐页取（见 SearchWorks / parseSearchPageCount）。
+	dlsiteSearchManiax = dlsiteBaseURL + "/maniax/fsr/=/language/jp/keyword/%s/work_type_category/game/per_page/%d/page/%d/"
 
 	// 默认超时：页面约 120~160KB，正常网络 1s 内可回；留 20s 给慢网络。
 	defaultTimeout = 20 * time.Second
+	// DLsite 搜索每页条数（写死 30：服务端对 per_page 上限就是 30）
+	searchPerPage = 30
 	// 搜索候选返回上限
 	defaultCandidateLimit = 5
 	// 标签数量上限（0 表示不限制）
@@ -53,6 +57,9 @@ var dlsiteIDRegex = regexp.MustCompile(`(?i)\b(RJ|RE|VJ)\d{4,}\b`)
 
 // 系列编号只出现在页面内嵌 JSON 里（"series_id":"SRI0000043774"）
 var seriesIDRegex = regexp.MustCompile(`"series_id"\s*:\s*"(SRI\d+)"`)
+
+// 搜索分页链接里的页码：.../per_page/30/page/2
+var searchPageRegex = regexp.MustCompile(`/page/(\d+)`)
 
 // 封面 URL 里显式的尺寸后缀，例如 _img_main_240x240.jpg → 240
 var coverSizeSuffixRegex = regexp.MustCompile(`_(\d+)x(\d+)\.[a-z0-9]+$`)
@@ -159,21 +166,34 @@ func (s *MetaService) GetWorkByID(ctx context.Context, id string) (*DLsiteWork, 
 	return s.parseWork(doc, normalized)
 }
 
-// SearchWorkByName 按关键词搜索，返回候选列表（不抓详情）。
+// SearchWorkByName 按关键词搜索，返回**第一页**候选（不抓详情）。
 func (s *MetaService) SearchWorkByName(ctx context.Context, keyword string) ([]DLsiteSearchItem, error) {
+	items, _, _, err := s.SearchResultPage(ctx, keyword, 1)
+	return items, err
+}
+
+// SearchResultPage 取搜索结果里的某一页：返回该页候选 + 总页数 + 结果总数。
+//
+// DLsite 每页固定 30 条（per_page 改大无效），所以「不限制结果数」只能靠逐页取；
+// 总数来自页面上的 `data-search-result-count` 属性（如 1710），
+// 总页数优先由总数算出，取不到时退回分页块 `table.global_pagination .page_no` 的最大页码。
+func (s *MetaService) SearchResultPage(ctx context.Context, keyword string, page int) ([]DLsiteSearchItem, int, int, error) {
 	text := strings.TrimSpace(keyword)
 	if text == "" {
-		return nil, errors.New("搜索关键词不能为空")
+		return nil, 0, 0, errors.New("搜索关键词不能为空")
 	}
-	doc, status, err := s.fetchDocument(ctx, buildSearchURL(text))
+	if page < 1 {
+		page = 1
+	}
+	doc, status, err := s.fetchDocument(ctx, buildSearchURL(text, page))
 	if err != nil {
-		return nil, err
+		return nil, 0, 0, err
 	}
 	if status != http.StatusOK {
-		return nil, fmt.Errorf("DLsite 搜索返回状态码 %d", status)
+		return nil, 0, 0, fmt.Errorf("DLsite 搜索返回状态码 %d", status)
 	}
 
-	items := make([]DLsiteSearchItem, 0, 16)
+	items := make([]DLsiteSearchItem, 0, searchPerPage)
 	doc.Find(".search_result_img_box_inner").Each(func(_ int, sel *goquery.Selection) {
 		item, ok := parseSearchItem(sel)
 		if !ok {
@@ -181,7 +201,45 @@ func (s *MetaService) SearchWorkByName(ctx context.Context, keyword string) ([]D
 		}
 		items = append(items, item)
 	})
-	return items, nil
+
+	total := parseSearchResultCount(doc)
+	pageCount := 0
+	if total > 0 {
+		pageCount = (total + searchPerPage - 1) / searchPerPage
+	}
+	if pageCount <= 0 {
+		pageCount = parseSearchPageCount(doc)
+	}
+	return items, pageCount, total, nil
+}
+
+// parseSearchResultCount 取结果总数：页面根节点带 data-search-result-count（如 1710）。
+// 取不到返回 0，由调用方退回"按分页块最大页码估算"。
+func parseSearchResultCount(doc *goquery.Document) int {
+	raw := strings.TrimSpace(doc.Find("[data-search-result-count]").First().AttrOr("data-search-result-count", ""))
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.ReplaceAll(raw, ",", ""))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+// parseSearchPageCount 从分页块里取最大页码（即总页数）；没有分页块就是 1 页。
+func parseSearchPageCount(doc *goquery.Document) int {
+	count := 1
+	doc.Find("table.global_pagination .page_no a").Each(func(_ int, sel *goquery.Selection) {
+		match := searchPageRegex.FindStringSubmatch(sel.AttrOr("href", ""))
+		if len(match) < 2 {
+			return
+		}
+		if n, err := strconv.Atoi(match[1]); err == nil && n > count {
+			count = n
+		}
+	})
+	return count
 }
 
 // GetWorkByName 搜索后取第一个候选并抓取详情。
@@ -209,9 +267,12 @@ func buildWorkURL(id string) string {
 	return fmt.Sprintf(dlsiteManiaxWork, id)
 }
 
-func buildSearchURL(keyword string) string {
+func buildSearchURL(keyword string, page int) string {
 	escaped := strings.ReplaceAll(url.PathEscape(keyword), "%20", "+")
-	return fmt.Sprintf(dlsiteSearchManiax, escaped)
+	if page < 1 {
+		page = 1
+	}
+	return fmt.Sprintf(dlsiteSearchManiax, escaped, searchPerPage, page)
 }
 
 // fetchDocument 发请求并解析成 goquery 文档。
@@ -440,15 +501,62 @@ func parseSearchItem(sel *goquery.Selection) (DLsiteSearchItem, bool) {
 		return DLsiteSearchItem{}, false
 	}
 
-	cover := ""
-	if img := sel.Find("img").First(); img.Length() > 0 {
-		cover = normalizeSourceURL(firstNonEmpty(
-			img.AttrOr("data-src", ""),
-			firstSrcSetURL(img.AttrOr("srcset", "")),
-			img.AttrOr("src", ""),
-		))
-	}
+	cover := extractSearchItemCover(sel)
 	return DLsiteSearchItem{ID: id, Name: name, Cover: cover}, true
+}
+
+// extractSearchItemCover 取搜索结果里的缩略图地址。
+//
+// 现代搜索页的缩略图是个 Vue 组件：
+//
+//	<thumb-with-ng-filter-block :thumb-candidates="['//img.dlsite.jp/...webp','//img.dlsite.jp/...jpg']">
+//
+// 它里面唯一的 <img> 是**弹层占位图**（src 是内联 gif data URL），
+// 早期版本的解析把它当封面，于是列表里什么都不显示、只有点详情才有图
+// （详情页的提取走 extractCoverURL，和这里不是一条路）。所以先读
+// `:thumb-candidates` 的第一个候选，退路才看传统图片属性，且跳过 data: 占位。
+func extractSearchItemCover(sel *goquery.Selection) string {
+	if raw := sel.Find("thumb-with-ng-filter-block").First().AttrOr(":thumb-candidates", ""); raw != "" {
+		if url := firstThumbCandidate(raw); url != "" {
+			return normalizeSourceURL(url)
+		}
+	}
+
+	img := sel.Find("img").First()
+	if img.Length() == 0 {
+		return ""
+	}
+	for _, candidate := range []string{
+		img.AttrOr("data-src", ""),
+		img.AttrOr("data-lazy-src", ""),
+		firstSrcSetURL(img.AttrOr("srcset", "")),
+		img.AttrOr("src", ""),
+	} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || strings.HasPrefix(candidate, "data:") {
+			continue // 内联占位图不是封面
+		}
+		return normalizeSourceURL(candidate)
+	}
+	return ""
+}
+
+// firstThumbCandidate 从 Vue 的数组字面量属性里取第一项：
+// "['//img/a.webp','//img/a.jpg']" → "//img/a.webp"。
+func firstThumbCandidate(raw string) string {
+	for _, quote := range []string{"'", `"`} {
+		start := strings.Index(raw, quote)
+		if start < 0 {
+			continue
+		}
+		rest := raw[start+1:]
+		if end := strings.Index(rest, quote); end >= 0 {
+			if value := strings.TrimSpace(rest[:end]); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 // ===== 小工具 =====
