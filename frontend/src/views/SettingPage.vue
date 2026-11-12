@@ -24,9 +24,28 @@
       <SettingsItem label="语言" description="选择界面语言">
         <LanguageSelect v-model="language" />
       </SettingsItem>
+
+      <!-- 标签显示数量：只影响 DLsite 解析出来的标签显示多少，自定义标签始终全显示 -->
+      <SettingsItem
+        label="标签显示数量"
+        description="作品详情里 DLsite 标签最多显示多少个（4–64）；自己添加的标签不受限制"
+      >
+        <TagLimitInput :model-value="appStore.tagLimit" @update:model-value="appStore.setTagLimit" />
+      </SettingsItem>
       
       <SettingsItem label="版本" description="当前应用版本">
         <VersionInfo version="beta" />
+      </SettingsItem>
+    </SettingsSection>
+
+    <!-- 存储设置 -->
+    <SettingsSection icon="i-lucide-hard-drive" title="存储">
+      <!-- 清理缓存：进入本页即扫描 cache/ 占用并显示在按钮左边（CacheCleanup 组件里 onMounted 做） -->
+      <SettingsItem
+        label="清理缓存"
+        description="搜索结果的缩略图缓存在 cache/，随时可删；退出应用时也会自动清空（preImg/ 里的入库封面不受影响）"
+      >
+        <CacheCleanup />
       </SettingsItem>
     </SettingsSection>
   </SettingsPage>
@@ -44,6 +63,8 @@ import ThemeModeSelector from '../components/settings/ThemeModeSelector.vue'
 import CloseActionSelect from '../components/settings/CloseActionSelect.vue'
 import LanguageSelect from '../components/settings/LanguageSelect.vue'
 import VersionInfo from '../components/settings/VersionInfo.vue'
+import CacheCleanup from '../components/settings/CacheCleanup.vue'
+import TagLimitInput from '../components/settings/TagLimitInput.vue'
 
 const themeStore = useThemeStore()
 const themeMode = computed({

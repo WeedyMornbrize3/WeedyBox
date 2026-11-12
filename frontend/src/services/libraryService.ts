@@ -86,4 +86,22 @@ export const libraryApi = {
   async coverDataUrl(workId: string, source = LIBRARY_SOURCE_DLSITE): Promise<string> {
     return (await LibraryService.CoverDataURL(workId, source)) ?? ''
   },
+
+  /**
+   * 用户自定义标签（存后端 work_tags 表，与 DLsite 抓来的 tags 分开）：
+   * 加了标签的作品重新抓取元数据也不会把标签冲掉；对还没入库的作品也能加。
+   */
+  async listTags(workId: string, source = LIBRARY_SOURCE_DLSITE): Promise<string[]> {
+    return (await LibraryService.ListTags(workId, source)) ?? []
+  },
+
+  /** 添加标签，返回添加后的完整列表（重复添加不报错） */
+  async addTag(workId: string, tag: string, source = LIBRARY_SOURCE_DLSITE): Promise<string[]> {
+    return (await LibraryService.AddTag(workId, tag, source)) ?? []
+  },
+
+  /** 删除标签，返回删除后的完整列表 */
+  async removeTag(workId: string, tag: string, source = LIBRARY_SOURCE_DLSITE): Promise<string[]> {
+    return (await LibraryService.RemoveTag(workId, tag, source)) ?? []
+  },
 }

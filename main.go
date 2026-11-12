@@ -6,6 +6,7 @@ import (
 	"WeedyBox/internal/database"
 	"WeedyBox/internal/service"
 	"WeedyBox/internal/service/getMeta"
+	"WeedyBox/internal/service/scan"
 	"log"
 	"time"
 
@@ -64,12 +65,21 @@ func main() {
 		Meta: metaService,
 	}
 
+	// 本地扫描服务：游戏库「扫描添加」用 —— Steam 库里的游戏、或任意本地游戏文件夹。
+	// 只读磁盘、不联网；扫到的名字交给前端去 SearchWorks 找作品。
+	scanService := &scan.ScanService{}
+
+	// 系统对话框服务：目前只有「选一个游戏文件夹」这一个用途。
+	dialogService := &service.DialogService{}
+
 	applicationServices := []application.Service{
 		application.NewService(windowService),
 		application.NewService(todoService),
 		application.NewService(dbService),
 		application.NewService(metaService),
 		application.NewService(libraryService),
+		application.NewService(scanService),
+		application.NewService(dialogService),
 	}
 
 	app := application.New(application.Options{

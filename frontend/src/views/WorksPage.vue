@@ -1,7 +1,7 @@
 <!-- frontend/src/views/WorksPage.vue
      作品库（/works）：只展示「一个作品的信息」。
      入口：游戏库（/library）里点封面（点谁就 loadById 谁，走缓存优先）；侧栏没有入口。
-     搜索不在这页 —— 已经移到游戏库顶部的「搜索」按钮（居中弹窗，见 LibraryPage.vue）。
+     搜索不在这页 —— 已经移到游戏库网格末尾的透明圆形加号按钮（居中弹窗，见 LibraryPage.vue）。
      所以这里不再有搜索卡、候选栏、封面保存位置卡、游戏库卡，只留作品信息本身。
      与调试页（views/test.vue → MetaApiTestCard.vue）共用 stores/metaStore.ts 与 components/meta/*。 -->
 <template>
@@ -49,6 +49,8 @@
           :stored="meta.stored"
           @download="handleStoreIn"
         />
+        <!-- 我的标签：用户自己加，存后端 work_tags 表（与 DLsite 抓来的 tags 分开） -->
+        <MetaUserTags />
         <!-- 入库失败要看得见：这页没有别的提示条，静默失败会让人以为点了没反应 -->
         <MetaMessage v-if="meta.error" tone="error" :text="meta.error" />
         <MetaWorkDetails :work="meta.work" />
@@ -71,6 +73,7 @@ import { useLibraryStore } from '../stores/libraryStore'
 import MetaEmptyState from '../components/meta/MetaEmptyState.vue'
 import MetaMessage from '../components/meta/MetaMessage.vue'
 import MetaSection from '../components/meta/MetaSection.vue'
+import MetaUserTags from '../components/meta/MetaUserTags.vue'
 import MetaWorkDetails from '../components/meta/MetaWorkDetails.vue'
 import MetaWorkOverview from '../components/meta/MetaWorkOverview.vue'
 

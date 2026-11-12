@@ -345,3 +345,102 @@ func timeOf(v interface{}) time.Time {
 	}
 	return time.Time{}
 }
+
+// ===== 作品自定义标签 =====
+//
+// 单独一张表、也惰性创建。刻意不挂在 library_works 上（外键/同一行）：作品库详情页
+// 可以打开一个还没入库的作品，用户在那里加的标签也要能存下来 —— 标签的归属是
+// 「来源 + 编号」，和"是否已入库"无关。
+
+// ensureWorkTagsTable 惰性建表（幂等）。
+func (s *SQLiteService) ensureWorkTagsTable(ctx context.Context) error {
+	if s == nil || s.DB == nil {
+		return fmt.Errorf("数据库未就绪")
+	}
+	queries := []string{
+		`CREATE TABLE IF NOT EXISTS work_tags (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source TEXT NOT NULL DEFAULT 'dlsite',
+			work_id TEXT NOT NULL,
+			tag TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(source, work_id, tag)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_work_tags_work ON work_tags (source, work_id)`,
+	}
+	for _, query := range queries {
+		if err := s.Execute(ctx, query); err != nil {
+			return fmt.Errorf("初始化作品标签表失败: %w", err)
+		}
+	}
+	return nil
+}
+
+// ListWorkTags 列出某个作品的自定义标签（按添加顺序）。
+func (s *SQLiteService) ListWorkTags(ctx context.Context, source, workID string) ([]string, error) {
+	if s == nil || s.DB == nil {
+		return []string{}, nil
+	}
+	workID = normalizeWorkID(workID)
+	if workID == "" {
+		return []string{}, nil
+	}
+	if err := s.ensureWorkTagsTable(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.Query(ctx,
+		`SELECT tag FROM work_tags WHERE source = ? AND work_id = ? ORDER BY id ASC`,
+		normalizeSource(source), workID)
+	if err != nil {
+		return nil, fmt.Errorf("查询作品标签失败: %w", err)
+	}
+	tags := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if tag, ok := row["tag"].(string); ok && tag != "" {
+			tags = append(tags, tag)
+		}
+	}
+	return tags, nil
+}
+
+// AddWorkTag 添加一个标签。重复添加不报错（UNIQUE + INSERT OR IGNORE）。
+func (s *SQLiteService) AddWorkTag(ctx context.Context, source, workID, tag string) error {
+	if s == nil || s.DB == nil {
+		return fmt.Errorf("数据库未就绪")
+	}
+	workID = normalizeWorkID(workID)
+	tag = strings.TrimSpace(tag)
+	if workID == "" || tag == "" {
+		return fmt.Errorf("作品编号或标签为空")
+	}
+	if err := s.ensureWorkTagsTable(ctx); err != nil {
+		return err
+	}
+	if err := s.Execute(ctx,
+		`INSERT OR IGNORE INTO work_tags (source, work_id, tag) VALUES (?, ?, ?)`,
+		normalizeSource(source), workID, tag); err != nil {
+		return fmt.Errorf("添加标签失败: %w", err)
+	}
+	return nil
+}
+
+// RemoveWorkTag 删除一个标签；不存在也算成功（幂等）。
+func (s *SQLiteService) RemoveWorkTag(ctx context.Context, source, workID, tag string) error {
+	if s == nil || s.DB == nil {
+		return fmt.Errorf("数据库未就绪")
+	}
+	workID = normalizeWorkID(workID)
+	tag = strings.TrimSpace(tag)
+	if workID == "" || tag == "" {
+		return nil
+	}
+	if err := s.ensureWorkTagsTable(ctx); err != nil {
+		return err
+	}
+	if err := s.Execute(ctx,
+		`DELETE FROM work_tags WHERE source = ? AND work_id = ? AND tag = ?`,
+		normalizeSource(source), workID, tag); err != nil {
+		return fmt.Errorf("删除标签失败: %w", err)
+	}
+	return nil
+}

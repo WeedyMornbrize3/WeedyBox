@@ -15,15 +15,18 @@ package getmeta
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -44,8 +47,9 @@ const (
 	searchPerPage = 30
 	// 搜索候选返回上限
 	defaultCandidateLimit = 5
-	// 标签数量上限（0 表示不限制）
-	defaultTagLimit = 24
+	// 标签数量上限（0 表示不限制）。
+	// 后端放宽到 64：具体显示多少个由前端设置项决定（默认 24），这里只保证"取得到"。
+	defaultTagLimit = 64
 	// 响应体读取上限，防止异常页面把内存吃满
 	maxBodyBytes = 8 << 20
 	// 默认 UA 里带上项目名，便于对方识别
@@ -55,8 +59,25 @@ const (
 // RJ/RE/VJ + 至少 4 位数字；新编号是 8 位数字（含前导零）
 var dlsiteIDRegex = regexp.MustCompile(`(?i)\b(RJ|RE|VJ)\d{4,}\b`)
 
-// 系列编号只出现在页面内嵌 JSON 里（"series_id":"SRI0000043774"）
+// 系列编号只出现在内嵌 JSON 里（"series_id":"SRI0000043774"）
 var seriesIDRegex = regexp.MustCompile(`"series_id"\s*:\s*"(SRI\d+)"`)
+
+// 现役页面（2026-11 起）的系列链接：/maniax/fsr/=/title_id/SRI0000026263/order/...
+var seriesIDInHrefRegex = regexp.MustCompile(`(SRI\d+)`)
+
+// 参与「标签」的信息表字段（中日文候选）。
+// 用户要求标签要包含：声优 / 分类 / 插画 / 剧情 / 作者 / 社团名。
+// 注意：分类与声优是**多值字段**，不走这里 —— 它们在页面里由多个元素组成，
+// 取整段 dd 文本会把相邻值粘成一串（中文页面里元素之间没有空格）。
+var tagOutlineLabels = [][]string{
+	{"サークル名", "社团名", "社團名"},
+	{"作者"},
+	{"シナリオ", "剧情"},
+	{"イラスト", "插画"},
+}
+
+// 社团编号：/circle/profile/=/maker_id/RG24495.html 或 JSON-LD brand.url
+var makerIDRegex = regexp.MustCompile(`(RG\d+)`)
 
 // 搜索分页链接里的页码：.../per_page/30/page/2
 var searchPageRegex = regexp.MustCompile(`/page/(\d+)`)
@@ -318,27 +339,61 @@ func (s *MetaService) parseWork(doc *goquery.Document, id string) (*DLsiteWork, 
 		return nil, fmt.Errorf("页面里没有找到作品名（编号 %s，可能页面结构已变化）", id)
 	}
 
+	// 页面有两代模板，两代都解析、谁有值用谁：
+	//   旧（fixture 里的页面）：#work_outline 的 th→td 表格 + #work_maker + <meta itemprop>
+	//   现役（2026-11 起）：div.c-productInfo 的 dt→dd 列表 + <script ld+json> 的 Product
+	// 只认旧模板的后果是整页解析成"只有名字+封面"的空壳 —— 扫描入库那批就是这么坏的。
 	outline := parseOutline(doc)
+	if len(outline) == 0 {
+		outline = parseProductInfo(doc)
+	}
+	product := parseProductJSONLD(doc)
+
 	makerLink := doc.Find("#work_maker span.maker_name a").First()
+	maker := cleanText(makerLink.Text())
+	makerID := lastPathSegment(makerLink.AttrOr("href", ""), "maker_id/")
+	if maker == "" {
+		maker = outlineValueAny(outline, "サークル名", "社团名", "社團名")
+	}
+	if makerID == "" {
+		if m := makerIDRegex.FindStringSubmatch(productInfoLinkAny(doc, "サークル名", "社团名", "社團名")); len(m) == 2 {
+			makerID = m[1]
+		}
+	}
+	if makerID == "" {
+		if m := makerIDRegex.FindStringSubmatch(jsonLDValue(product, "brand", "url")); len(m) == 2 {
+			makerID = m[1]
+		}
+	}
+
+	seriesID := extractSeriesID(doc)
+	if seriesID == "" {
+		seriesID = seriesIDFromPageLinks(doc)
+	}
+	if seriesID == "" {
+		if m := seriesIDInHrefRegex.FindStringSubmatch(productInfoLinkAny(doc, "シリーズ名", "系列名")); len(m) == 2 {
+			seriesID = m[1]
+		}
+	}
 
 	work := &DLsiteWork{
 		ID:          id,
 		Name:        name,
-		AlternateID: metaContent(doc, "alternateName"),
-		Maker:       cleanText(makerLink.Text()),
-		MakerID:     lastPathSegment(makerLink.AttrOr("href", ""), "maker_id/"),
-		Series:      outlineValue(outline, "シリーズ名"),
-		SeriesID:    extractSeriesID(doc),
-		WorkType:    outlineValue(outline, "作品形式"),
-		AgeRating:   outlineValue(outline, "年齢指定"),
-		FileSize:    outlineValue(outline, "ファイル容量"),
-		ReleaseDate: normalizeJapaneseDate(outlineValue(outline, "販売日")),
-		// 价格与评分都是 <meta itemprop="…" content="…">，值在 content 属性上
-		Price:       metaContent(doc, "price"),
-		Currency:    metaContent(doc, "priceCurrency"),
+		AlternateID: firstNonEmpty(metaContent(doc, "alternateName"), jsonLDValue(product, "alternateName")),
+		Maker:       firstNonEmpty(maker, jsonLDValue(product, "brand", "name")),
+		MakerID:     makerID,
+		Series:      outlineValueAny(outline, "シリーズ名", "系列名"),
+		SeriesID:    seriesID,
+		WorkType:    outlineValueAny(outline, "作品形式"),
+		AgeRating:   outlineValueAny(outline, "年齢指定", "年龄指定", "年齡指定"),
+		FileSize:    outlineValueAny(outline, "ファイル容量", "文件容量", "檔案容量"),
+		ReleaseDate: normalizeJapaneseDate(outlineValueAny(outline, "販売日", "发售日", "發售日")),
+		// 价格/评分：旧页面在 <meta itemprop> 的 content 上，现役页面在 JSON-LD Product 里
+		Price:       firstNonEmpty(jsonLDValue(product, "offers", "price"), metaContent(doc, "price")),
+		Currency:    firstNonEmpty(jsonLDValue(product, "offers", "priceCurrency"), metaContent(doc, "priceCurrency")),
 		PriceUntil:  metaContent(doc, "priceValidUntil"),
-		Rating:      metaContent(doc, "ratingValue"),
-		RatingCount: metaContent(doc, "ratingCount"),
+		Rating:      firstNonEmpty(jsonLDValue(product, "aggregateRating", "ratingValue"), metaContent(doc, "ratingValue")),
+		RatingCount: firstNonEmpty(jsonLDValue(product, "aggregateRating", "ratingCount"), metaContent(doc, "ratingCount")),
 		CoverURL:    extractCoverURL(doc),
 		Summary:     extractSummary(doc),
 		Tags:        s.extractTags(doc, outline),
@@ -346,8 +401,134 @@ func (s *MetaService) parseWork(doc *goquery.Document, id string) (*DLsiteWork, 
 		SourceURL:   buildWorkURL(id),
 		FetchedAt:   time.Now(),
 	}
-	work.FileFormats = splitSlashList(outlineValue(outline, "ファイル形式"))
+	// 文件格式：旧页面是「WAV / mp3」；现役页面把每个格式放在 dd 里独立的 span/a 上
+	if formats := productInfoPartsAny(doc, "ファイル形式", "文件形式", "檔案形式"); len(formats) > 0 {
+		work.FileFormats = formats
+	} else {
+		work.FileFormats = splitSlashList(outlineValueAny(outline, "ファイル形式", "文件形式", "檔案形式"))
+	}
 	return work, nil
+}
+
+// parseProductInfo 解析现役页面的「dt 标签 → dd 值」商品信息列表。
+// 同样是「标签→值」，所以直接复用 Outline 结构（作品库详情页的字段表原样能显示）。
+func parseProductInfo(doc *goquery.Document) []Outline {
+	out := make([]Outline, 0, 12)
+	seen := map[string]bool{}
+	doc.Find("div.c-productInfo__item").Each(func(_ int, item *goquery.Selection) {
+		label := cleanText(item.Find("dt.c-productInfo__key").First().Text())
+		if label == "" || seen[label] {
+			return
+		}
+		dd := item.Find("dd.c-productInfo__value").First()
+		if dd.Length() == 0 {
+			return
+		}
+		value := productInfoText(dd)
+		if value == "" {
+			return
+		}
+		seen[label] = true
+		out = append(out, Outline{Label: label, Value: value})
+	})
+	return out
+}
+
+// productInfoText 取 dd 的纯文本（丢掉 script/template，避免把内嵌 JSON 拼进来）。
+func productInfoText(sel *goquery.Selection) string {
+	trimmed := sel.Clone()
+	trimmed.Find("script, template").Remove()
+	return cleanText(trimmed.Text())
+}
+
+// productInfoLink 取「标签」对应 dd 里第一个链接的 href（社团主页 / 系列页）。
+func productInfoLink(doc *goquery.Document, label string) string {
+	href := ""
+	doc.Find("div.c-productInfo__item").EachWithBreak(func(_ int, item *goquery.Selection) bool {
+		if cleanText(item.Find("dt.c-productInfo__key").First().Text()) != label {
+			return true
+		}
+		href = item.Find("dd a").First().AttrOr("href", "")
+		return false
+	})
+	return href
+}
+
+// productInfoParts 把「标签」对应 dd 里的每个链接/标签单独取出来（文件格式、ジャンル 这类多值字段）。
+func productInfoParts(doc *goquery.Document, label string) []string {
+	parts := make([]string, 0, 8)
+	doc.Find("div.c-productInfo__item").Each(func(_ int, item *goquery.Selection) {
+		if cleanText(item.Find("dt.c-productInfo__key").First().Text()) != label {
+			return
+		}
+		item.Find("dd a, dd span").Each(func(_ int, tag *goquery.Selection) {
+			if value := cleanText(tag.Text()); value != "" {
+				parts = append(parts, value)
+			}
+		})
+	})
+	return parts
+}
+
+// productInfoLinkAny 按多个候选标签取 dd 里的链接（标签随 locale 变）。
+func productInfoLinkAny(doc *goquery.Document, labels ...string) string {
+	for _, label := range labels {
+		if href := productInfoLink(doc, label); href != "" {
+			return href
+		}
+	}
+	return ""
+}
+
+// productInfoPartsAny 按多个候选标签取 dd 里的多值字段（标签随 locale 变）。
+func productInfoPartsAny(doc *goquery.Document, labels ...string) []string {
+	for _, label := range labels {
+		if parts := productInfoParts(doc, label); len(parts) > 0 {
+			return parts
+		}
+	}
+	return nil
+}
+
+// parseProductJSONLD 找页面里 @type=Product 的 JSON-LD。
+// 现役页面把社团、价格、评分、拼音 slug、简介都放在这里（原来的 <meta itemprop> 已消失），
+// 这是比 CSS class 更稳的来源 —— schema.org 的字段名不会跟着站点改版变。
+func parseProductJSONLD(doc *goquery.Document) map[string]any {
+	var product map[string]any
+	doc.Find(`script[type="application/ld+json"]`).EachWithBreak(func(_ int, script *goquery.Selection) bool {
+		var data map[string]any
+		if err := json.Unmarshal([]byte(script.Text()), &data); err != nil {
+			return true
+		}
+		if kind, _ := data["@type"].(string); kind == "Product" {
+			product = data
+			return false
+		}
+		return true
+	})
+	return product
+}
+
+// jsonLDValue 按 key 路径取 JSON-LD 里的标量值（价格是数字、评分是字符串，统一成文本）。
+func jsonLDValue(product map[string]any, keys ...string) string {
+	var current any = product
+	for _, key := range keys {
+		object, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = object[key]
+	}
+	switch value := current.(type) {
+	case string:
+		return cleanText(value)
+	case float64:
+		if value == math.Trunc(value) {
+			return strconv.FormatInt(int64(value), 10)
+		}
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	}
+	return ""
 }
 
 // parseOutline 把 #work_outline 的每一行「th → td」抽出来。
@@ -385,12 +566,31 @@ func outlineValue(outline []Outline, label string) string {
 	return ""
 }
 
+// outlineValueAny 按多个候选标签取值。
+// DLsite 的标签会跟着 locale（Cookie locale=ja / zh-cn）变化，
+// 例如 販売日 / 发售日、ファイル容量 / 文件容量 —— 只认日文标签会在中文页上全部取不到。
+func outlineValueAny(outline []Outline, labels ...string) string {
+	for _, label := range labels {
+		if value := outlineValue(outline, label); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // extractSummary 取「作品内容」。优先限定在 #main_inner 内，
 // 避免匹配到页面其它 itemprop="description"（例如导航栏的站点简介）。
+// 现役页面没有 itemprop，简介在 section.c-productContent 的正文块里。
 func extractSummary(doc *goquery.Document) string {
 	sel := doc.Find(`#main_inner div[itemprop="description"]`).First()
 	if sel.Length() == 0 {
 		sel = doc.Find(`div[itemprop="description"]`).First()
+	}
+	if sel.Length() == 0 {
+		sel = doc.Find(`.c-productContent__text`).First()
+	}
+	if sel.Length() == 0 {
+		sel = doc.Find(`section.c-productContent`).First()
 	}
 	return cleanText(sel.Text())
 }
@@ -450,34 +650,95 @@ func coverWidthScore(raw string) int {
 	}
 }
 
-// extractTags 收集类型标签：.main_genre 里的链接（ジャンル）+ 作品形式 / 年齢指定 / 販売形式。
+// extractTags 收集标签，来源比旧实现广：
+//   - 旧页面 .main_genre 的链接、现役页面分类（href*="/genre/"）的每个链接；
+//   - 作品形式（按页面上的 a/span 逐个取，避免中文页把多个值拼成一串）；
+//   - 信息表里的 社团名 / 作者 / 剧情 / 插画 / 声优 / 分类 / 年龄指定 / 販売形式。
+//
+// 最后统一切分：用户要求按「空白字符」和 "/" 分割（DLsite 多值字段常写成
+// 「双声道立体声/人头麦」「みたかりん 野上菜月」），再去重并按 tagLimit 截断。
 func (s *MetaService) extractTags(doc *goquery.Document, outline []Outline) []string {
-	names := make([]string, 0, 24)
+	raw := make([]string, 0, 32)
+
+	// 旧页面：.main_genre 里的链接
 	doc.Find(".main_genre a").Each(func(_ int, sel *goquery.Selection) {
-		names = append(names, sel.Text())
+		raw = append(raw, cleanText(sel.Text()))
 	})
-	for _, label := range []string{"作品形式", "年齢指定", "販売形式"} {
-		if v := outlineValue(outline, label); v != "" {
-			names = append(names, v)
+
+	// 现役页面：分类标签是 dd 里指向 /genre/ 的一组 <a>。
+	// 用 href 识别而不是标题文字 —— 中文页面里这一栏叫「分类」、日文叫「ジャンル」。
+	genreCount := 0
+	doc.Find("div.c-productInfo__item").Each(func(_ int, item *goquery.Selection) {
+		if item.Find(`dd a[href*="/genre/"]`).Length() == 0 {
+			return
+		}
+		item.Find(`dd a[href*="/genre/"]`).Each(func(_ int, tag *goquery.Selection) {
+			raw = append(raw, cleanText(tag.Text()))
+			genreCount++
+		})
+	})
+	// 一栏分类链接都没有（极旧/极简页面）才退回整段文本
+	if genreCount == 0 {
+		if value := outlineValueAny(outline, "ジャンル", "分类", "分類"); value != "" {
+			raw = append(raw, value)
 		}
 	}
 
-	// 去重（不区分大小写），保持页面顺序
+	// 作品形式：现役页面每个值在独立的 a/span 上，按元素取；
+	// 中文页面里文本节点之间没有空格，直接取 dd 文本会变成「模拟有配音有音乐有动画」。
+	if parts := productInfoPartsAny(doc, "作品形式"); len(parts) > 0 {
+		raw = append(raw, parts...)
+	} else if value := outlineValueAny(outline, "作品形式"); value != "" {
+		raw = append(raw, value)
+	}
+
+	// 声优：一个声优一个元素（中文页面里整段文本没有空格，必须按元素取）
+	if parts := productInfoPartsAny(doc, "声優", "声优", "聲優"); len(parts) > 0 {
+		raw = append(raw, parts...)
+	} else if value := outlineValueAny(outline, "声優", "声优", "聲優"); value != "" {
+		raw = append(raw, value)
+	}
+
+	// 信息表里的其它字段（用户指定要进标签的那几项）
+	for _, labels := range tagOutlineLabels {
+		if value := outlineValueAny(outline, labels...); value != "" {
+			raw = append(raw, value)
+		}
+	}
+	if value := outlineValueAny(outline, "年齢指定", "年龄指定", "年齡指定"); value != "" {
+		raw = append(raw, value)
+	}
+	if value := outlineValueAny(outline, "販売形式", "发售形式"); value != "" {
+		raw = append(raw, value)
+	}
+
+	out := make([]string, 0, len(raw))
 	seen := map[string]bool{}
-	out := make([]string, 0, len(names))
-	for _, raw := range names {
-		name := cleanText(raw)
-		if name == "" {
-			continue
+	for _, piece := range raw {
+		for _, tag := range splitTagText(piece) {
+			key := strings.ToLower(tag)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, tag)
+			if s.tagLimit > 0 && len(out) >= s.tagLimit {
+				return out
+			}
 		}
-		key := strings.ToLower(name)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, name)
-		if s.tagLimit > 0 && len(out) >= s.tagLimit {
-			break
+	}
+	return out
+}
+
+// splitTagText 按空白字符与 "/" 切分标签文本（用户要求的切分口径）。
+func splitTagText(raw string) []string {
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '/' || unicode.IsSpace(r)
+	})
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if value := cleanText(field); value != "" {
+			out = append(out, value)
 		}
 	}
 	return out
@@ -591,6 +852,20 @@ func extractSeriesID(doc *goquery.Document) string {
 		return ""
 	}
 	return m[1]
+}
+
+// seriesIDFromPageLinks 从「系列页链接」里取系列编号（不依赖日文标签，
+// 中文页面里那一行叫「系列名」）：/maniax/fsr/=/title_id/SRI0000026263/...
+func seriesIDFromPageLinks(doc *goquery.Document) string {
+	href := ""
+	doc.Find(`a[href*="title_id/"]`).EachWithBreak(func(_ int, sel *goquery.Selection) bool {
+		href = sel.AttrOr("href", "")
+		return href == ""
+	})
+	if m := seriesIDInHrefRegex.FindStringSubmatch(href); len(m) == 2 {
+		return m[1]
+	}
+	return ""
 }
 
 // normalizeJapaneseDate 把「2026年09月26日」/「2026年10月07日 0時」归一化成 2006-01-02。

@@ -12,7 +12,7 @@
       <h3 class="text-base font-medium text-primary m-0 leading-snug break-words">{{ work.name }}</h3>
 
       <MetaKeyValueList :rows="buildSummaryRows(work)" />
-      <MetaTags :tags="work.tags" />
+      <MetaTags :tags="work.tags" :limit="app.tagLimit" />
 
       <div class="flex items-center gap-3 flex-wrap pt-1">
         <MetaDownloadButton
@@ -30,6 +30,7 @@
 
 <script setup lang="ts">
 import type { DownloadResult, WorkMeta } from '../../services/metaService'
+import { useAppStore } from '../../stores/App'
 import { buildSummaryRows } from '../../utils/metaFormat'
 import MetaCoverFigure from './MetaCoverFigure.vue'
 import MetaDownloadButton from './MetaDownloadButton.vue'
@@ -38,6 +39,9 @@ import MetaSavedNotice from './MetaSavedNotice.vue'
 import MetaTags from './MetaTags.vue'
 
 defineProps<{ work: WorkMeta; downloading?: boolean; saved?: DownloadResult | null; stored?: boolean }>()
+
+// 标签显示数量是应用级设置（设置页可调），这里只读不写
+const app = useAppStore()
 
 const emit = defineEmits<{ download: [] }>()
 </script>

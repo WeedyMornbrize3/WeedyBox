@@ -336,6 +336,90 @@ func ClearCacheDir() error {
 	return nil
 }
 
+// ===== 缓存目录统计 / 手动清理（设置页用）=====
+
+// CacheInfo 扫描 cache/，返回文件数、总占用字节与目录绝对路径。
+//
+// 设置页进入时调一次，把占用显示在「清理缓存」旁边（用户要求）。
+// 只做一次目录遍历，不联网、不建目录：cache/ 不存在就是 0（缓存还没产生过）。
+func (s *MetaApiService) CacheInfo() (map[string]any, error) {
+	stat, err := scanCacheDir()
+	if err != nil {
+		return nil, err
+	}
+	abs, aerr := filepath.Abs(cacheDir)
+	if aerr != nil {
+		abs = cacheDir
+	}
+	return map[string]any{
+		"dir":   filepath.ToSlash(abs),
+		"files": stat.Files,
+		"bytes": stat.Bytes,
+	}, nil
+}
+
+// ClearCache 手动清空 cache/（目录保留），返回这次删掉的文件数与字节数。
+//
+// 与退出时的自动清理（ClearCacheDir）共用同一份删除逻辑；区别只是这里要把
+// "删了多少"报给前端，好让设置页立刻显示新的占用。删完再扫一次，
+// 用差值作准（有文件删不掉时前端能看到剩余量）。
+func (s *MetaApiService) ClearCache() (map[string]any, error) {
+	before, err := scanCacheDir()
+	if err != nil {
+		return nil, err
+	}
+	if err := ClearCacheDir(); err != nil {
+		return nil, err
+	}
+	after, err := scanCacheDir()
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"files": before.Files - after.Files,
+		"bytes": before.Bytes - after.Bytes,
+		"rest":  after.Files,
+	}, nil
+}
+
+// cacheScan 是一目录遍历的统计结果。
+type cacheScan struct {
+	Files int
+	Bytes int64
+}
+
+// scanCacheDir 遍历 cache/ 统计文件数与总字节；目录不存在算 0（不是错误）。
+// 单个文件 stat 失败只跳过该文件，不让整次统计报错 —— 设置页显示一个近似值
+// 比弹一句"扫描失败"有用得多。
+func scanCacheDir() (cacheScan, error) {
+	var out cacheScan
+	walkErr := filepath.WalkDir(cacheDir, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		out.Files++
+		out.Bytes += info.Size()
+		return nil
+	})
+	if walkErr != nil {
+		if os.IsNotExist(walkErr) {
+			return out, nil
+		}
+		return out, fmt.Errorf("扫描缓存目录失败: %w", walkErr)
+	}
+	return out, nil
+}
+
 // findCachedCover 在 cache/ 下找该作品的缩略图，返回路径与真实后缀。
 func findCachedCover(id string) (string, string) {
 	matches, err := filepath.Glob(filepath.Join(cacheDir, id+"_cover.*"))

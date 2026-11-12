@@ -47,6 +47,9 @@ export const useMetaStore = defineStore('meta', () => {
   const libraryUpdatedAt = ref('')
   /** 库里已有这个作品的封面时，后端注入的封面绝对路径（空 = 还没入过库/没下过封面） */
   const coverAbsPath = ref('')
+  /** 用户自己给当前作品加的标签（存后端 work_tags 表；与 DLsite 抓来的 tags 分开） */
+  const customTags = ref<string[]>([])
+  const customTagError = ref('')
 
   /** 后端返回的完整结构（原样展示，调试页用） */
   const raw = ref<unknown>(null)
@@ -108,6 +111,8 @@ export const useMetaStore = defineStore('meta', () => {
     cached.value = false
     libraryUpdatedAt.value = ''
     coverAbsPath.value = ''
+    customTags.value = []
+    customTagError.value = ''
     if (!opts.keepCandidates) {
       sourcePages.value = {}
       sourcePageCount.value = 1
@@ -120,12 +125,17 @@ export const useMetaStore = defineStore('meta', () => {
    * 搜索：关键词含 RJ/RE/VJ 编号走精确抓取（**缓存优先**，库里有的不打网络），
    * 否则走模糊搜索（一定联网 —— 搜索本身就是问 DLsite 有哪些作品，没有缓存的意义）。
    * refresh = true 时跳过本地库强制联网（调试页用，要核对后端解析结果）。
+   *
+   * ⚠️ **返回"这次是否真的发起了搜索"**：空关键词只提示、不搜索（返回 false）。
+   * 调用方不能只看 `work` 判断要不要跳详情页 —— store 里还留着上一次的 work，
+   * 空关键词点「搜索」会拿旧结果跳详情（用户报的 bug），必须靠这个布尔值把关。
    */
-  async function runSearch(query?: string, refresh = false) {
+  async function runSearch(query?: string, refresh = false): Promise<boolean> {
     const q = (query ?? keyword.value).trim()
     if (!q) {
-      error.value = '请输入作品名或 RJ 编号'
-      return
+      // 用户要求：搜索栏为空时点「搜索」只提示「搜索栏不能为空」，不做任何跳转
+      error.value = '搜索栏不能为空'
+      return false
     }
     keyword.value = q
     searchToken += 1
@@ -138,7 +148,7 @@ export const useMetaStore = defineStore('meta', () => {
         status.value = cached.value
           ? `按编号 ${data.id} 从本地库读取（缓存）`
           : `按编号 ${data.id} 精确抓取成功（还没入库，点「入库」才收进游戏库）`
-        return
+        return true
       }
       const resp = await metaApi.searchWorks(q, 1)
       raw.value = resp
@@ -151,8 +161,10 @@ export const useMetaStore = defineStore('meta', () => {
       void loadCandidateCovers(pagedCandidates.value)
       // 模糊搜索命中单个作品时后端也会带上 work
       if (resp.work) applyWork(resp.work)
+      return true
     } catch (err) {
       error.value = toMessage(err)
+      return false
     } finally {
       loading.value = false
     }
@@ -166,6 +178,8 @@ export const useMetaStore = defineStore('meta', () => {
     cached.value = Boolean(meta.cached)
     libraryUpdatedAt.value = meta.libraryUpdatedAt ?? ''
     coverAbsPath.value = meta.coverAbsPath ?? ''
+    // 自定义标签跟着作品走：换作品时重新拉一份
+    void loadCustomTags(data.id)
     // 命中的作品从候选里剔除（已加载的每一页都要剔，否则翻页还会看到）
     if (work.value) {
       const id = work.value.id
@@ -326,6 +340,48 @@ export const useMetaStore = defineStore('meta', () => {
     }
   }
 
+  /**
+   * 读当前作品的自定义标签（后端 work_tags 表）。
+   * 失败就当没有：标签是辅助功能，不该让详情页整体报错。
+   */
+  async function loadCustomTags(workId: string) {
+    customTagError.value = ''
+    try {
+      customTags.value = await libraryApi.listTags(workId)
+    } catch {
+      customTags.value = []
+    }
+  }
+
+  /** 添加一个自定义标签；成功后列表用后端返回的为准（顺序、去重都以后端为权威） */
+  async function addCustomTag(tag: string): Promise<boolean> {
+    const current = work.value
+    const text = tag.trim()
+    if (!current || !text) return false
+    customTagError.value = ''
+    try {
+      customTags.value = await libraryApi.addTag(current.id, text)
+      return true
+    } catch (err) {
+      customTagError.value = `添加标签失败：${toMessage(err)}`
+      return false
+    }
+  }
+
+  /** 删除一个自定义标签 */
+  async function removeCustomTag(tag: string): Promise<boolean> {
+    const current = work.value
+    if (!current || !tag) return false
+    customTagError.value = ''
+    try {
+      customTags.value = await libraryApi.removeTag(current.id, tag)
+      return true
+    } catch (err) {
+      customTagError.value = `移除标签失败：${toMessage(err)}`
+      return false
+    }
+  }
+
   /** 读取 preImg/ 的绝对路径（失败就留空，不打扰用户） */
   async function refreshPreImgDir() {
     try {
@@ -358,6 +414,8 @@ export const useMetaStore = defineStore('meta', () => {
     cached,
     libraryUpdatedAt,
     coverAbsPath,
+    customTags,
+    customTagError,
     // Getters
     rawJson,
     hasResult,
@@ -371,6 +429,8 @@ export const useMetaStore = defineStore('meta', () => {
     loadById,
     searchBySample,
     storeIn,
+    addCustomTag,
+    removeCustomTag,
     setCandidatePage,
     refreshPreImgDir,
     ensurePreImgDir,

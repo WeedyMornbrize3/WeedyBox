@@ -74,6 +74,26 @@ export interface DownloadResult {
   coverUrl: string
 }
 
+/** cache/ 目录的占用统计（设置页「清理缓存」旁边显示用） */
+export interface CacheInfo {
+  /** 缓存目录的绝对路径（只作提示，界面上不强制显示） */
+  dir: string
+  /** 文件数 */
+  files: number
+  /** 总字节数 */
+  bytes: number
+}
+
+/** 手动清理缓存的结果 */
+export interface ClearCacheResult {
+  /** 这次删掉的文件数 */
+  files: number
+  /** 这次删掉的字节数 */
+  bytes: number
+  /** 删完还剩几个（正常为 0；有文件删不掉时才是非 0） */
+  rest: number
+}
+
 /** 辅助函数：确保返回值不为 null（绑定层会返回 `T | null`） */
 function ensure<T>(value: T | null | undefined, message: string): T {
   if (value === null || value === undefined) {
@@ -107,5 +127,23 @@ export const metaApi = {
    */
   async cacheCover(workId: string, coverUrl: string): Promise<string> {
     return (await MetaApiService.CacheCover(workId, coverUrl)) ?? ''
+  },
+
+  /**
+   * 扫描 `cache/` 的占用（文件数 + 字节）。设置页进入时调一次，显示在「清理缓存」旁边。
+   * 后端只做一次目录遍历，不联网；目录不存在就是 0。
+   */
+  async cacheInfo(): Promise<CacheInfo> {
+    const raw = (await MetaApiService.CacheInfo()) as Partial<CacheInfo> | null
+    return { dir: raw?.dir ?? '', files: raw?.files ?? 0, bytes: raw?.bytes ?? 0 }
+  },
+
+  /**
+   * 手动清空 `cache/`（目录保留），返回删掉的文件数与字节数。
+   * 与退出时的自动清理共用后端同一份删除逻辑，区别只是会把"删了多少"报回来。
+   */
+  async clearCache(): Promise<ClearCacheResult> {
+    const raw = (await MetaApiService.ClearCache()) as Partial<ClearCacheResult> | null
+    return { files: raw?.files ?? 0, bytes: raw?.bytes ?? 0, rest: raw?.rest ?? 0 }
   },
 }

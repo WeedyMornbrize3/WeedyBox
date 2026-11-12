@@ -26,6 +26,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // LibraryService 是暴露给前端的游戏库服务。
@@ -87,10 +88,12 @@ func (s *LibraryService) Fetch(ctx context.Context, req FetchWorkRequest) (map[s
 		row, err := s.DB.FindLibraryWork(ctx, source, workID)
 		// 查缓存失败不该让整个页面不可用：退化成"没缓存"，继续联网抓。
 		if err == nil && row != nil {
-			if work, ok := workFromRawJSON(row); ok {
+			// 只复用**完整**的 raw_json：旧版本写下的空壳（只有名字+封面）这里当作没缓存，
+			// 联网重抓一份（只读、不写库）—— 否则详情页永远显示不出社团/形式/发售日。
+			if work, ok := workFromRawJSON(row); ok && workIsComplete(work) {
 				return decorate(work, row, true), nil
 			}
-			// raw_json 坏了（手改过库/旧数据）→ 当作没缓存，重新抓一份
+			// raw_json 坏了或残缺 → 当作没缓存，重新抓一份
 		}
 	}
 
@@ -115,8 +118,12 @@ type StoreRequest struct {
 
 // Store 把作品**真正收进游戏库**（只有用户点「入库」时才走这里）：
 //
-//   - 文本：联网抓一份元数据（库里已有 raw_json 时直接复用，不重复下载），写进 library_works；
+//   - 文本：联网抓一份元数据（库里已有**完整** raw_json 时直接复用，不重复下载），写进 library_works；
 //   - 图片：DownloadCover 原样落到 preImg/，并把落地位置记进库。
+//
+// **入库前校验**（扫描添加会一次入库几十部，必须挡住空壳）：抓回来的数据没有编号或名称
+// 就报错、不写库；库里已有的 raw_json 如果残缺（旧数据/解析退化）也会重新抓一份。
+// 这样"扫描入库"和手动入库写进库里的作品信息是同一份完整元数据。
 //
 // 与 Fetch 的分工：Fetch 只读不写，Store 才写 —— 搜索、点开详情都不会再自动入库。
 // 幂等：已入库且封面也在了，直接返回库里那份（不会重复下图；writeFileUnique 不覆盖，
@@ -137,9 +144,10 @@ func (s *LibraryService) Store(ctx context.Context, req StoreRequest) (map[strin
 		source = database.SourceDLsite
 	}
 
-	// ① 库里已有文本：不再抓；封面也在了就直接返回
+	// ① 库里已有**完整**文本：不再抓；封面也在了就直接返回。
+	//   raw_json 残缺（没有编号/名称）时走联网重抓，避免把空壳一直复用下去。
 	if row, err := s.DB.FindLibraryWork(ctx, source, workID); err == nil && row != nil {
-		if work, ok := workFromRawJSON(row); ok {
+		if work, ok := workFromRawJSON(row); ok && workIsComplete(work) {
 			if strings.TrimSpace(row.CoverAbsPath) == "" {
 				if coverURL := strOf(work["coverUrl"]); coverURL != "" {
 					if _, derr := s.ensureMeta().DownloadCover(ctx, workID, coverURL); derr != nil {
@@ -163,6 +171,10 @@ func (s *LibraryService) Store(ctx context.Context, req StoreRequest) (map[strin
 	work, ok := data.(map[string]any)
 	if !ok {
 		return nil, errors.New("后端返回了无法识别的作品数据")
+	}
+	// 少了编号/名称就是空壳（解析退化/页面改版）：宁可不入库，也不能污染游戏库
+	if !workIsComplete(work) {
+		return nil, fmt.Errorf("作品 %s 的元数据不完整（缺少编号或名称），已取消入库", workID)
 	}
 
 	row := rowFromWork(source, work)
@@ -213,8 +225,79 @@ func (s *LibraryService) Remove(ctx context.Context, workID, source string) erro
 	return s.DB.DeleteLibraryWork(ctx, source, workID)
 }
 
-// CoverDataURL 把游戏库里记录的本地封面读成 data URL，给 <img> 直接显示。
+// ===== 用户自定义标签 =====
 //
+// 与 DLsite 抓来的 `tags` 分开存：抓取标签随元数据刷新会变，用户自己加的标签是
+// 他的资产，不能因为重新抓取就消失。归属是「来源 + 编号」，所以对还没入库的作品
+// 也能加（作品库详情页可以从搜索结果直接进入）。
+
+// maxUserTagLength 是单个自定义标签的长度上限（按字符数，不是字节）。
+const maxUserTagLength = 32
+
+// normalizeUserTag 自定义标签的清洗：去掉首尾空白，中间连续空白压成一个空格。
+func normalizeUserTag(raw string) string {
+	return strings.Join(strings.Fields(raw), " ")
+}
+
+// ListTags 列出用户给这个作品加的自定义标签（不含 DLsite 抓来的 tags）。
+func (s *LibraryService) ListTags(ctx context.Context, workID, source string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	if s.DB == nil {
+		return []string{}, nil
+	}
+	workID = strings.TrimSpace(workID)
+	if workID == "" {
+		return nil, errors.New("作品编号为空")
+	}
+	return s.DB.ListWorkTags(ctx, source, workID)
+}
+
+// AddTag 添加一个自定义标签，返回添加后的完整列表。
+func (s *LibraryService) AddTag(ctx context.Context, workID, tag, source string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	if s.DB == nil {
+		return nil, errors.New("数据库未就绪")
+	}
+	workID = strings.TrimSpace(workID)
+	tag = normalizeUserTag(tag)
+	if workID == "" {
+		return nil, errors.New("作品编号为空")
+	}
+	if tag == "" {
+		return nil, errors.New("标签不能为空")
+	}
+	if utf8.RuneCountInString(tag) > maxUserTagLength {
+		return nil, fmt.Errorf("标签最长 %d 个字符", maxUserTagLength)
+	}
+	if err := s.DB.AddWorkTag(ctx, source, workID, tag); err != nil {
+		return nil, err
+	}
+	return s.DB.ListWorkTags(ctx, source, workID)
+}
+
+// RemoveTag 删除一个自定义标签，返回删除后的完整列表。
+func (s *LibraryService) RemoveTag(ctx context.Context, workID, tag, source string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	if s.DB == nil {
+		return nil, errors.New("数据库未就绪")
+	}
+	workID = strings.TrimSpace(workID)
+	if workID == "" {
+		return nil, errors.New("作品编号为空")
+	}
+	if err := s.DB.RemoveWorkTag(ctx, source, workID, normalizeUserTag(tag)); err != nil {
+		return nil, err
+	}
+	return s.DB.ListWorkTags(ctx, source, workID)
+}
+
+// CoverDataURL 把游戏库里记录的本地封面读成 data URL，给 <img> 直接显示。//
 // 为什么不用 file://：Wails 的 webview 对本地文件协议限制不确定（调试页的
 // file:// 链接至今未实机验证过），改走 base64 是确定能显示的方案；封面本来就只有几百 KB。
 // 文件不存在（被手动删了）时返回空串 —— 那是"没有缓存封面"，不该当错误抛给用户。
@@ -271,6 +354,24 @@ func workFromRawJSON(row *model.LibraryWork) (map[string]any, bool) {
 		return nil, false
 	}
 	return work, true
+}
+
+// workIsComplete 判断一份元数据足不足以入库/复用缓存：编号与名称是底线，
+// 另外**至少要有一个详情字段**（社团 / 作品形式 / 发售日 / 简介 / 容量）。
+//
+// 为什么要这层校验：2026-11 DLsite 换模板后，旧解析器只认得出名字与封面，
+// 写进库的就是"只有编号+名称+封面"的空壳（raw_json 仅 6 个键）。如果只校验编号+名称，
+// 这种空壳会被一直当成"完整数据"复用，用户永远看不到详细信息。
+func workIsComplete(work map[string]any) bool {
+	if strings.TrimSpace(strOf(work["id"])) == "" || strings.TrimSpace(strOf(work["name"])) == "" {
+		return false
+	}
+	for _, key := range []string{"maker", "workType", "releaseDate", "summary", "fileSize"} {
+		if strings.TrimSpace(strOf(work[key])) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // rowFromWork 从抓取结果里抽出入库需要的列。

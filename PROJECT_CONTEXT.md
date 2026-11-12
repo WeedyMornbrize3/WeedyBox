@@ -33,7 +33,7 @@ Wails v3 (Go) + Vue 3 + Pinia + UnoCSS 的无边框 Windows 桌面应用，目�
 - **`frontend/bindings/` 与 `go.sum` 都被 `.gitignore` 忽略且不在版本控制内**（`.gitignore:18` 是 `go.sum`）。
   → 换机器 / 重新 clone 后**必须先**：`wails3 generate bindings -clean=true -ts -i`，否则前端找不到 `HideWindow` 等新方法。
   该命令恒输出 1 条无害警告：`package WeedyBox/internal/database: function types are not supported by encoding/json`。
-  实测输出：`Processed: 280 Packages, 5 Services, 36 Methods, 0 Enums, 10 Models, 1 Event`。
+  实测输出：`Processed: 281 Packages, 7 Services, 45 Methods, 0 Enums, 15 Models, 1 Event`。
 - 本机环境坑：未装 Docker；`gh` CLI 已装但**未登录**；`task` CLI **未安装**（用 `wails3 task <name>` 替代）；系统代理 `127.0.0.1:7890` 会偶发拦截 TLS（`SELF_SIGNED_CERT_IN_CHAIN`），重试即可。
 - 本机 `devicePixelRatio = 1.25`：**源码里的 `1px`/`2px` 是正确写法**，DevTools 显示 `0.8px`/`1.6px` 只是缩放后的计算值。
 - 浏览器里跑 `npm run dev` **没有 Wails 后端**：所有写操作必然失败，只能验证「是否发请求 / 是否回滚 / UI 状态」，**不能验证落库**。
@@ -50,22 +50,29 @@ internal/database/library_repo.go 游戏库持久层：ensureLibraryTables（惰
 internal/database/library_repo_test.go 游戏库仓储测试（惰性建表、先读先删、并发首用、来源隔离、封面指针）
 internal/service/todo_service.go TodoService：全部 CRUD + 批量删除 + 统计
 internal/service/library_service.go LibraryService：**缓存优先**取作品 / 列游戏库 / 删除 / 本地封面转 data URL
+internal/service/dialog_service.go DialogService：系统「选择文件夹」对话框（Wails v3 `app.Dialog.OpenFile()`）
+internal/service/scan/            本地扫描（package `scan`，独立子包；**已注册为 Wails 服务 `ScanService`**）
+internal/service/scan/scan.go     ScanService：一级子文件夹内的 .exe（通用）/ 只取一级子文件夹名（特定）
+internal/service/scan/steam*.go   Steam 游戏目录：steam.go 多库汇总 + steam_windows.go 注册表 / steam_other.go 非 Windows 空实现（build tag）
+internal/service/scan/*_test.go   扫描边界（只读一层/不递归/坏输入/取消）、vdf 解析、多库汇总去重
 internal/service/getMeta/getFromDlsite.go  DLsite 元数据解析（MetaService，package getmeta）
 internal/service/getMeta/meta_service.go   Wails 包装层 MetaApiService（搜索/抓取/封面下载：入库图落 preImg/、搜索缩略图落 cache/，下载后记账到库）
 internal/service/getMeta/testdata/        两个真实作品页 fixture（离线回归用）
 internal/service/window_service.go WindowService：最小化 / 最大化 / 关闭 / 隐藏 / 显示 / 可见性
 frontend/src/main.ts             Pinia + router + store 的 restoreState()
 frontend/src/router/index.ts     hash 路由，MainLayout 下挂 7 个子页（/ · /library · /works · /todo · /testing · /settings + /test 重定向）
-frontend/src/stores/             todoStore.ts · metaStore.ts · libraryStore.ts · autoHeightStore.ts · Sidebar.ts · Theme.ts · App.ts
+frontend/src/stores/             todoStore.ts · metaStore.ts · libraryStore.ts · scanStore.ts · autoHeightStore.ts · Sidebar.ts · Theme.ts · App.ts
 frontend/src/views/WorksPage.vue 作品库页面（**侧栏无入口**，只从游戏库点封面进入；见 §3.3）
 frontend/src/services/todoService.ts  Wails 绑定封装：todoApi（含 ensure() 兜底 null）
 frontend/src/services/metaService.ts  Wails 绑定封装：metaApi（**永远联网**：搜索/抓取 + 缩略图缓存 CacheCover）
-frontend/src/services/libraryService.ts Wails 绑定封装：libraryApi（fetch **只读**缓存优先 · **storeIn 才入库** · list/remove/coverDataUrl）
+frontend/src/services/libraryService.ts Wails 绑定封装：libraryApi（fetch **只读**缓存优先 · **storeIn 才入库** · list/remove/coverDataUrl · listTags/addTag/removeTag 自定义标签）
+frontend/src/services/scanService.ts  Wails 绑定封装：scanApi（steamGames / executables / subfolderNames / pickDirectory）
 frontend/src/utils/metaFormat.ts 元数据展示纯函数：toMessage / formatBytes / fileUrl / buildSummaryRows（+ MetaRow 类型）
 frontend/src/utils/clipboard.ts 复制统一入口 copyText()：Clipboard API → execCommand 兜底，失败抛错（调用方提示）
-frontend/src/components/meta/    作品库与调试页共用的高粒度积木（MetaSection/搜索行/封面/键值表/明细…，见 §4.6）
+frontend/src/components/meta/    作品库与调试页共用的高粒度积木（MetaSection/搜索行/封面/键值表/明细/标签…，见 §4.6）· MetaUserTags.vue（作品详情「我的标签」：增删自定义标签）
+frontend/src/components/library/ ScanPanel.vue（游戏库「扫描添加」面板：来源/扫描方式/自动搜索进度/结果行勾选/全部入库·入库所选）
 frontend/src/components/todo/    TodoList · TodoItem · TodoInput · TodoStats · FilterBar · FilterChipGroup · TodoPrioritySelector
-frontend/src/components/settings/ CloseActionSelect · ThemeModeSelector · ThemeToggle · LanguageSelect(占位) · SettingsSection/Item/Page · VersionInfo
+frontend/src/components/settings/ CloseActionSelect · ThemeModeSelector · ThemeToggle · LanguageSelect(占位) · SettingsSection/Item/Page · VersionInfo · CacheCleanup（设置页「清理缓存」：进页面扫 cache/ 占用 + 一键清空） · TagLimitInput（标签显示数量 4–64）
 frontend/src/components/         Sidebar.vue · TitleBar.vue
 frontend/src/styles/global.css   三层 token 的**唯一色值来源**（浅色 :root / 深色 [data-theme="dark"]）
 frontend/uno.config.ts           变量→类名映射 rules + shortcuts + theme.colors
@@ -108,7 +115,7 @@ doc/                             README/backend/frontend/styles/conventions + ne
 
 ⚠️ **不做数据加工**：返回给前端的 `work` 是 `DLsiteWork` 的 **json 编码**（走 `toRawMap` 一个 `Marshal`+`Unmarshal` 往返，字段名与 json tag 完全一致），前端直接展示原始 JSON。这是刻意的——测试页的用途就是对着 DLsite 页面核对解析结果。
 
-已在 `main.go` 注册：`metaService := &getmeta.MetaApiService{DB: dbService}`（持有 DB 是为了下载封面后记账进游戏库），`applicationServices` 加入后服务总数 5、方法 39（与 §8 的 `wails3 generate bindings` 输出一致）。结构体直接字面量构造（不走 `NewMetaApiService()`），因此内部有 `ensure()` 惰性兜底 `meta` 字段。
+已在 `main.go` 注册：`metaService := &getmeta.MetaApiService{DB: dbService}`（持有 DB 是为了下载封面后记账进游戏库），`applicationServices` 加入后**服务总数 7、方法 45**（2026-11-12 的生成输出：281 Packages, 7 Services, 45 Methods, 15 Models）。结构体直接字面量构造（不走 `NewMetaApiService()`），因此内部有 `ensure()` 惰性兜底 `meta` 字段。
 
 | 方法 | 签名 | 行为 |
 | --- | --- | --- |
@@ -118,6 +125,8 @@ doc/                             README/backend/frontend/styles/conventions + ne
 | `CacheCover` | `(ctx, workID, coverURL string) (string, error)` | **搜索缩略图**：缓存到相对路径 `cache/`（不存在就建），返回 `data:<mime>;base64,…`；已缓存过就不再联网。固定文件名 `<编号>_cover.<ext>`（允许覆盖，缓存语义） |
 | `PreImgDir` / `CacheDir` | `() string` | `preImg/` / `cache/` 的绝对路径（后者顺带创建目录） |
 | `ClearCacheDir` | `() error`（包级函数，`getmeta.ClearCacheDir`） | 清空 `cache/` 下的所有文件（目录保留，不存在算成功）。`main.go` 里挂在 `app.OnShutdown`：**每次退出软件前清掉搜索缩略图** |
+| `CacheInfo` | `() (map[string]any, error)` | 扫描 `cache/`（`filepath.WalkDir`），返回 `{dir, files, bytes}`。**不联网、不建目录**：目录不存在就是 0。设置页进入时调一次，把占用显示在「清理缓存」按钮左边 |
+| `ClearCache` | `() (map[string]any, error)` | 手动清空 `cache/`（复用 `ClearCacheDir` 的删除逻辑），返回 `{files, bytes, rest}`（删掉的文件数/字节数、删完剩余文件数）。设置页「清理缓存」按钮调它，成功后前端重新 `CacheInfo` 以真实占用为准 |
 
 `WorkRequest{keyword, workId string}` 是前端入参——Wails 绑定不擅长可选参数，所以两个字段都给、服务端自己选。
 
@@ -131,11 +140,11 @@ doc/                             README/backend/frontend/styles/conventions + ne
 | --- | --- | --- |
 | `/testing`（name `Testing`；旧路径 `/test` 重定向） | `views/test.vue`（薄壳，只渲染 `MetaApiTestCard`） | **调试页**：单列四卡 —— 请求 / 精确命中（含封面预览与「入库」）/ 模糊搜索候选 / **原始 JSON（可复制，只在这里出现）**。抓取入口在这一页；按钮与作品库同语义（`meta.storeIn()`，会写库） |
 | `/works`（name `Works`；**侧栏无入口**） | `views/WorksPage.vue` | **作品库**：**只剩作品信息**（单个 `MetaSection` + `MetaWorkOverview` + `MetaWorkDetails`）。没有搜索卡、没有候选栏、没有「封面保存位置」卡、没有「游戏库」卡。缓存命中时标题旁有「缓存」badge 与「重新抓取」按钮。只能从游戏库点封面进入 |
-| `/library`（name `Library`） | `views/LibraryPage.vue` | **游戏库**：顶栏是**单行** `MetaSection`（只有标题 + 右侧「已入库 N 款」+ 刷新 + 搜索，无内容区）；封面网格 `grid-cols-[repeat(auto-fill,minmax(150px,1fr))]`，hover 时半透明名称面板从下方淡入；点封面 → `openWork()` 跳 `/works` 并 `loadById`（缓存优先）；右上角删除按钮连点两下确认（**移开鼠标或失焦即撤销待确认态**）。**搜索在这里做**：点「搜索」弹居中弹窗（`Teleport` 到 body，遮罩 `color-mix` + `backdrop-blur(8px)`，**只有 ✕ 与 Esc 能关，点遮罩不关**），内含搜索行 + 提示文案 + 候选（**每页 10 个**、分页条在候选下方，**只给当前页下 `cache/` 预览图**；分页条 = 上一页/下一页 + 前 3 页/当前页/后 3 页（中间省略号）+ 输入页码跳转）；命中作品即关窗跳 `/works`；读取失败的错误条显示在顶栏卡片下方 |
+| `/library`（name `Library`） | `views/LibraryPage.vue` | **游戏库**：顶栏是**单行** `MetaSection`（只有标题 + 右侧「已入库 N 款」+ 刷新，无内容区；**原「搜索」按钮已移除**）；封面网格 `grid-cols-[repeat(auto-fill,minmax(150px,1fr))]`，hover 时半透明名称面板从下方淡入；点封面 → `openWork()` 跳 `/works` 并 `loadById`（缓存优先）；右上角删除按钮连点两下确认（**移开鼠标或失焦即撤销待确认态**）；**网格最后一位是透明圆形加号按钮**（`.lib-add`，3.5rem、`border-radius:50%`、透明底 + 虚线描边 + `i-lucide-plus`）。**添加游戏在这里做**：点那个加号圆钮弹居中「添加游戏」窗（`Teleport` 到 body，遮罩 `color-mix` + `backdrop-blur(8px)`，**只有 ✕ 与 Esc 能关，点遮罩不关**），窗内两种方式（`chip` 切换，默认「扫描添加」）：**扫描添加** = `components/library/ScanPanel.vue`（来源 Steam 库 / 选择文件夹，文件夹可选「按 exe 识别」或「按文件夹名」）扫出一批名字后**自动逐个搜索**（3 路并发，可「停止」/单行「重试」）；结果按扫描顺序一行一个（封面 + 匹配作品名 + RJ + 扫描名 + 社团·形式·发售日·容量，详情在搜索完后再补抓），行可勾选，工具条提供「全部入库」与「入库所选」（**串行**写库；已入库的行显示「已入库」且不再参与），点「详情」进 `/works` 核对；**手动搜索** = 原来的搜索行（RJ 编号精确 / 作品名模糊），候选**每页 10 个**、分页条在候选下方、**只给当前页下 `cache/` 预览图**，命中作品即关窗跳 `/works`； |
 
 三页都**自带滚动容器**：`MainLayout.vue:6` 的 router-view 是 `overflow-hidden`，页面必须自己提供滚动；而 `global.css:207-213` 用 `!important` 全局隐藏了滚动条，只有 `.scrollbar-theme` 能恢复（`scrollbar-width: thin` + 带 `!important` 的 `::-webkit-scrollbar`）。`pr-2` 给 8px 滚动条留位。
 
-⚠️ 但**数据不再直连 MetaApiService**：页面都走 `stores/metaStore.ts` → `libraryApi`（缓存优先、**只读**），只有 `/testing` 用 `refresh=true` 强制联网核对解析；`/testing` 的原始 JSON 因此会多出 `cached/workId/cover*` 等库侧键（后端注入，不是解析结果变化）。**现状：搜索入口是 `/library` 顶部的「搜索」弹窗；搜索与点开详情都只读，只有点「入库」才会抓文本 + 下封面写库 —— 作品因此只会在入库后出现在 `/library`，点卡片进 `/works` 看详情；`/testing` 只作调试核对。**
+⚠️ 但**数据不再直连 MetaApiService**：页面都走 `stores/metaStore.ts` → `libraryApi`（缓存优先、**只读**），只有 `/testing` 用 `refresh=true` 强制联网核对解析；`/testing` 的原始 JSON 因此会多出 `cached/workId/cover*` 等库侧键（后端注入，不是解析结果变化）。**现状：搜索/添加入口是 `/library` 网格末尾那个透明圆形加号按钮（弹出居中「添加游戏」窗：默认「扫描添加」—— 扫 Steam 库或本地游戏文件夹，扫完自动逐个搜索、结果按行排列，可勾选入库或一键全部入库；也可切「手动搜索」，顶栏不再有「搜索」按钮）；搜索、扫描与点开详情都只读，只有点「入库」才会抓文本 + 下封面写库 —— 作品因此只会在入库后出现在 `/library`，点卡片进 `/works` 看详情；`/testing` 只作调试核对。**
 
 **「下载」字样已改为「入库」，且入库成功后按钮变「已入库」并禁用**：`MetaDownloadButton` 默认文案 `入库` / `入库中`（原来叫「下载封面」），库里已有封面时文案变 `已入库`、图标换勾、按钮 `disabled`（`stores/metaStore.ts` 的 `stored` = 本次会话下载过 `saved` 或后端注入的 `coverAbsPath` 非空）。真正的写入在 `LibraryService.Store`（抓文本 + 封面落 `preImg/` + 写库），两个页面都走同一个 `metaStore.storeIn()`；前端不再有"只下图不写库"的独立入口。禁用是刻意的：`writeFileUnique` 不覆盖同名文件，再点只会多出一份 `-2` 后缀的重复图。
 
@@ -146,16 +155,39 @@ doc/                             README/backend/frontend/styles/conventions + ne
 | 方法 | 签名 | 行为 |
 | --- | --- | --- |
 | `Fetch` | `(ctx, req FetchWorkRequest) (map[string]any, error)` | `FetchWorkRequest{keyword, workId, source, refresh}`。有编号且 `refresh=false` 时先查库；命中则用 `raw_json` 还原 + 注入 `cached=true` 与封面字段；未命中（或 `refresh=true`）走 `meta.FetchWork`，**只返回、不写库**（注入 `cached=false`） |
-| `Store` | `(ctx, req StoreRequest) (map[string]any, error)` | **入库**：`StoreRequest{workId, source}`。库里已有 `raw_json` 就复用（不再抓文本），否则联网抓一份 → `UpsertLibraryWork` → `DownloadCover` 把封面落到 `preImg/` 并记账。封面已存在时幂等返回。写库失败**直接报错**（这一步就是在"载入数据库"） |
+| `Store` | `(ctx, req StoreRequest) (map[string]any, error)` | **入库**：`StoreRequest{workId, source}`。库里已有**完整** `raw_json` 就复用（不再抓文本），`raw_json` 残缺（id/name 或任何详情字段都没有，即"空壳"）会重新联网抓；否则联网抓一份 → **校验 `workIsComplete`（编号+名称+至少一个详情字段）** → `UpsertLibraryWork` → `DownloadCover` 把封面落到 `preImg/` 并记账。空壳直接报错、不写库（扫描添加一次入库几十部，不能污染游戏库）。封面已存在时幂等返回。写库失败**直接报错**（这一步就是在"载入数据库"） |
 | `List` | `(ctx, source string) ([]LibraryWork, error)` | `source` 空 = 所有来源；`ORDER BY created_at DESC, id DESC` |
 | `Remove` | `(ctx, workID, source string) error` | **只删库记录，不删磁盘图片**（那是用户自己的文件） |
 | `CoverDataURL` | `(ctx, workID, source string) string` | 读 `cover_abs_path` → `data:<mime>;base64,…`；文件不存在返回空串（不算错误） |
+| `ListTags` | `(ctx, workID, source string) ([]string, error)` | 用户自定义标签（`work_tags` 表，惰性建表）。与 DLsite 抓来的 `tags` 是两回事：抓取的随元数据刷新变，用户加的不会丢 |
+| `AddTag` | `(ctx, workID, tag, source string) ([]string, error)` | 清洗（去首尾空白、中间连续空白压成一个空格）→ 校验 ≤32 字符 → 写表 → 返回完整列表；重复添加幂等（`INSERT OR IGNORE`） |
+| `RemoveTag` | `(ctx, workID, tag, source string) ([]string, error)` | 删除 → 返回完整列表；删不存在的也算成功 |
 
 **为什么封面用 base64 data URL 而不是 `file://`**：Wails webview 对本地文件协议的支持没实机验证过，data URL 一定可用；封面就几十~几百 KB，一次列表请求可接受。
 
 **封面记账**：`MetaApiService.DownloadCover` 落盘后若持有 `DB` 就调 `RecordCoverFile` 写一行 `library_cover_files` 并把作品的 `cover_*` 指针指向它（`writeFileUnique` 会加 `-2/-3` 后缀，事后猜不出文件名，所以必须当时记账）。
 
 **测试**：`internal/database/library_repo_test.go`（10 个用例）覆盖惰性建表、首写前先读/先删、**并发首次使用**（曾真实复现 `database is locked (5) (SQLITE_BUSY)`，见 §10）、来源隔离、封面指针更新。
+
+### 3.8 本地扫描服务（`internal/service/scan/`，package `scan`，`ScanService`）
+
+**已在 `main.go` 注册**为 Wails 服务 `ScanService`（`application.NewService(scanService)`，import `WeedyBox/internal/service/scan`）：绑定生成后前端经 `services/scanService.ts`（`scanApi`）调用，用于游戏库的「扫描添加」。**无状态**：根目录每次作为参数传入（游戏库可能挂多个根）。**放在独立子包 `scan`**（用户要求把扫描服务合并到一个文件夹），不要再往 `internal/service` 根目录塞扫描相关文件。
+
+| 方法 | 签名 | 行为 |
+| --- | --- | --- |
+| `ScanExecutablesInSubfolders` | `(ctx, root string) (GameScanResult, error)` | **通用**（靠 exe 认游戏，不管文件夹怎么命名）：读根目录 + 每个一级子文件夹各一层 → `GameScanResult{root, folders[], skipped[]}`；`folders[]` 每项 `{folderName, folderPath, executables[]}`，exe 为 `{fileName, name, path, size}`。**根目录自身的 .exe 不算、不递归、没有 .exe 的文件夹不进结果**；某个子文件夹读不动（权限/坏盘/被占用）只记进 `skipped` 并继续 |
+| `ScanSubfolderNames` | `(ctx, root string) ([]string, error)` | **特定**（文件夹已规范命名）：只读根目录一层，返回一级子文件夹名，**不打开任何子文件夹**（省 N 次 I/O）；没有 .exe 的文件夹也照样返回 |
+| `ScanSteamGameFolders` | `(ctx) ([]string, error)` | **Steam**：找本机 Steam 安装目录 → 读 `libraryfolders.vdf` 拿到全部库根 → 对每个 `<库根>\steamapps\common` **复用 `ScanSubfolderNames`**，返回游戏文件夹名。跨库去重（大小写不敏感）、按名排序（大小写不敏感，与资源管理器一致）。库盘没插/目录被删只跳过；一个 Steam 都找不到时返回哨兵错误 `ErrSteamNotFound`（区别于「装了但空库」） |
+
+路径一律 `filepath.Abs` + `Clean` 成绝对路径（结果里的 `path` 将来要用来启动游戏，不能依赖进程工作目录）。`.exe` 判定大小写不敏感且用 `filepath.Ext`（`game.exe.txt` 不算）；`entry.IsDir()` 不够——Windows junction 的 `IsDir()` 是 false，要再 `Stat` 一次跟随链接。排序取 `os.ReadDir` 的按名顺序（**不按大小**，主程序不一定是最大 exe，选择交给调用方）。测试见 `scan/scan_test.go`：用真实 `t.TempDir()` 树断言「只读一层」的边界，不 mock 文件系统。
+
+**Steam 安装目录的找法**（`scan/steam_windows.go`，build tag `windows`）：`HKCU\Software\Valve\Steam\SteamPath`（最准，值是正斜杠 `e:/steam`，要 `filepath.FromSlash`）→ `HKLM\SOFTWARE\Valve\Steam\InstallPath`（从 64 位进程读 32 位安装器写的键要带 **`WOW64_32KEY`**，所以 64/32 两个视图都试）→ `%ProgramFiles(x86)%\Steam` / `%ProgramFiles%\Steam` 兜底；注册表残留指向已删目录时由 `os.Stat` 筛掉。非 Windows 用 `scan/steam_other.go` 的空实现（本项目 GOOS 固定 windows，只是为了 `GOOS=darwin go build ./...` 不炸）。
+
+**库路径来自 `libraryfolders.vdf`**：现役位置 `<Steam>\steamapps\libraryfolders.vdf`（块内 `"path" "D:\\SteamLibrary"`），旧客户端在 `config\libraryfolders.vdf`，两处都读；旧格式（键是数字、值直接是路径）在没有 `path` 行时兜底。**不引 VDF 第三方库**：两条行级正则足够，反斜杠/引号转义手工还原。**依赖**：`golang.org/x/sys/windows/registry` —— 该模块本来就在 `go.mod`（indirect），这次只是变成 direct，**没有新增模块**。测试见 `scan/steam_test.go`（vdf 现役/旧版样本、多库汇总去重、vdf 在 config 下、主库重复列出、无 common、取消）。真实机器已烟测：注册表 `e:/steam` → 46 个游戏文件夹。
+
+### 3.9 系统对话框（`internal/service/dialog_service.go`，`DialogService`）
+
+已注册（第 7 个服务）。目前只有 `PickDirectory(title string) (string, error)`：`app.Dialog.OpenFile().CanChooseFiles(false).CanChooseDirectories(true)` 打开系统「选择文件夹」框，`AttachToWindow(app.Window.Current())` 让它贴着主窗口；**用户取消返回空串 + nil**（不是错误），只有应用实例未就绪/对话框创建失败才报错。`PromptForSingleSelection` 内部走 `InvokeSync` 切到主线程，所以从服务 goroutine 调用不会死锁。前端封装是 `scanApi.pickDirectory()`，只在「扫描添加 → 选择文件夹」用。为什么不塞进 WindowService：窗口操作与"问用户要一个路径"是两类事。**注意 `go.mod` 的 beta.10 里 `application.Get()` 是包级全局实例**，服务里直接取即可。
 
 ### 3.4 获取外部元数据（`internal/service/getMeta/getFromDlsite.go`，package `getmeta`）
 
@@ -172,7 +204,7 @@ doc/                             README/backend/frontend/styles/conventions + ne
 
 `DLsiteWork` 字段（json tag 全 camelCase）：`ID` `Name` `AlternateID`(拼音 slug) `Maker` `MakerID` `Series` `SeriesID` `WorkType` `AgeRating` `FileFormats[]` `FileSize` `ReleaseDate` `Price` `Currency` `PriceUntil` `Rating` `RatingCount` `CoverURL` `Summary` `Tags[]` `Outline[]` `SourceURL` `FetchedAt`
 
-两个真实作品的实测值（**离线 fixture，非猜测**）：
+两个真实作品的实测值（**旧模板**时代的离线记录；旧 fixture 已随工作区裁剪删除，现役新模板见下方「九个坑」与测试说明）：
 
 | 字段 | RJ01721474 | RJ01682332 |
 | --- | --- | --- |
@@ -191,13 +223,15 @@ doc/                             README/backend/frontend/styles/conventions + ne
 
 **拿不到的**：曲目表与试听音频（`ol.work_tracklist_list` 在当前页面已不存在，改由 Vue 渲染）、销量/愿望单/评论数/折扣率、社团与系列的详情页、多语言版本对应关系、评论正文。
 
-**七个坑（改之前必读）**：① 必须 HTTPS；② 前导零丢了必 404；③ 必须发 `Cookie: adultchecked=1; locale=ja`，否则 R18 页内容退化；④ 标题只取 `#work_name` 的文本（现代码里没有 `<a>`，第三方库 `Name` 恒空就是这个原因）；⑤ **价格/评分在 `<meta itemprop="…" content="…">` 的 content 属性上**，取 `.Text()` 只会得到空串；⑥ `SeriesID` 要从内嵌 JSON 正则取且必须判 `FindStringSubmatch` 长度（否则单作 panic）；⑦ **`CoverURL` 目前是最小缩略图**（先命中 `#work_thumb img`），更好的来源是 `og:image` / `itemprop="image"` 与 slider `data-src`，**尚未改**。
+**标签（`Tags`）的拼接规则（2026-11-12，用户要求）**：来源 = 分类（`dd a[href*="/genre/"]`，旧页面 `.main_genre a`）+ 作品形式（按 `dd` 里的 a/span 逐个取）+ 社团名 + 作者 + 剧情 + 插画 + 声优（按元素取，一个声优一个元素）+ 年龄指定/販売形式。全部经 `splitTagText` 按**空白字符和 `/`** 切分（`双声道立体声/人头麦` → 两个、`みたかりん 野上菜月` → 两个），再去重、按 `defaultTagLimit=64` 截断。**多值字段必须按元素取**：中文页面里相邻元素之间没有空白，取整段 `dd.Text()` 会粘成 `异种X造孽命令…` / `みたかりん野上菜月`。前端设置页的「标签显示数量」（4–64，默认 24，`stores/App.ts` 的 `tagLimit`）只控制**显示**多少个，超出折成 `+N`。
+
+**九个坑（改之前必读，2026-11-12 复核）**：① 必须 HTTPS；② 前导零丢了必 404；③ 必须发 `Cookie: adultchecked=1; locale=zh-cn`（代码里写死中文；R18 不退化，且页面标签变成中文 —— **只认日文标签会全部取空**）；④ 标题只取 `#work_name` 的文本（现代码里没有 `<a>`）；⑤ **页面模板 2026-11 换新版**：`#work_outline` 表格、`#work_maker`、`<meta itemprop="price/ratingValue">` 全部消失，改用 `div.c-productInfo` 的 `dt.c-productInfo__key → dd.c-productInfo__value`（信息表）+ `<script type="application/ld+json">` 的 Product（价格/评分/社团/拼音/简介）。**只认旧选择器时解析结果就是"只有名字+封面"的空壳**（`raw_json` 约 280B）—— 用户报"扫描入库只有封面和作品名"的根因就在这里，旧库里已有空壳也会被 `workIsComplete` 判为不完整、重新抓取；⑥ 标签文字随 locale 变（`社团名/サークル名`、`发售日/販売日`、`文件容量/ファイル容量`…），取值一律走 `outlineValueAny` 多语言候选；genre 用 `dd a[href*="/genre/"]` 识别，不认标签；⑦ `SeriesID` 旧页面取内嵌 JSON，新页面取 `title_id/SRI…` 链接；`MakerID` 取 `maker_id/RG…` 链接或 JSON-LD `brand.url`；⑧ 必须判 `FindStringSubmatch` 长度（否则单作 panic）；⑨ `CoverURL` 已改为 `og:image` 优先。
 
 **图片可以直接爬（实测）**：`img.dlsite.jp` DNS 干净（Cloudflare `104.18.24.157` / `104.18.25.157`），**不需要 Cookie、不需要 Referer**，`curl --noproxy '*'` 直连即可（PowerShell `Invoke-WebRequest -OutFile` 会因 .NET 默认代理报 `NonInteractive mode`，不要用它）。同一封面 4 个档位：`_img_smp1.jpg` 1470×1000 / 808 KB > `_img_main.jpg` 560×420 / 222 KB（`og:image` 就是它）> `_img_main.webp` 38.9 KB > `_img_main_240x240.jpg` 45.9 KB。
 
 **`CoverURL` 取大图的优先级（已修）**：旧实现扫 `img, source` 时先命中 `#work_thumb img` 的 `_img_main_240x240`，于是永远拿最小那张。现在 `extractCoverURL` 的顺序是 `meta[property="og:image"]` → `meta[itemprop="image"]` → `extractCoverURLWidest`（扫 `img,source`，用 `coverWidthScore` 按后缀宽度挑最大的：显式 `_WxH` 取 W，其次 `_smp`=1470 > `_img_main`=560）。实测两个 fixture 都从 240×240 升到 560×420：`RJ01721474_img_main.jpg` / `RJ01664616_img_main.jpg`。
 
-**测试**：`getFromDlsite_test.go` 用 `testdata/work_RJ01721474.html`(154454 B) / `work_RJ01682332.html`(125550 B) 两个真实页面做**离线 fixture 回归**，断言具体值而非"非空"；两个样本互补（一个有系列名/文件容量/价格有效期，一个都没有），另有 `TestParseWorkRejectsEmptyPage`（结构变化必须报错而非返回空壳）与纯函数表驱动测试。`go test ./internal/service/getMeta/` 约 0.3s 全绿。
+**测试**：`new_template_test.go` 用两个 fixture —— `work_new_RJ01232863.html`（日文标签的精简页面）与 `work_new_zh_RJ01232863.html`（**真实中文页面**，去掉 style/script 后约 81KB），分别锁住「日文标签」与「中文标签（应用实际发的 locale）」两条路径，断言具体值；另有 `TestParseWorkRejectsPageWithoutName`（结构变化必须报错而非返回空壳）。旧的 `work_RJ01721474.html` / `work_RJ01682332.html` 已随工作区裁剪删除。`go test ./internal/service/getMeta/` 全绿。实测（2026-11-12 联网）：RJ01232863 的社团/系列/形式/分级/容量/发售日/价格/评分/简介/标签全部解析成功。
 
 ### 3.5 数据模型（`internal/model/todo.go`）
 
@@ -242,6 +276,7 @@ type CoverFile struct {     // 每次下载一行，作品表的 cover_* 指向�
 
 - `library_works`：`id PK / source / work_id / name / maker / maker_id / series / series_id / work_type / age_rating / release_date / cover_url / source_url / raw_json / fetched_at / cover_dir / cover_path / cover_abs_path / cover_bytes / cover_suffix / created_at / updated_at`，唯一键 `UNIQUE(source, work_id)`
 - `library_cover_files`：`id PK / source / work_id / dir / path / abs_path / bytes / suffix / cover_url / created_at`，索引 `idx_library_cover_files_work(source, work_id)`
+- `work_tags`（用户自定义标签，**惰性建表**，由 `tag_repo_test.go` 覆盖）：`id PK / source / work_id / tag / created_at`，`UNIQUE(source, work_id, tag)`，索引 `idx_work_tags_work(source, work_id)`。刻意不挂在 `library_works` 上：作品库详情页可以打开还没入库的作品，那里的标签也要能存。
 
 `UpsertLibraryWork` 用 `INSERT … ON CONFLICT(source, work_id) DO UPDATE SET …`，且**不覆盖 `cover_*` 列**（那些由 `RecordCoverFile` 维护，重新抓元数据不该把封面指针清空）。
 
@@ -286,9 +321,10 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 | --- | --- | --- |
 | `stores/Sidebar.ts` | `sidebar` | `barWidth=72`、`barWidthCollapsed=250`；**命名反直觉**：`isCollapsed=true` → 宽度 250。localStorage 键 `sidebar-collapsed` |
 | `stores/Theme.ts` | `theme` | `ThemeMode='light'|'dark'|'system'`(默认 system)；`effectiveTheme`；`applyTheme()` 用 `documentElement[data-theme="dark"]`；localStorage `theme-mode`；`setupSystemListener()` 监听 `prefers-color-scheme` |
-| `stores/App.ts` | `app` | `CloseAction='ask'|'hide'|'close'`（默认 `ask`）；localStorage `close-action`；`VALID` 数组判定，**非法值/旧值 `minimise` 一律回落 `ask`**；导出 `CLOSE_ACTION_OPTIONS`；`setCloseAction` + `restoreState` + `watch` 兜底落盘 |
-| `stores/metaStore.ts` | `meta` | DLsite 元数据：State `keyword·loading·downloading·error·status·work·saved·preImgPath·candidateCovers(id→dataURL)·sourcePages(DLsite页号→30条)·sourcePageCount·searchTotal·pageLoading·candidatePage·raw·cached·libraryUpdatedAt·coverAbsPath`；Getters `rawJson·hasResult·stored·candidates(已加载拼接)·candidateTotal(后端精确总数)·candidatePageCount·pagedCandidates`；Actions `runSearch(query?, refresh=false)·loadById(id, refresh=false)·searchBySample(s, refresh=false)·loadCandidateCovers(list)·loadSourcePage(page, silent?)·setCandidatePage(page)·storeIn()（**入库**）·refreshPreImgDir()·ensurePreImgDir()·clearResult({keepCandidates})`；导出 `META_SAMPLES`。**缓存优先**（走 `libraryApi`）；调试页传 `refresh=true` 强制联网。`keyword` 不参与"打开作品"（`loadById` 不写回），搜索弹窗开/关都会清空它（见 §10）。**候选分页每页 10 条，总页数按后端给的结果总数算；30/10=3，所以第 1~3 页对应 DLsite 第 1 面、4~6 页对应第 2 面……用到哪面才取哪面，翻到组末页（3/6/9…）时预取下一面** |
+| `stores/App.ts` | `app` | `CloseAction='ask'|'hide'|'close'`（默认 `ask`）；localStorage `close-action`；`VALID` 数组判定，**非法值/旧值 `minimise` 一律回落 `ask`**；导出 `CLOSE_ACTION_OPTIONS`；`setCloseAction` + `restoreState` + `watch` 兜底落盘。**另有 `tagLimit`**（作品标签显示数量，默认 24，范围 4–64，localStorage `tag-limit`，导出 `TAG_LIMIT_MIN/MAX/DEFAULT`，`setTagLimit` 会自动夹取） |
+| `stores/metaStore.ts` | `meta` | DLsite 元数据：State `keyword·loading·downloading·error·status·work·saved·preImgPath·candidateCovers(id→dataURL)·sourcePages(DLsite页号→30条)·sourcePageCount·searchTotal·pageLoading·candidatePage·raw·cached·libraryUpdatedAt·coverAbsPath`；Getters `rawJson·hasResult·stored·candidates(已加载拼接)·candidateTotal(后端精确总数)·candidatePageCount·pagedCandidates`；Actions `runSearch(query?, refresh=false)·loadById(id, refresh=false)·searchBySample(s, refresh=false)·loadCandidateCovers(list)·loadSourcePage(page, silent?)·setCandidatePage(page)·storeIn()（**入库**）·addCustomTag(tag)·removeCustomTag(tag)·refreshPreImgDir()·ensurePreImgDir()·clearResult({keepCandidates})`；State 另有 `customTags·customTagError`（当前用户的自定义标签，`applyWork` 时按作品编号重新拉取）。导出 `META_SAMPLES`。**缓存优先**（走 `libraryApi`）；调试页传 `refresh=true` 强制联网。`keyword` 不参与"打开作品"（`loadById` 不写回），搜索弹窗开/关都会清空它（见 §10）。**候选分页每页 10 条，总页数按后端给的结果总数算；30/10=3，所以第 1~3 页对应 DLsite 第 1 面、4~6 页对应第 2 面……用到哪面才取哪面，翻到组末页（3/6/9…）时预取下一面** |
 | `stores/libraryStore.ts` | `library` | 游戏库列表：State `works·loading·error·covers(id→dataURL)·removingId·loaded`；Getters `count`；Actions `load(force=false)·loadCovers()·remove(workId)·refreshCover(workId)·has(workId)` |
+| `stores/scanStore.ts` | `scan` | 游戏库「扫描添加」：State `source('steam'\|'folder')·mode('exe'\|'folder')·folderPath·scanning·picking·error·status·entries({name,detail})·done`；Getters `count`；Actions `setSource·setMode·pickFolder()（原生选目录，取消返回空串不动路径）·scan()`。**只读磁盘、不联网**；点结果里的名字由 LibraryPage 调 `meta.runSearch(name)` |
 | `stores/autoHeightStore.ts` | `autoHeight` | `<Transition>` 的高度自适应钩子（原 `composables/useAutoHeight.ts`，已按约定搬进 stores）：`duration`（读 `--motion-slow`）+ `enter·afterEnter·leave·afterLeave`；用法 `@enter="collapse.enter"`，`const collapse = useAutoHeightStore()` |
 
 > ⚠️ 命名不一致：`Sidebar.ts`/`Theme.ts` 大写开头，`todoStore.ts`/`App.ts`/`metaStore.ts`/`libraryStore.ts` 混用 —— 新增 store 时 import 大小写要**手写对**。
@@ -299,9 +335,10 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 | --- | --- | --- |
 | `frontend/src/services/todoService.ts` | `todoApi` | `getAll · getByID · create · update · toggleComplete · delete · deleteMany(ids) · getStats`；用本地 `ensure<T>(value, message)` 把绑定层的 `T | null` 收成 `T` |
 | `frontend/src/services/metaService.ts` | `metaApi` | **永远联网**：`searchWorks(keyword, page=1)`（返回该页 30 条 + `pageCount`）` · fetchWork(keyword, workId?) · preImgDir() · cacheCover(workId, coverUrl)`（后者返回 `cache/` 里的缩略图 data URL）；同样用 `ensure()` 兜底 null |
-| `frontend/src/services/libraryService.ts` | `libraryApi` | `fetch(keyword, workId?, refresh=false)`（**只读**缓存优先） · `storeIn(workId, source?)`（**入库，唯一写库入口**） · `list(source?) · remove(workId, source?) · coverDataUrl(workId, source?)`；导出 `LIBRARY_SOURCE_DLSITE='dlsite'` 与 `LibraryMeta`（= `WorkMeta` + `cached/workId/cover*`） |
+| `frontend/src/services/libraryService.ts` | `libraryApi` | `fetch(keyword, workId?, refresh=false)`（**只读**缓存优先） · `storeIn(workId, source?)`（**入库，唯一写库入口**） · `list(source?) · remove(workId, source?) · coverDataUrl(workId, source?)` · `listTags(workId) · addTag(workId, tag) · removeTag(workId, tag)`（用户自定义标签，存 `work_tags`）；导出 `LIBRARY_SOURCE_DLSITE='dlsite'` 与 `LibraryMeta`（= `WorkMeta` + `cached/workId/cover*`） |
+| `frontend/src/services/scanService.ts` | `scanApi` | `steamGames()` · `executables(root)`（返回 `{root, folders[], skipped[]}`） · `subfolderNames(root)` · `pickDirectory(title?)`（原生文件夹选择框，取消返回空串）；导出 `ScannedGame{name,detail}` |
 
-> 绑定层返回的是 `map[string]any` / `{ [k: string]?: any }`，封装层用 `as LibraryMeta` 收窄（否则 `vue-tsc` 报 TS2345）。注意 `frontend/bindings/` 是**生成物**：`wails3 generate bindings` 在 beta.24 下产出的是 `.js`（旧版本产出 `.ts`），`tsconfig` 的 `exclude` 已包含 `**/*.js`，所以这些绑定对 `vue-tsc` 是 untyped 模块 —— 新克隆仓库后先跑一次生成命令，缺文件会直接解析失败。
+> 绑定层返回的是 `map[string]any` / `{ [k: string]?: any }`，封装层用 `as LibraryMeta` 收窄（否则 `vue-tsc` 报 TS2345）。注意 `frontend/bindings/` 是**生成物、被 gitignore**：用 `wails3 generate bindings -clean=true -ts -i` 生成（实测 beta.24 `-ts -i` 下服务与 models 产出的是 **`.ts`**，只有个别 runtime 包是 `.js`；`tsconfig` 的 `exclude` 只覆盖 `**/*.js`）。新克隆仓库后先跑一次生成命令，缺文件会直接解析失败。
 
 ### 4.5 `components/meta/*` 积木（作品库与调试页共用）
 
@@ -311,7 +348,8 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 | `MetaSearchBar` | 搜索行（`input-theme` + `btn-brand`），受控 `v-model` + `@submit`，不发请求 |
 | `MetaSampleChips` / `MetaMessage` | 快捷示例 chips / 一行提示（`tone=info|error|success`，字面量表映射图标与颜色） |
 | `MetaCover` / `MetaCoverFigure` | 封面缩略图（`sm` 44px / `md` 140×105，失败退占位图，`src` 变化复位）/ 封面 + URL 标注 |
-| `MetaKeyValueList` / `MetaTags` / `MetaSubsection` / `MetaTextBlock` | 两列键值表（`dense`/`scrollable`）/ 不可点标签云 / 小标题块 / 长文本块（`whitespace-pre-wrap` + 限高） |
+| `MetaKeyValueList` / `MetaTags` / `MetaSubsection` / `MetaTextBlock` | 两列键值表（`dense`/`scrollable`）/ 不可点标签云（`limit` 控制显示个数，超出折 `+N`）/ 小标题块 / 长文本块（`whitespace-pre-wrap` + 限高） |
+| `MetaUserTags` | 作品详情「我的标签」：输入框 + 添加按钮 + 可移除的 chip；数据来自 `metaStore.customTags`（后端 `work_tags` 表） |
 | `MetaWorkOverview` / `MetaWorkDetails` | 详情上半（封面+名称+关键字段+标签+下载+回执）/ 下半（summary + outline） |
 | `MetaDownloadButton` / `MetaSavedNotice` / `MetaPreImgPath` | 下载按钮三态 / 成功回执 + `file://` 打开 / 封面落地目录（失败静默留空） |
 | `MetaCandidateList` / `MetaPager` / `MetaRawJson` / `MetaEmptyState` | 候选行（`@select` 出编号）/ 分页条（`page · pageCount · total` → `@change`，页码显示前 3 + 当前 + 后 3 并带省略号，另有输入页码跳转，复用 `chip`/`chip-active`）/ 原始 JSON + 复制 / 空态 |
@@ -389,7 +427,7 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 
 - **`frontend/package-lock.json` 必须入库**（`vite` 锁 `~8.2.2`）。忽略它会让 clone 重新解析到 vite **8.3.0**，触发 UnoCSS HMR 回归（上游 [unocss#5331](https://github.com/unocss/unocss/issues/5331)）：**动态导入的路由页（设置/TODO）样式不生效，首页正常**。症状判定：`node -e "console.log(require('./frontend/node_modules/vite/package.json').version)"`。
 - **`go.sum` 被 `.gitignore:18` 忽略且不在版本控制内** —— 首次构建需联网由 `go mod tidy` 重新生成。
-- **全程零新增依赖**：`frontend/package.json`、根 `package.json`、`go.mod` 自设计系统重构以来未变。
+- **不新增依赖模块**：`frontend/package.json`、根 `package.json` 自设计系统重构以来未变。`go.mod` 的模块集合也没变，但 `golang.org/x/sys` 因 Steam 扫描要用 `windows/registry`，从 indirect 提升为 **direct require**（仍是 v0.47.0，本地早已存在，无新下载；`go mod tidy -diff` 为空）。
 - **桌面端离线优先**：不引联网字体（Plus Jakarta Sans 只在 font-family 里作为可选首选项，实际回退到系统栈），图标走 `presetIcons` 构建期内联。
 
 ### 7.2 UnoCSS 七类静默失效（本项目的核心坑，改样式前必读）
@@ -484,8 +522,8 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 | `frontend/src/components/settings/LanguageSelect.vue` | 仅占位，i18n 未实现 |
 | `frontend/src/components/todo/TodoItem.vue` | 描述**只读展示，尚不能编辑**（后端 `Update` 已支持 `description`） |
 | `frontend/src/views/test.vue` | 薄壳（只渲染 `MetaApiTestCard`），DLsite **调试页**（路由 `/testing`，见 §3.3） |
-| `frontend/src/views/WorksPage.vue` | 作品库：**只剩作品信息**（详情卡），缓存优先。**侧栏无入口**，只从游戏库点封面进入（用户要求）。搜索已搬到游戏库顶部弹窗。**尚未做**收藏、列表分页、批量入库、历史记录；从游戏库进来后没有显式「返回游戏库」按钮（靠侧栏点游戏库） |
-| `frontend/src/views/LibraryPage.vue` | 游戏库（路由 `/library`）：已入库列表 + 删除 + 跳详情 + 搜索弹窗（候选每页 10 个）。**尚未做**游戏库列表排序/分页、批量删除、本地文件关联（打开作品所在文件夹）、封面缺失时自动补下 |
+| `frontend/src/views/WorksPage.vue` | 作品库：**只剩作品信息**（详情卡）+ **「我的标签」**（`MetaUserTags`：增删自定义标签，存 `work_tags`），缓存优先。**侧栏无入口**，只从游戏库点封面进入（用户要求）。搜索入口在游戏库网格末尾的加号圆钮（「添加游戏」窗里的「手动搜索」）。**尚未做**收藏、列表分页、批量入库、历史记录；从游戏库进来后没有显式「返回游戏库」按钮（靠侧栏点游戏库） |
+| `frontend/src/views/LibraryPage.vue` | 游戏库（路由 `/library`）：已入库列表 + 删除 + 跳详情 + 网格末尾透明圆形加号按钮（打开「添加游戏」窗：扫描添加 / 手动搜索，候选每页 10 个）。**尚未做**游戏库列表排序/分页、批量删除、本地文件关联（打开作品所在文件夹）、封面缺失时自动补下 |
 | `internal/service/library_service.go` | 游戏库只跑了离线单元测试（`internal/database/library_repo_test.go`），**Wails 端的真实接线未实机验证** |
 | `internal/service/getMeta/*_test.go` + `testdata/` | 本工作区当前是**已从磁盘删除（未提交）**状态（属用户「裁剪」清理），恢复：`git checkout -- internal/service/getMeta` |
 | `internal/service/todo_service.go:315` | 一行 `// bug need-fix` 注释（`GetStats`），逻辑本身正确，属陈旧标记 |
@@ -504,6 +542,7 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
   6. **搜索候选缩略图**：首次搜索会把图缓存到工作目录的 `cache/`（目录自动创建），列表里的小图应能显示；删掉 `cache/` 再搜一次仍能显示（重新下载）；结果多于 10 个时出现分页条，翻到哪页才下哪页的图（看 `cache/` 文件数增加）；
   7. **退出清缓存**：正常退出应用后 `cache/` 应为空（目录还在），`preImg/` 里的入库封面不能被删；
   8. **只有点「入库」才进游戏库**：搜到的作品不应出现在 `/library`；点「入库」后 `preImg/` 生成图、库里多出一张带封面的卡片，`/works` 的按钮变「已入库」并禁用。
+  9. **设置页「清理缓存」**：进入设置页应显示 `cache/` 当前占用（先搜几次让 `cache/` 里有图）；点「清理缓存」后占用归零、`cache/` 里文件消失、`preImg/` 里的入库封面不受影响；没有缓存时按钮应禁用并显示「当前无缓存」。
 
 ### 9.3 `doc/*.md` 的已确认错误（本文件 §5/§6/§7 优先于它们）
 
@@ -560,7 +599,15 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 | 搜索结果**每页 10 条**，只给当前页下预览图；**退出时清空 `cache/`** | 用户要求「搜索卡片分页 每10个搜索结果为一页 只有当前页面需要加载预览图 以节约网络资源 每次退出软件前 清除cache中文件」。分页状态放 store（`candidatePage` / `pagedCandidates` / `setCandidatePage`），`setCandidatePage` 只对当前页调 `loadCandidateCovers`，已缓存过的直接命中 `cache/` 不再联网；清理挂在 Go 的 `app.OnShutdown` → `getmeta.ClearCacheDir()`（只删 `cache/` 里的文件，`preImg/` 不动）。分页条本身在 `MetaPager`：前 3 页 / 当前页 / 后 3 页 + 输入页码跳转（用户后续要求「前三页和后三页可以跳转 并支持输入数字跳转到相应页面」） |
 | 搜索**不再受 30 条限制**：按 DLsite 源数据页懒加载（1~3 页取第 1 面，4~6 页取第 2 面…） | 用户要求「检查搜索结果是否有限制 如果有则取消 可能是30个搜索结果加载限制」，随后明确「DLsite搜索界面每一面只有30条 能否在本页面在3页内时加载DLsite源数据页第一面 后三的倍数页加载第二面」，并要求「首先获取搜索结果个数调整页面数量 在需要加载源数据第二面内容时才重新爬取加载」。实测 `per_page` 无效（传 60/120 仍只回 30 条），只能翻页：`SearchWorks` 加 `page` 入参，返回 `pageCount` 与**精确总数** `total`（页面 `data-search-result-count`，如 1710 → 57 页）；前端 `sourcePages` 存"DLsite 页号→30 条"，总页数直接由精确总数算，`ceil(前端页/3)` 决定需要哪一面，**用到才取**；翻到第 3/6/9…页时静默预取下一面 |
 | 「入库」按钮在**已入库后变 `已入库` + 禁用** | 用户要求「作评库界面的入库按钮 在打开界面时如果已经入库则显示已入库 并将按钮的状态改为不可按下」。判定用**库里已有封面文件**（后端注入的 `coverAbsPath` 非空，或本次会话刚下过 `saved`），而不是"在游戏库里" —— 元数据随抓取就入库、`/works` 又只从游戏库进入，按"在库里"判定会让按钮永远不可点、封面永远下不来。禁用还顺手挡掉重复下载：`writeFileUnique` 不覆盖同名文件，重名加 `-2/-3` 后缀，多点一次就多一份重复图 |
-| `loadById` **不把编号写回搜索框**，且搜索弹窗**每次打开都清空输入框** | 用户要求「在打开游戏库中游戏时 搜索界面会自动填入作品rj号 取消该逻辑」。两处一起收拾：①`loadById` 原本顺手 `keyword = id`；②`runSearch` 会把搜过的关键词（常是 RJ）留在 store 里，弹窗重开就带出来。现在 `openSearch()` 与 `finishSearch()` 都清 `meta.keyword`，搜索框只反映"这次开窗后自己输入的"。代价：不再"沿用上次关键词方便反复调整"；失败的搜索仍留在框里，便于改错 |
+| `loadById` **不把编号写回搜索框**，且搜索弹窗**每次打开都清空输入框** | 用户要求「在打开游戏库中游戏时 搜索界面会自动填入作品rj号 取消该逻辑」。两处一起收拾：①`loadById` 原本顺手 `keyword = id`；②`runSearch` 会把搜过的关键词（常是 RJ）留在 store 里，弹窗重开就带出来。现在 `openAddGame()`（原 `openSearch()`）与 `finishSearch()` 都清 `meta.keyword`，搜索框只反映"这次开窗后自己输入的"。代价：不再"沿用上次关键词方便反复调整"；失败的搜索仍留在框里，便于改错 |
+| 游戏库顶栏**去掉「搜索」按钮**，添加游戏改成网格末尾的**透明圆形加号按钮** | 用户要求「在游戏库卡片的游戏卡片最后加一个加号button以添加游戏 加号替换为原本headbar搜索按钮功能 headbar搜索按钮去除」，随后补充「添加游戏为透明圆形ui」。实现：`.lib-add` 是 3.5rem（56px）见方、`border-radius:50%`、**全程透明底**（静息与 hover 都不填色）的圆形按钮 —— 虚线 `--color-border-dark` 描边 + 居中 `i-lucide-plus`，hover / 键盘聚焦只把描边与图标换成品牌色；它放在网格最后一位的 `flex-center` 容器里（刻意不做成 4:3 方块，圆形能把"入口"和作品卡区分开）。虚线边框整条写在 scoped 样式里：UnoCSS 的 `border-*` rules 都是 `1px solid` 简写，再叠 `border-dashed` 会互相覆盖（同属性只留一条）。空库时网格仍然渲染（`v-if="works.length \|\| !loading"`），保证唯一的添加入口始终可见，空库提示改成一行文字（原 `MetaEmptyState` 在本页不再使用） |
+| **搜索栏为空时点「搜索」只提示「搜索栏不能为空」，绝不跳详情页** | 用户报 bug：「点击搜索按钮 如果搜索栏为空会弹出上次的搜索结果详细页 修改逻辑 改为点击搜索按钮时 如果搜索栏为空 提示搜索栏不能为空」。根因不是没做空值校验（`runSearch` 本来就有早退），而是**调用方拿 `meta.work` 当"搜索成功"的标志**：空关键词早退时不会清 `work`，上一次搜到的作品还留在 store 里，于是 `submitSearch` 的 `if (meta.work) finishSearch()` 照样跳 `/works`。修法两层：①`runSearch` 改成返回 `boolean`（这次是否真的发起了搜索），空值统一提示 `搜索栏不能为空` 并返回 `false`；②`LibraryPage.submitSearch` 只认返回 `true` 才看 `work`。提示复用弹窗里现成的 `MetaMessage tone="error"`，不另做 toast。**同类坑：判断"有没有结果"不能用 store 里的残留状态。** |
+| 设置页新增「清理缓存」：进页扫描 `cache/` 占用显示在按钮旁，一键清空（`preImg/` 不动） | 用户要求「设置界面添加清理缓存功能(将缓存cache内所有文件删去 并在进入设置界面时运行dir命令 扫描cache文件夹大小 并显示在清理缓存功能旁边)」。分两层：①后端 `MetaApiService` 加 `CacheInfo`（`filepath.WalkDir` 统计 `{dir,files,bytes}`，目录不存在算 0，不联网、不建目录）与 `ClearCache`（复用 `ClearCacheDir` 的删除逻辑，回 `{files,bytes,rest}`）；②前端新组件 `components/settings/CacheCleanup.vue`，`onMounted` 调 `CacheInfo` —— 设置页是**动态导入的路由页、没有 keep-alive**，每次进入都会重新挂载，所以 `onMounted` 就等价于"进入设置界面时扫描"，不必额外写路由钩子。按钮旁显示 `占用 X（N 个文件）`（无缓存时显示「当前无缓存」并禁用），清理后**重新统计一次**、以真实占用为准（`rest > 0` 说明有文件删不掉，能立刻看见）。按钮颜色沿用项目的破坏性语义（透明底 + danger 描边/图标 → hover 填红 + `--color-text-on-danger`），反馈是按钮下方一行 4 秒自动消失的小字；**缓存是可再生的临时图，所以刻意不做连点两下确认**（与 TODO/游戏库的删除区别开），也不建模态框。 |
+| **游戏库「添加游戏」改为双模式：扫描添加（新）+ 手动搜索（原流程）** | 用户要求「将这些函数整合到前端调用 功能是添加游戏的新方法 原先搜索改为手动搜索 将获取到的游戏名称导入到搜索函数获取相关游戏信息 并让用户决定是否入库」。实现：`main.go` 注册 `ScanService`（第 6 个服务）+ 新增 `DialogService.PickDirectory`（第 7 个服务，原生选文件夹）；后端扫描逻辑不变（只读、不联网、不写库）。前端新增 `services/scanService.ts`（`scanApi`）、`stores/scanStore.ts`（来源/方式/路径/结果）、`components/library/ScanPanel.vue`；`LibraryPage` 弹窗标题改「添加游戏」，顶部 `chip` 双模式切换，默认「扫描添加」：来源 Steam（一键扫）或本地文件夹（路径输入 + 「选择…」原生框 + 「按 exe 识别 / 按文件夹名」），扫出名字后**自动逐个搜索**（3 路并发，可「停止」/单行「重试」），结果按扫描顺序一行一个（封面 + 匹配作品名 + RJ + 扫描名），行可勾选，工具条提供「全部入库」/「入库所选」（**串行**写库；已入库的行显示「已入库」且不再参与），点「详情」进 `/works` 核对；「手动搜索」保留原搜索行。扫描结果留在独立 store（关窗不丢）。**弹窗内容整体可滚动**（`max-h-[80vh]` + body `overflow-y-auto`），避免结果列表与候选同屏时撑破弹窗。 |
+| 扫描结果改为**全部直接搜索 + 一键全部入库 / 选择部分入库** | 用户要求「扫描添加的点文件去搜索改为全部直接搜索 并将搜索结果排列展示用户 用户决定是否添加」「分为一键全部入库 和选择部分入库」。实现：`scanStore` 扫完自动 `searchAll()`（3 路并发、`searchToken` 代次作废旧请求、可停止、单行重试）；每行 `ScanMatch{state, workId, workName, cover, selected, stored, storeError}`，匹配到作品时用 `library.has()` 预标「已入库」；工具栏「全选 / 全部入库(N) / 入库所选(N)」，批量走 `storeMany()` **串行**调 `libraryApi.storeIn`（别让几十个"抓文本+下图"同时压网络与 SQLite），每行独立报错；成功后 `library.load(true)` 让关窗后网格立刻出现。入库返回的完整元数据回填到行，库里已有的行直接读库里的列。**详情补全**：搜索完成后再对匹配行逐条 `libraryApi.fetch('', id)`（缓存优先、只读）抓详情，`match.info = 社团 · 作品形式 · 发售日 · 容量` 显示在行里（失败显示「详情获取失败」原因，不影响入库）。封面直接用 DLsite 远程 URL（`MetaCover` 自带失败占位），不批量下 `cache/`。 |
+| 入库前校验元数据**完整性**（扫描入库也要拿到作品信息） | 用户要求「扫描入库的游戏也应获取作品相关信息」。`LibraryService.Store` 本来就按编号抓详情写库；这次加一道底线校验 `workIsComplete`（`id` 与 `name` 都非空）：抓回来是空壳就报错、**不写库**；库里已有 `raw_json` 若是残缺的（旧数据/解析退化）也不复用，改为联网重抓。扫描行在入库成功后用返回的 `maker/workType/releaseDate` 回填一行摘要，让"信息已抓到并保存"肉眼可见。测试：`internal/service/library_service_test.go`（`TestWorkIsComplete` 7 例、`TestRowFromWorkCarriesWorkInfo`）。 |
+| **标签：多值切分 + 更多来源 + 数量可配 + 用户自定义标签** | 用户要求「标签分割有问题 连在一起了 尝试使用空字符和/分割标签 并进行检查 并且标签含有json中的 声优 分类 插画 剧情 作者 社团名 且标签的数量可以由用户自定义 在设置界面中 且用户可在作品详细页中自行添加标签」。三块：①解析：`extractTags` 的标签来源扩充到 分类/作品形式/社团名/作者/剧情/插画/声优，多值字段**按元素取**（中文页元素间无空白，整段 `dd.Text()` 会粘成「异种X造孽…」「みたかりん野上菜月」），最后用 `splitTagText` 按空白与 `/` 切分、去重，`defaultTagLimit` 放宽到 64；②显示：设置页「标签显示数量」`TagLimitInput`（4–64，默认 24）写进 `stores/App.ts` 的 `tagLimit`，`MetaTags` 按 `limit` 截断并折 `+N`；③自定义：新表 `work_tags`（惰性建表、`UNIQUE(source,work_id,tag)`）+ `LibraryService.ListTags/AddTag/RemoveTag` + 前端 `MetaUserTags`（详情页输入/移除，存后端，与抓取标签分开、重抓不丢）。测试：`TestSplitTagText`、`TestParseWorkTagsIncludeDetailFields`、`TestWorkTagsLazyTableAndCRUD`、`TestNormalizeUserTag`。 |
+| **DLsite 换模板后"只有封面和名字"的根因修复** | 用户报「依然没有抓取到详细信息 只有封面和作品名 应该抓取详细页的信息 检查是否抓取错误」。排查：DB 里扫描入库的行 `raw_json` 只有 6 个键（约 280B），maker/workType/releaseDate 全空；实测页面发现 2026-11 DLsite 换新版（Vue + JSON-LD），旧的 `#work_outline` / `#work_maker` / `<meta itemprop>` 全部失效；并且代码发的是 `locale=zh-cn`，页面标签变成中文（社团名/发售日/文件容量），只认日文标签同样取空。修法：`parseWork` 双模板兼容（旧 `#work_outline` + 新 `div.c-productInfo` 的 dt/dd），价格/评分/社团/拼音/简介改读 JSON-LD Product，标签用 `outlineValueAny` 多语言候选，genre 用 `href*="/genre/"` 识别、`SeriesID` 取 `title_id/SRI…`、`MakerID` 取 `maker_id/RG…`/`brand.url`。配套：`workIsComplete` 收紧为「id+name+至少一个详情字段」，`Fetch` 与 `Store` 遇到旧空壳都当缓存未命中重抓（`/works` 立刻能显示详情，重新入库会把库里的空壳覆盖）。测试：`getMeta/new_template_test.go` + 两个 fixture（日文标签精简页、中文真实页）。 |
 
 ---
 
