@@ -5,6 +5,7 @@ import (
 
 	"WeedyBox/internal/database"
 	"WeedyBox/internal/service"
+	"WeedyBox/internal/service/game"
 	"WeedyBox/internal/service/getMeta"
 	"WeedyBox/internal/service/scan"
 	"log"
@@ -69,8 +70,13 @@ func main() {
 	// 只读磁盘、不联网；扫到的名字交给前端去 SearchWorks 找作品。
 	scanService := &scan.ScanService{}
 
-	// 系统对话框服务：目前只有「选一个游戏文件夹」这一个用途。
+	// 系统对话框服务：目前有「选一个游戏文件夹」与「选一个游戏程序（.exe）」两个用途。
 	dialogService := &service.DialogService{}
+
+	// 游戏启动服务：游戏库里的作品 → 本机上的游戏程序。
+	// 位置就是 library_works 上的 game_path 列（与元数据同表、互不覆盖）；
+	// 扫描添加入库时会顺手记录 exe 路径，手动入库的作品第一次启动时让用户选一次。
+	gameService := &game.GameService{DB: dbService}
 
 	applicationServices := []application.Service{
 		application.NewService(windowService),
@@ -80,6 +86,7 @@ func main() {
 		application.NewService(libraryService),
 		application.NewService(scanService),
 		application.NewService(dialogService),
+		application.NewService(gameService),
 	}
 
 	app := application.New(application.Options{

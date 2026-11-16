@@ -19,6 +19,12 @@ export type { GameScanResult }
 export interface ScannedGame {
   name: string
   detail: string
+  /**
+   * 扫到的游戏程序绝对路径（只有「按 exe 识别」才有；Steam 库 / 按文件夹名
+   * 只有名字，没有 exe 路径）。入库时随 Store 一起写进 library_works.game_path，
+   * 之后游戏库里的「游戏启动」就能直接用它启动。
+   */
+  path?: string
 }
 
 export const scanApi = {

@@ -33,6 +33,8 @@ export interface LibraryMeta extends WorkMeta {
   coverAbsPath?: string
   coverBytes?: number
   coverSuffix?: string
+  /** 库里记录的游戏程序绝对路径（空 = 还没设置；与元数据同表，重新抓取不会丢） */
+  gamePath?: string
 }
 
 /** 辅助函数：确保返回值不为 null（绑定层会返回 `T | null`） */
@@ -63,9 +65,13 @@ export const libraryApi = {
    * 入库：**只有这一步会把作品收进游戏库** ——
    * 后端抓文本元数据、把封面原样落到 `preImg/`、写进 `library_works`。
    * 搜索与打开详情（fetch）都只读不写，所以游戏库里只会出现"点过入库"的作品。
+   *
+   * gamePath 可选：「扫描添加」把扫到的 exe 绝对路径带进来，入库同时写进
+   * `library_works.game_path`；这样新入库的游戏点「游戏启动」就能直接跑。手动搜索入库
+   * 不传（留空 = 不覆盖库里可能已有的位置），第一次启动时再让用户选一次程序。
    */
-  async storeIn(workId: string, source = LIBRARY_SOURCE_DLSITE): Promise<LibraryMeta> {
-    const result = await LibraryService.Store({ workId, source })
+  async storeIn(workId: string, gamePath = '', source = LIBRARY_SOURCE_DLSITE): Promise<LibraryMeta> {
+    const result = await LibraryService.Store({ workId, source, gamePath })
     return ensure<LibraryMeta>(result as LibraryMeta | null, '入库失败：后端未返回作品数据')
   },
 

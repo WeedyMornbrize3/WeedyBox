@@ -48,3 +48,37 @@ func (s *DialogService) PickDirectory(title string) (string, error) {
 	}
 	return strings.TrimSpace(path), nil
 }
+
+// PickExecutable 打开系统「选择文件」对话框，让用户挑一个游戏程序（.exe）。
+//
+// 用途：游戏库里的作品第一次点「游戏启动」时还没有记录位置（老数据 / 手动搜索
+// 入库的作品），或记录的位置已经失效 —— 让用户指一次 exe，写进 library_works
+// 的 game_path 列，之后再启动就是一次点击的事。
+//
+// 过滤只给 .exe 且 AllowsOtherFileTypes(false)：库里存的是要直接 exec 的进程，
+// 选中一个文件夹或 txt 都没有意义（后端 SetPath 也会再校验一次）。
+// 用户取消 → 空串 + nil（与 PickDirectory 一致）。
+func (s *DialogService) PickExecutable(title string) (string, error) {
+	app := application.Get()
+	if app == nil {
+		return "", errors.New("应用实例未就绪，无法打开文件选择框")
+	}
+
+	dialog := app.Dialog.OpenFile().
+		CanChooseFiles(true).
+		CanChooseDirectories(false).
+		AllowsOtherFileTypes(false).
+		AddFilter("可执行程序", "*.exe")
+	if trimmed := strings.TrimSpace(title); trimmed != "" {
+		dialog.SetTitle(trimmed)
+	}
+	if window := app.Window.Current(); window != nil {
+		dialog.AttachToWindow(window)
+	}
+
+	path, err := dialog.PromptForSingleSelection()
+	if err != nil {
+		return "", fmt.Errorf("打开游戏程序选择框失败: %w", err)
+	}
+	return strings.TrimSpace(path), nil
+}

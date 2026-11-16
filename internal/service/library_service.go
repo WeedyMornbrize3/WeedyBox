@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -42,7 +43,7 @@ type LibraryService struct {
 type FetchWorkRequest struct {
 	Keyword string `json:"keyword"`
 	WorkID  string `json:"workId"`
-	Source  string `json:"source"`  // 元数据来源，空 = dlsite
+	Source  string `json:"source"` // 元数据来源，空 = dlsite
 	Refresh bool   `json:"refresh"`
 }
 
@@ -110,10 +111,15 @@ func (s *LibraryService) Fetch(ctx context.Context, req FetchWorkRequest) (map[s
 	return decorate(work, nil, false), nil
 }
 
-// StoreRequest 是「入库」的入参：只需要来源 + 编号。
+// StoreRequest 是「入库」的入参：来源 + 编号，外加**可选的游戏启动位置**。
+//
+// GamePath 由「扫描添加」带进来（扫描时已经拿到了 exe 的绝对路径），
+// 这样刚入库的游戏在游戏库里点「游戏启动」就能直接跑，不用再选一次程序。
+// 手动搜索入库没有这个路径：留空即可，前端第一次点启动时会弹系统文件框让用户选。
 type StoreRequest struct {
-	WorkID string `json:"workId"`
-	Source string `json:"source"` // 空 = dlsite
+	WorkID   string `json:"workId"`
+	Source   string `json:"source"`   // 空 = dlsite
+	GamePath string `json:"gamePath"` // 空 = 不记录/不覆盖已有位置
 }
 
 // Store 把作品**真正收进游戏库**（只有用户点「入库」时才走这里）：
@@ -148,6 +154,10 @@ func (s *LibraryService) Store(ctx context.Context, req StoreRequest) (map[strin
 	//   raw_json 残缺（没有编号/名称）时走联网重抓，避免把空壳一直复用下去。
 	if row, err := s.DB.FindLibraryWork(ctx, source, workID); err == nil && row != nil {
 		if work, ok := workFromRawJSON(row); ok && workIsComplete(work) {
+			// 重新入库时带上扫描到的 exe 路径：顺手把启动位置更新掉
+			if perr := s.saveGamePath(ctx, source, workID, req.GamePath); perr != nil {
+				return nil, perr
+			}
 			if strings.TrimSpace(row.CoverAbsPath) == "" {
 				if coverURL := strOf(work["coverUrl"]); coverURL != "" {
 					if _, derr := s.ensureMeta().DownloadCover(ctx, workID, coverURL); derr != nil {
@@ -181,6 +191,11 @@ func (s *LibraryService) Store(ctx context.Context, req StoreRequest) (map[strin
 	// 入库失败必须报给用户：这一步就是在"载入数据库"，不能像浏览那样只打日志
 	if err := s.DB.UpsertLibraryWork(ctx, &row); err != nil {
 		return nil, fmt.Errorf("写入游戏库失败: %w", err)
+	}
+
+	// 扫描添加时顺手记录游戏启动位置（放在封面下载之前：封面失败不该连位置一起丢）
+	if err := s.saveGamePath(ctx, source, workID, req.GamePath); err != nil {
+		return nil, err
 	}
 
 	// ③ 封面：原样落到 preImg/ 并记账（文本已入库，这里失败时前端会提示重试）
@@ -324,6 +339,26 @@ func (s *LibraryService) CoverDataURL(ctx context.Context, workID, source string
 
 // ===== 内部实现 =====
 
+// saveGamePath 记录「这个作品在本机上的游戏程序位置」（扫描添加带进来的 exe 路径）。
+//
+// 空路径 = 这一次没有带位置（手动搜索入库），**不覆盖**库里可能已经设置好的位置 ——
+// 用户之前手动选过的 exe 不该因为再入一次库就丢掉。
+// 路径统一成绝对路径再落库：启动进程的工作目录是可执行文件所在目录，
+// 库里存相对路径换一个上下文就失效。
+func (s *LibraryService) saveGamePath(ctx context.Context, source, workID, raw string) error {
+	path := strings.TrimSpace(raw)
+	if path == "" {
+		return nil
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = filepath.Clean(abs)
+	}
+	if err := s.DB.SetGamePath(ctx, source, workID, path); err != nil {
+		return fmt.Errorf("元数据已入库，但记录游戏位置失败: %w", err)
+	}
+	return nil
+}
+
 // decorate 把缓存信息挂到作品 map 上。
 // 前端的 WorkMeta 有 `[key: string]: unknown` 索引签名，多出来的键不会报错，
 // 缺字段也不会 —— 所以走"加法"而不是另造一个返回结构体：两个服务的返回形状保持一致。
@@ -340,6 +375,9 @@ func decorate(work map[string]any, row *model.LibraryWork, cached bool) map[stri
 	work["coverAbsPath"] = row.CoverAbsPath
 	work["coverBytes"] = row.CoverBytes
 	work["coverSuffix"] = row.CoverSuffix
+	// 游戏启动位置与元数据同表（library_works.game_path），一起带给前端：
+	// 详情页据此决定「入库」按钮是否已经变成「游戏启动」并显示在哪个程序上。
+	work["gamePath"] = row.GamePath
 	return work
 }
 

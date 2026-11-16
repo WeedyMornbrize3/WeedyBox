@@ -4,21 +4,21 @@
 //
 // 两条设计约束，都来自"以后不只抓 DLsite"：
 //
-//	1. 表是**来源无关**的：作品信息（id/名字/社团/…）放公共列，具体来源只体现在
-//	   `source` 列的值上（当前只有 'dlsite'）。所以加新来源不需要加表，也不需要
-//	   在库里存 "dlsite 特有字段" 的专属列 —— 原始数据整份进 raw_json。
-//	2. 表是**惰性创建**的：这里每次操作前都 ensureLibraryTables()，而启动时的
-//	   initAllTables 不建这两张表。没人往库里存东西时，数据库里就不存在这两张表
-//	   （省掉空表占的 page）。代价是每次读写多一条 CREATE TABLE IF NOT EXISTS，
-//	   幂等且极快，也顺手兼容"库文件是旧版本建的、还没有这些表"的情况。
+//  1. 表是**来源无关**的：作品信息（id/名字/社团/…）放公共列，具体来源只体现在
+//     `source` 列的值上（当前只有 'dlsite'）。所以加新来源不需要加表，也不需要
+//     在库里存 "dlsite 特有字段" 的专属列 —— 原始数据整份进 raw_json。
+//  2. 表是**惰性创建**的：这里每次操作前都 ensureLibraryTables()，而启动时的
+//     initAllTables 不建这两张表。没人往库里存东西时，数据库里就不存在这两张表
+//     （省掉空表占的 page）。代价是每次读写多一条 CREATE TABLE IF NOT EXISTS，
+//     幂等且极快，也顺手兼容"库文件是旧版本建的、还没有这些表"的情况。
 //
 // 这里只做「表 ↔ 结构体」的搬运，不含解析或格式化逻辑：
 // 抓取在 internal/service/getMeta，编排在 internal/service/library_service.go。
 package database
 
 import (
-	"context"
 	"WeedyBox/internal/model"
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -31,7 +31,8 @@ const SourceDLsite = "dlsite"
 // workColumns 列顺序固定在这里，读写共用，免得多处手写漏列。
 const workColumns = `source, work_id, name, maker, maker_id, series, series_id,
 	work_type, age_rating, release_date, cover_url, source_url, raw_json, fetched_at,
-	cover_dir, cover_path, cover_abs_path, cover_bytes, cover_suffix, created_at, updated_at`
+	cover_dir, cover_path, cover_abs_path, cover_bytes, cover_suffix, game_path,
+	created_at, updated_at`
 
 // normalizeSource 统一来源标识：空值一律当 dlsite（历史数据/老调用都只可能是它）。
 func normalizeSource(source string) string {
@@ -79,6 +80,7 @@ func (s *SQLiteService) ensureLibraryTables(ctx context.Context) error {
 			cover_abs_path TEXT DEFAULT '',
 			cover_bytes INTEGER DEFAULT 0,
 			cover_suffix TEXT DEFAULT '',
+			game_path TEXT DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(source, work_id)
@@ -108,6 +110,37 @@ func (s *SQLiteService) ensureLibraryTables(ctx context.Context) error {
 		if err := s.Execute(ctx, query); err != nil {
 			return fmt.Errorf("初始化游戏库表失败: %w", err)
 		}
+	}
+
+	// 旧库文件里 library_works 还没有 game_path 列（2026-11 新增「游戏启动」）。
+	// CREATE TABLE IF NOT EXISTS 不会补列，所以这里显式迁移一次。
+	return s.ensureGamePathColumn(ctx)
+}
+
+// ensureGamePathColumn 给**已经存在的** library_works 补上 game_path 列（幂等）。
+//
+// 为什么用 PRAGMA 先查再加列，而不是直接 ALTER 然后吃掉错误：
+// 直接 ALTER 在每次读写前都会失败一次，靠字符串匹配错误码判断「字段已存在」
+// 既脆弱又吵；PRAGMA table_info 是一次极快的内存查询，先把事实问清楚更稳。
+// 并发首次读写时两个 goroutine 可能都判断"缺列"、都去 ALTER，后一个会报
+// duplicate column —— 这种竞争按已存在处理即可。
+func (s *SQLiteService) ensureGamePathColumn(ctx context.Context) error {
+	rows, err := s.Query(ctx, `PRAGMA table_info(library_works)`)
+	if err != nil {
+		return fmt.Errorf("读取游戏库表结构失败: %w", err)
+	}
+	for _, row := range rows {
+		if textOf(row["name"]) == "game_path" {
+			return nil
+		}
+	}
+
+	if err := s.Execute(ctx, `ALTER TABLE library_works ADD COLUMN game_path TEXT DEFAULT ''`); err != nil {
+		// 竞争窗口：另一个调用已经加上了这一列
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return nil
+		}
+		return fmt.Errorf("为游戏库表添加 game_path 列失败: %w", err)
 	}
 	return nil
 }
@@ -216,8 +249,8 @@ func (s *SQLiteService) UpsertLibraryWork(ctx context.Context, w *model.LibraryW
 	return nil
 }
 
-// DeleteLibraryWork 把一条作品连同它的封面下载记录一起删掉。
-// 磁盘上的图片**不删** —— 那是用户自己的文件，库里删条记录不该顺手删文件。
+// DeleteLibraryWork 把一条作品连同它的封面下载记录、游戏启动位置一起删掉。
+// 磁盘上的图片与游戏程序**不删** —— 那是用户自己的文件，库里删条记录不该顺手删文件。
 func (s *SQLiteService) DeleteLibraryWork(ctx context.Context, source, workID string) error {
 	if s == nil || s.DB == nil {
 		return nil
@@ -276,6 +309,79 @@ func (s *SQLiteService) RecordCoverFile(ctx context.Context, f *model.CoverFile)
 	return nil
 }
 
+// ===== 游戏启动位置 =====
+//
+// 位置就是 library_works 上的一列 game_path（不单开表）：一个库记录对应一个本机
+// 游戏程序，生命周期和这条记录绑在一起 —— 删库记录时自动消失，重新抓元数据时
+// 不会被 Upsert 覆盖（ON CONFLICT 的 SET 里刻意不含 game_path）。
+//
+// 旧库文件（2026-11 之前建的）没有这一列，由 ensureGamePathColumn 惰性补上。
+
+// GetGamePath 读一个作品的游戏启动位置；没有记录/还没设置时返回空串 + nil。
+//
+// 「没有设置」是正常状态（老库作品、只入了元数据还没指定程序），不是错误 ——
+// 前端据此决定第一次点「游戏启动」时要不要弹系统文件框让用户选 exe。
+func (s *SQLiteService) GetGamePath(ctx context.Context, source, workID string) (string, error) {
+	if s == nil || s.DB == nil {
+		return "", nil
+	}
+	workID = normalizeWorkID(workID)
+	if workID == "" {
+		return "", nil
+	}
+	if err := s.ensureLibraryTables(ctx); err != nil {
+		return "", err
+	}
+
+	rows, err := s.Query(ctx,
+		`SELECT game_path FROM library_works WHERE source = ? AND work_id = ?`,
+		normalizeSource(source), workID)
+	if err != nil {
+		return "", fmt.Errorf("查询游戏位置失败: %w", err)
+	}
+	if len(rows) == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(textOf(rows[0]["game_path"])), nil
+}
+
+// SetGamePath 写入/更新一个作品的游戏启动位置（幂等：重复设置就是覆盖那一格）。
+//
+// 只更新**已在游戏库里**的作品：库里没有这条记录时报错，而不是顺手插一条
+// 只有路径的空壳（那会让游戏库网格里冒出一个没有名字/封面的作品）。
+func (s *SQLiteService) SetGamePath(ctx context.Context, source, workID, path string) error {
+	if s == nil || s.DB == nil {
+		return fmt.Errorf("数据库未就绪")
+	}
+	workID = normalizeWorkID(workID)
+	path = strings.TrimSpace(path)
+	if workID == "" {
+		return fmt.Errorf("work_id 为空，无法记录游戏位置")
+	}
+	if path == "" {
+		return fmt.Errorf("游戏位置为空")
+	}
+	source = normalizeSource(source)
+	if err := s.ensureLibraryTables(ctx); err != nil {
+		return err
+	}
+	row, err := s.FindLibraryWork(ctx, source, workID)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return fmt.Errorf("作品 %s 不在游戏库中，无法记录启动位置（请先入库）", workID)
+	}
+
+	if err := s.Execute(ctx,
+		`UPDATE library_works SET game_path = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE source = ? AND work_id = ?`,
+		path, source, workID); err != nil {
+		return fmt.Errorf("记录游戏位置失败: %w", err)
+	}
+	return nil
+}
+
 // ===== 行 → 结构体 =====
 
 // rowToLibraryWork 把一行 map 摊成 LibraryWork。
@@ -302,6 +408,7 @@ func rowToLibraryWork(row map[string]interface{}) model.LibraryWork {
 		CoverAbsPath: textOf(row["cover_abs_path"]),
 		CoverBytes:   intOf(row["cover_bytes"]),
 		CoverSuffix:  textOf(row["cover_suffix"]),
+		GamePath:     textOf(row["game_path"]),
 		CreatedAt:    timeOf(row["created_at"]),
 		UpdatedAt:    timeOf(row["updated_at"]),
 	}

@@ -47,12 +47,22 @@
           :downloading="meta.downloading"
           :saved="meta.saved"
           :stored="meta.stored"
+          :game-path="meta.gamePath"
+          :game-path-exists="meta.gamePathExists"
+          :running="meta.gameRunning"
+          :launching="meta.launching"
           @download="handleStoreIn"
+          @launch="meta.launchGame"
+          @change-path="meta.changeGamePath"
         />
         <!-- 我的标签：用户自己加，存后端 work_tags 表（与 DLsite 抓来的 tags 分开） -->
         <MetaUserTags />
-        <!-- 入库失败要看得见：这页没有别的提示条，静默失败会让人以为点了没反应 -->
+        <!-- exe 被删除/移走：提示用户用「更换位置」重新选程序（启动按钮同时禁用） -->
+        <MetaMessage v-if="meta.gameWarning" tone="error" :text="meta.gameWarning" />
+        <!-- 入库失败 / 启动失败要看得见：这页没有别的提示条，静默失败会让人以为点了没反应 -->
         <MetaMessage v-if="meta.error" tone="error" :text="meta.error" />
+        <!-- 启动成功 / 换了游戏位置的回执 -->
+        <MetaMessage v-if="meta.status" :text="meta.status" />
         <MetaWorkDetails :work="meta.work" />
       </MetaSection>
 
@@ -67,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted } from 'vue'
 import { useMetaStore } from '../stores/metaStore'
 import { useLibraryStore } from '../stores/libraryStore'
 import MetaEmptyState from '../components/meta/MetaEmptyState.vue'
@@ -80,6 +90,18 @@ import MetaWorkOverview from '../components/meta/MetaWorkOverview.vue'
 // 状态与请求全在 store 里；本页面只做排布。
 const meta = useMetaStore()
 const library = useLibraryStore()
+
+/**
+ * 游戏运行状态轮询：进入详情先检测一次（store 的 applyWork 里已做），
+ * 页面打开期间每 5 秒问一次，游戏启动/退出后按钮能在几秒内从
+ * 「游戏启动」切成「运行中」再切回来；窗口重新获得焦点时立刻刷新一次。
+ */
+const GAME_STATUS_POLL_MS = 5000
+let statusTimer: number | null = null
+
+function pollGameStatus() {
+  void meta.refreshGameStatus()
+}
 
 /**
  * 「入库」按钮 —— 这是**唯一**会把作品收进游戏库的动作：
@@ -96,5 +118,15 @@ async function handleStoreIn() {
 onMounted(() => {
   // 列表本身不在这页渲染；这里只是让游戏库 store 有数据（入库成功后要立刻能看到新卡片）
   void library.load()
+  // 从别的页面进来时 store 里可能已经有作品（applyWork 已检测过），这里再对齐一次
+  void meta.refreshGameStatus()
+  statusTimer = window.setInterval(pollGameStatus, GAME_STATUS_POLL_MS)
+  window.addEventListener('focus', pollGameStatus)
+})
+
+onUnmounted(() => {
+  if (statusTimer !== null) window.clearInterval(statusTimer)
+  statusTimer = null
+  window.removeEventListener('focus', pollGameStatus)
 })
 </script>

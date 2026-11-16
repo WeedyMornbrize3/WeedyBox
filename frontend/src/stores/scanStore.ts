@@ -312,7 +312,8 @@ export const useScanStore = defineStore('scan', () => {
         match.storing = true
         match.storeError = ''
         try {
-          const saved = await libraryApi.storeIn(match.workId)
+          // 把扫描时拿到的 exe 路径一起入库：游戏库里点「游戏启动」就不用再选程序
+          const saved = await libraryApi.storeIn(match.workId, match.entry.path ?? '')
           match.stored = true
           match.selected = false
           // 用后端返回的完整元数据回填：名称/封面以服务端为准，信息行显示刚抓到的作品信息
@@ -410,7 +411,9 @@ export const useScanStore = defineStore('scan', () => {
           const list: ScannedGame[] = []
           for (const folder of result.folders ?? []) {
             for (const exe of folder.executables ?? []) {
-              list.push({ name: exe.name, detail: `${folder.folderName} · ${exe.fileName}` })
+              // path 是 exe 的绝对路径：入库时一起写进 library_works.game_path，
+              // 之后点「游戏启动」就直接跑这个程序（不再让用户选一次）
+              list.push({ name: exe.name, detail: `${folder.folderName} · ${exe.fileName}`, path: exe.path })
             }
           }
           entries.value = list

@@ -13,6 +13,7 @@ import { metaApi } from '../services/metaService'
 import type { DownloadResult, SearchCandidate, WorkMeta } from '../services/metaService'
 import { libraryApi } from '../services/libraryService'
 import type { LibraryMeta } from '../services/libraryService'
+import { gameApi } from '../services/gameService'
 import { looksLikeWorkId, toMessage } from '../utils/metaFormat'
 
 /** 快捷示例：省得每次手打编号（编号精确抓取 + 作品名模糊搜索各来一个） */
@@ -47,6 +48,22 @@ export const useMetaStore = defineStore('meta', () => {
   const libraryUpdatedAt = ref('')
   /** 库里已有这个作品的封面时，后端注入的封面绝对路径（空 = 还没入过库/没下过封面） */
   const coverAbsPath = ref('')
+  /**
+   * 库里记录的游戏程序绝对路径（空 = 还没设置）。
+   * 位置就是 library_works 上的 game_path 列，随 Fetch/Store 的返回一起带回来；
+   * 入库后「游戏启动」按钮按它启动，为空时第一次点击会弹系统文件框让用户选 exe。
+   */
+  const gamePath = ref('')
+  /** 记录的 exe 文件此刻是否还在（进入详情时由后端检测；false = 已删除/变更位置） */
+  const gamePathExists = ref(true)
+  /** 游戏此刻是否正在运行（进入详情时检测 + 页面定时轮询） */
+  const gameRunning = ref(false)
+  /** 正在查询游戏状态（防轮询重叠） */
+  const gameStatusLoading = ref(false)
+  /** exe 不存在时的提示文案（用户要求：提示游戏已删除或变更位置） */
+  const gameWarning = ref('')
+  /** 正在启动游戏（按钮 loading + 防连点） */
+  const launching = ref(false)
   /** 用户自己给当前作品加的标签（存后端 work_tags 表；与 DLsite 抓来的 tags 分开） */
   const customTags = ref<string[]>([])
   const customTagError = ref('')
@@ -67,11 +84,18 @@ export const useMetaStore = defineStore('meta', () => {
   )
   const hasResult = computed(() => work.value !== null || candidates.value.length > 0)
   /**
-   * 「入库」是否已完成：库里已经有这个作品的封面文件（打开页面时后端经 coverAbsPath 告知），
-   * 或本次会话刚点过入库（saved）。按钮据此显示「已入库」并禁用 ——
-   * 下载实现刻意不覆盖同名文件（重名加 -2/-3 后缀），再点一下只会多出一份重复的图。
+   * 是否已入库：库里已经有这个作品的封面文件（打开页面时后端经 coverAbsPath 告知），
+   * 或本次会话刚点过入库（saved）。按钮据此从「入库」切换成「游戏启动」（不再有禁用态）。
+   * 判定刻意不用"在游戏库里"：元数据随抓取就可能已有缓存行，按此判定按钮永远不可点。
    */
   const stored = computed(() => Boolean(saved.value) || Boolean(coverAbsPath.value))
+  /**
+   * 启动按钮是否该禁用：已经记了位置、但 exe 文件不存在了（被删除或移走）。
+   * 这时不能直接启动，只提示用户用「更换位置」重新选程序（选择的 UI 沿用原来的系统文件框）。
+   */
+  const launchBlocked = computed(
+    () => stored.value && Boolean(gamePath.value) && !gamePathExists.value,
+  )
 
   /** 前端搜索每页条数 */
   const CANDIDATE_PAGE_SIZE = 10
@@ -111,6 +135,12 @@ export const useMetaStore = defineStore('meta', () => {
     cached.value = false
     libraryUpdatedAt.value = ''
     coverAbsPath.value = ''
+    gamePath.value = ''
+    gamePathExists.value = true
+    gameRunning.value = false
+    gameStatusLoading.value = false
+    gameWarning.value = ''
+    launching.value = false
     customTags.value = []
     customTagError.value = ''
     if (!opts.keepCandidates) {
@@ -178,6 +208,14 @@ export const useMetaStore = defineStore('meta', () => {
     cached.value = Boolean(meta.cached)
     libraryUpdatedAt.value = meta.libraryUpdatedAt ?? ''
     coverAbsPath.value = meta.coverAbsPath ?? ''
+    // 游戏启动位置就在库记录上（与元数据同表），随 Fetch/Store 一起带回来。
+    // 先按"文件存在/未运行"占位，避免按钮闪一下禁用态；紧接着再问后端真实状态。
+    gamePath.value = meta.gamePath ?? ''
+    gamePathExists.value = Boolean(gamePath.value)
+    gameRunning.value = false
+    gameWarning.value = ''
+    // 用户要求：进入相关界面时先检测 exe 是否存在、游戏是否在运行
+    void refreshGameStatus()
     // 自定义标签跟着作品走：换作品时重新拉一份
     void loadCustomTags(data.id)
     // 命中的作品从候选里剔除（已加载的每一页都要剔，否则翻页还会看到）
@@ -341,6 +379,95 @@ export const useMetaStore = defineStore('meta', () => {
   }
 
   /**
+   * 查询当前作品的游戏状态：exe 是否还在、是否正在运行。
+   *
+   * 进入作品详情时调一次；页面打开期间定时轮询（游戏启动/退出要能实时反映到
+   * 「游戏启动 ↔ 运行中」）。exe 不存在时给一句提示，启动按钮由 `launchBlocked` 禁用。
+   * 状态是附加信息，查询失败不打扰用户（保留上一次状态）。
+   */
+  async function refreshGameStatus(): Promise<void> {
+    const current = work.value
+    if (!current || !stored.value || !gamePath.value || gameStatusLoading.value) return
+    if (typeof document !== 'undefined' && document.hidden) return
+
+    gameStatusLoading.value = true
+    try {
+      const status = await gameApi.status(current.id)
+      if (work.value?.id !== current.id) return // 期间换作品了，丢弃旧响应
+      gamePath.value = status.path || gamePath.value
+      gamePathExists.value = status.exists
+      gameRunning.value = status.running
+      gameWarning.value =
+        status.exists || !status.path
+          ? ''
+          : '游戏程序已被删除或移动了位置，请点「更换位置」重新选择游戏程序'
+    } catch {
+      // 静默：轮询偶尔失败不该弹错误打断浏览
+    } finally {
+      gameStatusLoading.value = false
+    }
+  }
+
+  /**
+   * 「游戏启动」按钮：用库里记录的位置启动游戏。
+   *
+   * 没有位置（老数据 / 手动搜索入库）时弹系统文件框选一次 exe，存好再启动；
+   * 已经记录位置 → 直接启动。exe 不存在的禁用态由 `launchBlocked` 在按钮层挡掉。
+   */
+  async function launchGame(): Promise<void> {
+    const current = work.value
+    if (!current || !stored.value || launching.value || launchBlocked.value) return
+    launching.value = true
+    error.value = ''
+    status.value = ''
+    try {
+      let result = await gameApi.launch(current.id)
+      if (result.missing) {
+        const picked = await gameApi.pickExecutable(`选择「${current.name}」的游戏程序`)
+        if (!picked) return // 用户取消：什么都不做
+        const savedPath = await gameApi.setPath(current.id, picked)
+        gamePath.value = savedPath.path
+        gamePathExists.value = true
+        result = await gameApi.launch(current.id)
+      }
+      if (!result.started) throw new Error(result.message || '启动失败')
+      gamePath.value = result.path
+      gamePathExists.value = true
+      gameRunning.value = result.running
+      gameWarning.value = ''
+      status.value = `已启动游戏：${result.path}`
+      // 稍后复核一次（进程可能秒退）
+      void refreshGameStatus()
+    } catch (err) {
+      error.value = `启动游戏失败：${toMessage(err)}`
+      // 启动失败可能正是因为 exe 变了，刷新状态让按钮/提示回到真实情况
+      void refreshGameStatus()
+    } finally {
+      launching.value = false
+    }
+  }
+
+  /** 更换游戏程序（已经设置过位置、但选错了 exe / 换了安装目录时用；选择框沿用原来的） */
+  async function changeGamePath(): Promise<void> {
+    const current = work.value
+    if (!current || !stored.value || launching.value) return
+    error.value = ''
+    try {
+      const picked = await gameApi.pickExecutable(`选择「${current.name}」的游戏程序`)
+      if (!picked) return
+      const savedPath = await gameApi.setPath(current.id, picked)
+      gamePath.value = savedPath.path
+      gamePathExists.value = true
+      gameRunning.value = false
+      gameWarning.value = ''
+      status.value = `已记录游戏位置：${savedPath.path}`
+      void refreshGameStatus()
+    } catch (err) {
+      error.value = `设置游戏位置失败：${toMessage(err)}`
+    }
+  }
+
+  /**
    * 读当前作品的自定义标签（后端 work_tags 表）。
    * 失败就当没有：标签是辅助功能，不该让详情页整体报错。
    */
@@ -414,12 +541,18 @@ export const useMetaStore = defineStore('meta', () => {
     cached,
     libraryUpdatedAt,
     coverAbsPath,
+    gamePath,
+    gamePathExists,
+    gameRunning,
+    gameWarning,
+    launching,
     customTags,
     customTagError,
     // Getters
     rawJson,
     hasResult,
     stored,
+    launchBlocked,
     candidates,
     candidateTotal,
     candidatePageCount,
@@ -429,6 +562,9 @@ export const useMetaStore = defineStore('meta', () => {
     loadById,
     searchBySample,
     storeIn,
+    launchGame,
+    changeGamePath,
+    refreshGameStatus,
     addCustomTag,
     removeCustomTag,
     setCandidatePage,

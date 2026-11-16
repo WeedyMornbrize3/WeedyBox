@@ -50,8 +50,15 @@
         :downloading="meta.downloading"
         :saved="meta.saved"
         :stored="meta.stored"
+        :game-path="meta.gamePath"
+        :game-path-exists="meta.gamePathExists"
+        :running="meta.gameRunning"
+        :launching="meta.launching"
         @download="meta.storeIn"
+        @launch="meta.launchGame"
+        @change-path="meta.changeGamePath"
       />
+      <MetaMessage v-if="meta.gameWarning" tone="error" :text="meta.gameWarning" />
       <MetaWorkDetails :work="meta.work" />
     </MetaSection>
 

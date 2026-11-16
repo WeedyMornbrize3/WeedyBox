@@ -35,6 +35,10 @@ type LibraryWork struct {
 	CoverAbsPath string `json:"coverAbsPath,omitempty"`
 	CoverBytes   int64  `json:"coverBytes"`
 	CoverSuffix  string `json:"coverSuffix,omitempty"`
+	// GamePath 是这个作品在本机上的游戏程序（.exe）位置：游戏库的「游戏启动」用它。
+	// 与元数据同表但独立维护 —— 重新抓取/重新入库不会覆盖它，只有用户选程序或
+	// 扫描添加带路径入库时才写；空 = 还没设置。
+	GamePath string `json:"gamePath,omitempty"`
 	// 入库时间与最后一次更新时间（由数据库维护）
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

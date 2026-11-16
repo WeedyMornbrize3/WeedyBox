@@ -4,15 +4,15 @@
 // 第一次读写才建），意味着「表还不存在」是一个经常出现的正常状态。用户明确提醒过
 // 「使用表时可能会导致数据库异常」，所以这里重点覆盖：
 //
-//	1. 全新库里先**读**、先**删**（表尚不存在）不能报错；
-//	2. 多个 goroutine 同时首次使用（并发 CREATE TABLE IF NOT EXISTS）不能炸；
-//	3. 重复入库不会产生重复行，且不会把已下载的封面指针覆盖掉；
-//	4. 来源（source）隔离：同一个编号在不同来源下是两条独立记录。
+//  1. 全新库里先**读**、先**删**（表尚不存在）不能报错；
+//  2. 多个 goroutine 同时首次使用（并发 CREATE TABLE IF NOT EXISTS）不能炸；
+//  3. 重复入库不会产生重复行，且不会把已下载的封面指针覆盖掉；
+//  4. 来源（source）隔离：同一个编号在不同来源下是两条独立记录。
 package database
 
 import (
-	"context"
 	"WeedyBox/internal/model"
+	"context"
 	"os"
 	"path/filepath"
 	"sync"
@@ -356,5 +356,122 @@ func TestLibraryRepo_ConcurrentFirstUse(t *testing.T) {
 	}
 	if len(all) != workers {
 		t.Fatalf("应有 %d 条记录，实际 %d 条", workers, len(all))
+	}
+}
+
+// ===== 游戏启动位置（library_works.game_path，与元数据同表） =====
+
+// 全新库第一次就「读位置」：表还不存在，返回空串而不是报错。
+func TestGetGamePath_FirstReadCreatesTables(t *testing.T) {
+	s := newTestService(t)
+
+	path, err := s.GetGamePath(context.Background(), SourceDLsite, "RJ01721474")
+	if err != nil {
+		t.Fatalf("首次读取不该报错，实际: %v", err)
+	}
+	if path != "" {
+		t.Fatalf("空库里不该有位置记录，实际 %q", path)
+	}
+	if !tableExists(t, s, "library_works") {
+		t.Fatal("读一次之后应该已经把游戏库表建好")
+	}
+}
+
+// 位置写在同一行上：作品入库后设置 → 读得回来；重新刷新元数据不丢。
+func TestSetGamePath_SameRowAsLibraryWork(t *testing.T) {
+	s := newTestService(t)
+	ctx := context.Background()
+
+	work := sampleWork()
+	if err := s.UpsertLibraryWork(ctx, &work); err != nil {
+		t.Fatalf("准备作品失败: %v", err)
+	}
+	if err := s.SetGamePath(ctx, SourceDLsite, "rj01721474", `D:\Games\RJ01721474\game.exe`); err != nil {
+		t.Fatalf("写入位置失败: %v", err)
+	}
+
+	got, err := s.FindLibraryWork(ctx, SourceDLsite, "RJ01721474")
+	if err != nil || got == nil {
+		t.Fatalf("读取作品失败: work=%+v err=%v", got, err)
+	}
+	if got.GamePath != `D:\Games\RJ01721474\game.exe` {
+		t.Fatalf("位置应挂在作品行上，实际 %q", got.GamePath)
+	}
+
+	// 刷新元数据（名称变了）：位置不能被 Upsert 冲掉
+	work.Name = "改名了"
+	if err := s.UpsertLibraryWork(ctx, &work); err != nil {
+		t.Fatalf("刷新元数据失败: %v", err)
+	}
+	got, err = s.FindLibraryWork(ctx, SourceDLsite, "RJ01721474")
+	if err != nil || got == nil {
+		t.Fatalf("刷新后读取失败: work=%+v err=%v", got, err)
+	}
+	if got.Name != "改名了" || got.GamePath != `D:\Games\RJ01721474\game.exe` {
+		t.Fatalf("刷新后应为「新名字 + 原位置」，实际 name=%q gamePath=%q", got.Name, got.GamePath)
+	}
+}
+
+// 作品不在库里时不许写位置（避免凭空造一条只有路径的空壳记录）。
+func TestSetGamePath_RequiresLibraryWork(t *testing.T) {
+	s := newTestService(t)
+
+	if err := s.SetGamePath(context.Background(), SourceDLsite, "RJ01721474", `D:\game.exe`); err == nil {
+		t.Fatal("没入库的作品不该能写位置")
+	}
+	if got, _ := s.FindLibraryWork(context.Background(), SourceDLsite, "RJ01721474"); got != nil {
+		t.Fatalf("不该凭空造作品行，实际 %+v", got)
+	}
+}
+
+// 老库文件（library_works 还没有 game_path 列）：读写位置时要自动补列。
+func TestEnsureGamePathColumn_MigratesOldTable(t *testing.T) {
+	s := newTestService(t)
+	ctx := context.Background()
+
+	// 手工建一张旧版结构的表（除 game_path 外的列都在，模拟 2026-11 之前的库文件）
+	oldSchema := `CREATE TABLE library_works (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		source TEXT NOT NULL DEFAULT 'dlsite',
+		work_id TEXT NOT NULL,
+		name TEXT NOT NULL DEFAULT '',
+		maker TEXT DEFAULT '',
+		maker_id TEXT DEFAULT '',
+		series TEXT DEFAULT '',
+		series_id TEXT DEFAULT '',
+		work_type TEXT DEFAULT '',
+		age_rating TEXT DEFAULT '',
+		release_date TEXT DEFAULT '',
+		cover_url TEXT DEFAULT '',
+		source_url TEXT DEFAULT '',
+		raw_json TEXT NOT NULL DEFAULT '{}',
+		fetched_at TEXT DEFAULT '',
+		cover_dir TEXT DEFAULT '',
+		cover_path TEXT DEFAULT '',
+		cover_abs_path TEXT DEFAULT '',
+		cover_bytes INTEGER DEFAULT 0,
+		cover_suffix TEXT DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(source, work_id)
+	)`
+	if err := s.Execute(ctx, oldSchema); err != nil {
+		t.Fatalf("建旧版表失败: %v", err)
+	}
+
+	// 触发迁移后写入一条作品，再读写位置
+	work := sampleWork()
+	if err := s.UpsertLibraryWork(ctx, &work); err != nil {
+		t.Fatalf("旧库入库失败: %v", err)
+	}
+	if err := s.SetGamePath(ctx, SourceDLsite, work.WorkID, `D:\old\game.exe`); err != nil {
+		t.Fatalf("旧库写位置失败（迁移没生效？）: %v", err)
+	}
+	got, err := s.GetGamePath(ctx, SourceDLsite, work.WorkID)
+	if err != nil {
+		t.Fatalf("旧库读位置失败: %v", err)
+	}
+	if got != `D:\old\game.exe` {
+		t.Fatalf("旧库迁移后位置不对，实际 %q", got)
 	}
 }
