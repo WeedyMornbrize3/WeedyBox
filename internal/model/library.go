@@ -10,7 +10,7 @@ import "time"
 //     或者解析器加了字段，也不用改表结构 —— 老数据里有的字段都能读出来。
 //   - Name / Maker / CoverURL 等列是为「列表页不解析 json 就能排序、筛选、显示」而冗余的，
 //     它们与 RawJSON 同源，写入时一起写。
-//   - Cover* 系列指向 preImg/ 下已经下载好的封面文件：再次访问时直接读本地文件，
+//   - Cover* 系列指向 covers/ 下已经下载好的封面文件：再次访问时直接读本地文件，
 //     不必重新联网（这是「优先使用缓存」的落点）。
 type LibraryWork struct {
 	// Source 是元数据来源（当前只有 "dlsite"）。表本身是来源无关的：
@@ -53,8 +53,8 @@ type CoverFile struct {
 	ID        int64     `json:"id"`
 	Source    string    `json:"source"` // 元数据来源，同 LibraryWork.Source
 	WorkID    string    `json:"workId"`
-	Dir       string    `json:"dir"`     // 相对工作目录，如 preImg
-	Path      string    `json:"path"`    // 相对路径，如 preImg/RJ01721474_cover.jpg
+	Dir       string    `json:"dir"`     // 相对工作目录，如 covers
+	Path      string    `json:"path"`    // 相对路径，如 covers/RJ01721474_cover.jpg
 	AbsPath   string    `json:"absPath"` // 绝对路径，读图时用这个
 	Bytes     int64     `json:"bytes"`
 	Suffix    string    `json:"suffix"`

@@ -165,9 +165,9 @@ func TestUpsertLibraryWork_NoDuplicateAndKeepsCover(t *testing.T) {
 	cover := &model.CoverFile{
 		Source:   SourceDLsite,
 		WorkID:   "RJ01721474",
-		Dir:      "preImg",
-		Path:     "preImg/RJ01721474_cover.jpg",
-		AbsPath:  `F:\Code\WeedyBox\preImg\RJ01721474_cover.jpg`,
+		Dir:      "covers",
+		Path:     "covers/RJ01721474_cover.jpg",
+		AbsPath:  `F:\Code\WeedyBox\covers\RJ01721474_cover.jpg`,
 		Bytes:    12345,
 		Suffix:   ".jpg",
 		CoverURL: "https://img.dlsite.jp/main.jpg",
@@ -245,10 +245,10 @@ func TestRecordCoverFile_KeepsHistoryPointsToLatest(t *testing.T) {
 		t.Fatalf("入库失败: %v", err)
 	}
 
-	first := &model.CoverFile{Source: SourceDLsite, WorkID: "RJ01721474", Dir: "preImg",
-		Path: "preImg/RJ01721474_cover.jpg", AbsPath: `F:\a\RJ01721474_cover.jpg`, Bytes: 100, Suffix: ".jpg"}
-	second := &model.CoverFile{Source: SourceDLsite, WorkID: "RJ01721474", Dir: "preImg",
-		Path: "preImg/RJ01721474_cover-2.jpg", AbsPath: `F:\a\RJ01721474_cover-2.jpg`, Bytes: 200, Suffix: ".webp"}
+	first := &model.CoverFile{Source: SourceDLsite, WorkID: "RJ01721474", Dir: "covers",
+		Path: "covers/RJ01721474_cover.jpg", AbsPath: `F:\a\RJ01721474_cover.jpg`, Bytes: 100, Suffix: ".jpg"}
+	second := &model.CoverFile{Source: SourceDLsite, WorkID: "RJ01721474", Dir: "covers",
+		Path: "covers/RJ01721474_cover-2.jpg", AbsPath: `F:\a\RJ01721474_cover-2.jpg`, Bytes: 200, Suffix: ".webp"}
 
 	for _, cover := range []*model.CoverFile{first, second} {
 		if err := s.RecordCoverFile(ctx, cover); err != nil {
@@ -281,8 +281,8 @@ func TestRecordCoverFile_NoWorkRow(t *testing.T) {
 	s := newTestService(t)
 	ctx := context.Background()
 
-	cover := &model.CoverFile{Source: SourceDLsite, WorkID: "RJ99999999", Dir: "preImg",
-		Path: "preImg/RJ99999999_cover.jpg", AbsPath: `F:\a\RJ99999999_cover.jpg`, Bytes: 1, Suffix: ".jpg"}
+	cover := &model.CoverFile{Source: SourceDLsite, WorkID: "RJ99999999", Dir: "covers",
+		Path: "covers/RJ99999999_cover.jpg", AbsPath: `F:\a\RJ99999999_cover.jpg`, Bytes: 1, Suffix: ".jpg"}
 	if err := s.RecordCoverFile(ctx, cover); err != nil {
 		t.Fatalf("记录封面失败: %v", err)
 	}

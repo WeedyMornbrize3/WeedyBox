@@ -202,3 +202,123 @@ func TestScanCancelledContext(t *testing.T) {
 		t.Errorf("ScanSubfolderNames 应报取消，实际 %v", err)
 	}
 }
+
+// TestScanSubfolders 只读一层，返回一级子文件夹的「名字 + 绝对路径」。
+func TestScanSubfolders(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "Alpha", "game.exe"), "alpha")
+	mkdirAll(t, filepath.Join(root, "Beta"))
+	writeFile(t, filepath.Join(root, "not-a-folder.txt"), "文件不是文件夹")
+
+	folders, err := (&ScanService{}).ScanSubfolders(context.Background(), root)
+	if err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+	if len(folders) != 2 {
+		t.Fatalf("文件夹数 = %d，期望 2：%+v", len(folders), folders)
+	}
+	want := []struct{ name, path string }{
+		{"Alpha", filepath.Join(root, "Alpha")},
+		{"Beta", filepath.Join(root, "Beta")},
+	}
+	for i, item := range want {
+		if folders[i].Name != item.name || folders[i].Path != item.path {
+			t.Errorf("folders[%d] = %+v，期望 name=%q path=%q", i, folders[i], item.name, item.path)
+		}
+	}
+}
+
+// TestPickGameExecutable 覆盖用户定的挑主程序规则。
+func TestPickGameExecutable(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("有 Game.exe 优先选它", func(t *testing.T) {
+		folder := filepath.Join(t.TempDir(), "SomeGame")
+		writeFile(t, filepath.Join(folder, "Launcher.exe"), "x")
+		writeFile(t, filepath.Join(folder, "Game.exe"), "x")
+		writeFile(t, filepath.Join(folder, "UnityCrashHandler64.exe"), "x")
+
+		got, err := PickGameExecutable(ctx, folder, "SomeGame")
+		if err != nil {
+			t.Fatalf("挑程序失败: %v", err)
+		}
+		if filepath.Base(got) != "Game.exe" {
+			t.Fatalf("应优先 Game.exe，实际 %q", got)
+		}
+	})
+
+	t.Run("排除 UnityCrashHandler64 后按文件夹名匹配最多字符", func(t *testing.T) {
+		folder := filepath.Join(t.TempDir(), "エルフのパラダイス")
+		writeFile(t, filepath.Join(folder, "setup.exe"), "x")
+		writeFile(t, filepath.Join(folder, "エルフのパラダイス.exe"), "x")
+		writeFile(t, filepath.Join(folder, "UnityCrashHandler64.exe"), "x")
+
+		got, err := PickGameExecutable(ctx, folder, "エルフのパラダイス")
+		if err != nil {
+			t.Fatalf("挑程序失败: %v", err)
+		}
+		if filepath.Base(got) != "エルフのパラダイス.exe" {
+			t.Fatalf("应选与文件夹名匹配最多的 exe，实际 %q", got)
+		}
+	})
+
+	t.Run("没有 Game.exe 时选匹配最多的", func(t *testing.T) {
+		folder := filepath.Join(t.TempDir(), "MyGameCollection")
+		writeFile(t, filepath.Join(folder, "Other.exe"), "x")
+		writeFile(t, filepath.Join(folder, "MyGame.exe"), "x")
+
+		got, err := PickGameExecutable(ctx, folder, "MyGameCollection")
+		if err != nil {
+			t.Fatalf("挑程序失败: %v", err)
+		}
+		if filepath.Base(got) != "MyGame.exe" {
+			t.Fatalf("应选 MyGame.exe，实际 %q", got)
+		}
+	})
+
+	t.Run("只有崩溃处理器时返回空串不报错", func(t *testing.T) {
+		folder := filepath.Join(t.TempDir(), "OnlyCrash")
+		writeFile(t, filepath.Join(folder, "UnityCrashHandler64.exe"), "x")
+
+		got, err := PickGameExecutable(ctx, folder, "OnlyCrash")
+		if err != nil {
+			t.Fatalf("只有崩溃处理器不该报错: %v", err)
+		}
+		if got != "" {
+			t.Fatalf("应返回空串，实际 %q", got)
+		}
+	})
+
+	t.Run("没有 exe 时返回空串不报错", func(t *testing.T) {
+		folder := filepath.Join(t.TempDir(), "NoExe")
+		mkdirAll(t, folder)
+		writeFile(t, filepath.Join(folder, "readme.txt"), "x")
+
+		got, err := PickGameExecutable(ctx, folder, "NoExe")
+		if err != nil {
+			t.Fatalf("没有 exe 不该报错: %v", err)
+		}
+		if got != "" {
+			t.Fatalf("应返回空串，实际 %q", got)
+		}
+	})
+}
+
+// TestLongestCommonSubsequence 边界（空串、大小写由调用方处理、中文按 rune）。
+func TestLongestCommonSubsequence(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"", "abc", 0},
+		{"abc", "", 0},
+		{"abc", "abc", 3},
+		{"mygame", "mygamecollection", 6},
+		{"游戏", "游戏文件夹", 2},
+	}
+	for _, tc := range cases {
+		if got := longestCommonSubsequence(tc.a, tc.b); got != tc.want {
+			t.Errorf("LCS(%q, %q) = %d，期望 %d", tc.a, tc.b, got, tc.want)
+		}
+	}
+}

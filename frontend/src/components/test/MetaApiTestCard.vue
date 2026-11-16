@@ -21,7 +21,7 @@
 
       <MetaSearchBar v-model="meta.keyword" :loading="meta.loading" @submit="meta.runSearch(undefined, true)" />
       <MetaSampleChips :samples="META_SAMPLES" @pick="pickSample" />
-      <MetaPreImgPath :path="meta.preImgPath" @refresh="meta.refreshPreImgDir" />
+      <MetaCoversPath :path="meta.coversPath" @refresh="meta.refreshCoversDir" />
       <MetaMessage v-if="meta.error" tone="error" :text="meta.error" />
       <MetaMessage v-if="meta.status" :text="meta.status" />
     </MetaSection>
@@ -90,7 +90,7 @@ import { onMounted } from 'vue'
 import { META_SAMPLES, useMetaStore } from '../../stores/metaStore'
 import MetaCandidateList from '../meta/MetaCandidateList.vue'
 import MetaMessage from '../meta/MetaMessage.vue'
-import MetaPreImgPath from '../meta/MetaPreImgPath.vue'
+import MetaCoversPath from '../meta/MetaCoversPath.vue'
 import MetaRawJson from '../meta/MetaRawJson.vue'
 import MetaSampleChips from '../meta/MetaSampleChips.vue'
 import MetaSearchBar from '../meta/MetaSearchBar.vue'
@@ -110,5 +110,5 @@ function loadCandidate(id: string) {
   void meta.loadById(id, true)
 }
 
-onMounted(() => meta.ensurePreImgDir())
+onMounted(() => meta.ensureCoversDir())
 </script>

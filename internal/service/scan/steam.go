@@ -30,15 +30,17 @@ import (
 // 后者返回空名单 + nil，前端可以安静地显示空列表；前者该提示用户去装/选择目录。
 var ErrSteamNotFound = errors.New("未找到 Steam 安装目录")
 
-// ScanSteamGameFolders 返回本机所有 Steam 库 `steamapps\common` 下的一级子文件夹名。
+// ScanSteamGameFolders 返回本机所有 Steam 库 `steamapps\common` 下的一级子文件夹
+// （名字 + 绝对路径）。
 //
 // 流程：找 Steam 安装目录 → 读它的 libraryfolders.vdf 拿到全部库根 →
-// 对每个 `<库根>\steamapps\common` 复用 ScanSubfolderNames。
+// 对每个 `<库根>\steamapps\common` 复用 ScanSubfolders。
 //
+// 带路径是为了游戏库「按文件夹名」入库时能进文件夹挑 exe（PickGameExecutable）。
 // 结果去重（Windows 路径大小写不敏感，同一游戏两个库都有时只留第一个）并按名称排序。
 // 容错：某个库不在线（外接盘没插）/ 目录被删 / 读不动，只跳过它，不影响其他库；
 // 只有「压根找不到 Steam」才报 ErrSteamNotFound。
-func (s *ScanService) ScanSteamGameFolders(ctx context.Context) ([]string, error) {
+func (s *ScanService) ScanSteamGameFolders(ctx context.Context) ([]Subfolder, error) {
 	roots := steamInstallRoots()
 	if len(roots) == 0 {
 		return nil, ErrSteamNotFound
@@ -46,12 +48,12 @@ func (s *ScanService) ScanSteamGameFolders(ctx context.Context) ([]string, error
 	return s.scanSteamRoots(ctx, roots)
 }
 
-// scanSteamRoots 从若干 Steam 安装目录出发，汇总各库 common 的一级子文件夹名。
+// scanSteamRoots 从若干 Steam 安装目录出发，汇总各库 common 的一级子文件夹。
 //
 // 单独抽出来是为了测试：注册表在单元测试里没法伪造，但「多个库 → 汇总去重」
 // 这段逻辑必须有覆盖，所以测试直接喂临时目录当 Steam 根。
-func (s *ScanService) scanSteamRoots(ctx context.Context, steamRoots []string) ([]string, error) {
-	names := make([]string, 0, 64)
+func (s *ScanService) scanSteamRoots(ctx context.Context, steamRoots []string) ([]Subfolder, error) {
+	folders := make([]Subfolder, 0, 64)
 	seen := make(map[string]struct{}, 64) // key = ToLower(名称)，Windows 下同名不同大小写算重复
 
 	for _, steamRoot := range steamRoots {
@@ -64,14 +66,14 @@ func (s *ScanService) scanSteamRoots(ctx context.Context, steamRoots []string) (
 				return nil, fmt.Errorf("扫描被取消: %w", err)
 			}
 
-			// 先判存在：库盘没插时常见，ScanSubfolderNames 对不存在的目录会报错，
+			// 先判存在：库盘没插时常见，ScanSubfolders 对不存在的目录会报错，
 			// 但这里"库不在"是正常状态，不是扫描失败。
 			info, statErr := os.Stat(commonDir)
 			if statErr != nil || !info.IsDir() {
 				continue
 			}
 
-			folders, err := s.ScanSubfolderNames(ctx, commonDir)
+			level, err := s.ScanSubfolders(ctx, commonDir)
 			if err != nil {
 				// 取消要中止整次扫描；其余（权限/坏盘）跳过这个库。
 				if ctxErr := ctx.Err(); ctxErr != nil {
@@ -80,27 +82,27 @@ func (s *ScanService) scanSteamRoots(ctx context.Context, steamRoots []string) (
 				continue
 			}
 
-			for _, folder := range folders {
-				key := strings.ToLower(folder)
+			for _, folder := range level {
+				key := strings.ToLower(folder.Name)
 				if _, ok := seen[key]; ok {
 					continue
 				}
 				seen[key] = struct{}{}
-				names = append(names, folder)
+				folders = append(folders, folder)
 			}
 		}
 	}
 
 	// 按名称排序，大小写不敏感（跟资源管理器一致：nmrih 落在 N 段，
 	// 而不是被字节序甩到 Z 后面）；完全同名时才比原始大小写，保证顺序确定。
-	sort.Slice(names, func(i, j int) bool {
-		left, right := strings.ToLower(names[i]), strings.ToLower(names[j])
+	sort.Slice(folders, func(i, j int) bool {
+		left, right := strings.ToLower(folders[i].Name), strings.ToLower(folders[j].Name)
 		if left != right {
 			return left < right
 		}
-		return names[i] < names[j]
+		return folders[i].Name < folders[j].Name
 	})
-	return names, nil
+	return folders, nil
 }
 
 // steamCommonDirs 返回一个 Steam 安装目录下所有「库的 common 目录」。

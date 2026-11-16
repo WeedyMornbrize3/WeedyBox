@@ -309,6 +309,48 @@ func (s *SQLiteService) RecordCoverFile(ctx context.Context, f *model.CoverFile)
 	return nil
 }
 
+// ListCoverFiles 列出某个作品的所有封面落地记录（按下载顺序）。
+//
+// 从游戏库删除作品时要按这些记录逐个删磁盘文件：一次入库可能下过多次
+// （重名会加 -2/-3），只删作品表里的最新指针会留下旧图。
+func (s *SQLiteService) ListCoverFiles(ctx context.Context, source, workID string) ([]model.CoverFile, error) {
+	if s == nil || s.DB == nil {
+		return []model.CoverFile{}, nil
+	}
+	workID = normalizeWorkID(workID)
+	if workID == "" {
+		return []model.CoverFile{}, nil
+	}
+	if err := s.ensureLibraryTables(ctx); err != nil {
+		return nil, err
+	}
+
+	rows, err := s.Query(ctx,
+		`SELECT id, source, work_id, dir, path, abs_path, bytes, suffix, cover_url, created_at
+		 FROM library_cover_files WHERE source = ? AND work_id = ? ORDER BY id ASC`,
+		normalizeSource(source), workID)
+	if err != nil {
+		return nil, fmt.Errorf("查询封面记录失败: %w", err)
+	}
+
+	files := make([]model.CoverFile, 0, len(rows))
+	for _, row := range rows {
+		files = append(files, model.CoverFile{
+			ID:        intOf(row["id"]),
+			Source:    textOf(row["source"]),
+			WorkID:    textOf(row["work_id"]),
+			Dir:       textOf(row["dir"]),
+			Path:      textOf(row["path"]),
+			AbsPath:   textOf(row["abs_path"]),
+			Bytes:     intOf(row["bytes"]),
+			Suffix:    textOf(row["suffix"]),
+			CoverURL:  textOf(row["cover_url"]),
+			CreatedAt: timeOf(row["created_at"]),
+		})
+	}
+	return files, nil
+}
+
 // ===== 游戏启动位置 =====
 //
 // 位置就是 library_works 上的一列 game_path（不单开表）：一个库记录对应一个本机

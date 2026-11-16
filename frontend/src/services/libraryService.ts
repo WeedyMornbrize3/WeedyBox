@@ -45,6 +45,16 @@ function ensure<T>(value: T | null | undefined, message: string): T {
   return value
 }
 
+/** 入库时要记录的游戏程序位置：扫描添加会带 exe 或文件夹，手动搜索由用户选 exe */
+export interface StoreInOptions {
+  /** exe 绝对路径（按 exe 名扫到 / 手动搜索时用户选了程序） */
+  gamePath?: string
+  /** 游戏文件夹绝对路径（按文件夹名扫到，后端进文件夹挑主程序） */
+  gameFolder?: string
+  /** 文件夹名，用来在多个 exe 里挑与它匹配最多的主程序 */
+  gameFolderName?: string
+}
+
 export const libraryApi = {
   /**
    * 取一个作品：**缓存优先**（只读）。
@@ -63,15 +73,26 @@ export const libraryApi = {
 
   /**
    * 入库：**只有这一步会把作品收进游戏库** ——
-   * 后端抓文本元数据、把封面原样落到 `preImg/`、写进 `library_works`。
+   * 后端抓文本元数据、把封面（优先 webp）落到 `covers/`、写进 `library_works`。
    * 搜索与打开详情（fetch）都只读不写，所以游戏库里只会出现"点过入库"的作品。
    *
-   * gamePath 可选：「扫描添加」把扫到的 exe 绝对路径带进来，入库同时写进
-   * `library_works.game_path`；这样新入库的游戏点「游戏启动」就能直接跑。手动搜索入库
-   * 不传（留空 = 不覆盖库里可能已有的位置），第一次启动时再让用户选一次程序。
+   * options 描述「启动位置从哪来」（用户要求入库时就记录 exe）：
+   *   - gamePath：按 exe 名扫到 / 手动搜索时用户选了程序 → 直接记录；
+   *   - gameFolder + gameFolderName：按文件夹名扫到 → 后端进文件夹挑主程序；
+   *   - 全空：手动搜索且用户取消选择 → 位置留空，第一次启动时再问。
    */
-  async storeIn(workId: string, gamePath = '', source = LIBRARY_SOURCE_DLSITE): Promise<LibraryMeta> {
-    const result = await LibraryService.Store({ workId, source, gamePath })
+  async storeIn(
+    workId: string,
+    options: StoreInOptions = {},
+    source = LIBRARY_SOURCE_DLSITE,
+  ): Promise<LibraryMeta> {
+    const result = await LibraryService.Store({
+      workId,
+      source,
+      gamePath: options.gamePath ?? '',
+      gameFolder: options.gameFolder ?? '',
+      gameFolderName: options.gameFolderName ?? '',
+    })
     return ensure<LibraryMeta>(result as LibraryMeta | null, '入库失败：后端未返回作品数据')
   },
 

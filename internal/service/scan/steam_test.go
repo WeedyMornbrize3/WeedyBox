@@ -95,13 +95,23 @@ func writeLibraryFoldersVDF(t *testing.T, vdfPath string, libraryRoots ...string
 	writeFile(t, vdfPath, builder.String())
 }
 
+// folderNames 把「名字 + 路径」列表压成名字列表，方便断言排序/去重。
+func folderNames(folders []Subfolder) []string {
+	names := make([]string, 0, len(folders))
+	for _, folder := range folders {
+		names = append(names, folder.Name)
+	}
+	return names
+}
+
 // TestScanSteamRoots 覆盖多库汇总：主库 + vdf 里的附加库、跨库重名去重（大小写不同）、
 // 不存在的库（盘没插）跳过、common 里的普通文件不算。
 func TestScanSteamRoots(t *testing.T) {
 	steamRoot := t.TempDir()
 	extraLibrary := t.TempDir()
 
-	mkdirAll(t, filepath.Join(steamRoot, "steamapps", "common", "GameA"))
+	gameADir := filepath.Join(steamRoot, "steamapps", "common", "GameA")
+	mkdirAll(t, gameADir)
 	mkdirAll(t, filepath.Join(steamRoot, "steamapps", "common", "GameB"))
 	writeFile(t, filepath.Join(steamRoot, "steamapps", "common", "readme.txt"), "文件不算")
 
@@ -114,14 +124,19 @@ func TestScanSteamRoots(t *testing.T) {
 		extraLibrary, missingLibrary,
 	)
 
-	names, err := (&ScanService{}).scanSteamRoots(context.Background(), []string{steamRoot})
+	folders, err := (&ScanService{}).scanSteamRoots(context.Background(), []string{steamRoot})
 	if err != nil {
 		t.Fatalf("扫描失败: %v", err)
 	}
 
 	want := []string{"GameA", "GameB", "GameC"}
+	names := folderNames(folders)
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Errorf("游戏名 = %v，期望 %v", names, want)
+	}
+	// 去重时保留先扫到的那个库的路径
+	if folders[0].Path != gameADir {
+		t.Errorf("GameA 的路径 = %q，期望 %q", folders[0].Path, gameADir)
 	}
 }
 
@@ -134,12 +149,13 @@ func TestScanSteamRootsReadsLegacyVDFPath(t *testing.T) {
 	mkdirAll(t, filepath.Join(extraLibrary, "steamapps", "common", "ExtraGame"))
 	writeLibraryFoldersVDF(t, filepath.Join(steamRoot, "config", "libraryfolders.vdf"), extraLibrary)
 
-	names, err := (&ScanService{}).scanSteamRoots(context.Background(), []string{steamRoot})
+	folders, err := (&ScanService{}).scanSteamRoots(context.Background(), []string{steamRoot})
 	if err != nil {
 		t.Fatalf("扫描失败: %v", err)
 	}
 
 	want := []string{"ExtraGame", "MainGame"}
+	names := folderNames(folders)
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Errorf("游戏名 = %v，期望 %v", names, want)
 	}

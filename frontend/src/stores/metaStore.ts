@@ -28,7 +28,7 @@ export const useMetaStore = defineStore('meta', () => {
   const status = ref('')
   const work = ref<WorkMeta | null>(null)
   const saved = ref<DownloadResult | null>(null)
-  const preImgPath = ref('')
+  const coversPath = ref('')
   /** 搜索候选的缩略图（编号 → data URL）：来自 workdir 的 cache/，没缓存过才下载 */
   const candidateCovers = ref<Record<string, string>>({})
   /** 已取回的候选：**DLsite 页号 → 该页 30 条**（翻到哪页才取哪页） */
@@ -70,8 +70,8 @@ export const useMetaStore = defineStore('meta', () => {
 
   /** 后端返回的完整结构（原样展示，调试页用） */
   const raw = ref<unknown>(null)
-  /** preImg/ 绝对路径是否已读过（只在第一次进页面时问一次后端） */
-  const preImgLoaded = ref(false)
+  /** covers/ 绝对路径是否已读过（只在第一次进页面时问一次后端） */
+  const coversLoaded = ref(false)
 
   // ===== Getters =====
   const rawJson = computed(() => (raw.value === null ? '' : JSON.stringify(raw.value, null, 2)))
@@ -349,16 +349,30 @@ export const useMetaStore = defineStore('meta', () => {
 
   /**
    * 入库（作品库 /works 与调试页的「入库」按钮）：**只有这一步会把作品收进游戏库** ——
-   * 后端抓文本元数据、把封面原样落到 preImg/ 并记账，返回带 cover_* 的完整数据。
+   * 后端抓文本元数据、把封面（优先 webp）落到 covers/ 并记账，返回带 cover_* 的完整数据。
    * 搜索、打开详情都只读不写，所以游戏库里只会出现点过入库的作品。
+   *
+   * 手动搜索入库时**先请用户选游戏程序**（用户要求「手动搜索添加则在入库时便向用户请求路径」）：
+   *   - 选了 → 入库时一起记录，之后「游戏启动」直接跑；
+   *   - 取消 → 照常入库但不记位置，启动时再问（用户要求里的兜底）。
+   * 已经记录过位置的（老数据 / 从扫描详情进来）不重复问，沿用原路径。
    */
   async function storeIn() {
     const current = work.value
-    if (!current || stored.value) return
+    if (!current || stored.value || downloading.value) return
     downloading.value = true
     error.value = ''
     try {
-      const data = await libraryApi.storeIn(current.id)
+      // 手动搜索入库：先请用户选游戏程序；取消则照常入库，只是不记位置
+      let pickedPath = gamePath.value && gamePathExists.value ? gamePath.value : ''
+      if (!pickedPath) {
+        try {
+          pickedPath = await gameApi.pickExecutable(`选择「${current.name}」的游戏程序（取消则启动时再选）`)
+        } catch {
+          pickedPath = ''
+        }
+      }
+      const data = await libraryApi.storeIn(current.id, { gamePath: pickedPath })
       applyWork(data)
       saved.value = {
         id: data.id,
@@ -370,7 +384,9 @@ export const useMetaStore = defineStore('meta', () => {
         coverUrl: data.coverUrl ?? '',
       }
       if (data.coverAbsPath) coverAbsPath.value = data.coverAbsPath
-      status.value = `已入库：${data.id}（元数据已载入数据库，封面存到 preImg/）`
+      status.value = pickedPath
+        ? `已入库：${data.id}（元数据已载入数据库，封面存到 covers/，游戏位置已记录）`
+        : `已入库：${data.id}（元数据已载入数据库，封面存到 covers/；未记录游戏位置，启动时会再让你选）`
     } catch (err) {
       error.value = `入库失败：${toMessage(err)}`
     } finally {
@@ -509,19 +525,19 @@ export const useMetaStore = defineStore('meta', () => {
     }
   }
 
-  /** 读取 preImg/ 的绝对路径（失败就留空，不打扰用户） */
-  async function refreshPreImgDir() {
+  /** 读取 covers/ 的绝对路径（失败就留空，不打扰用户） */
+  async function refreshCoversDir() {
     try {
-      preImgPath.value = await metaApi.preImgDir()
+      coversPath.value = await metaApi.coversDir()
     } catch {
-      preImgPath.value = ''
+      coversPath.value = ''
     }
-    preImgLoaded.value = true
+    coversLoaded.value = true
   }
 
   /** 进页面时调：只问一次后端，之后靠「刷新」按钮手动更新 */
-  function ensurePreImgDir() {
-    if (!preImgLoaded.value) void refreshPreImgDir()
+  function ensureCoversDir() {
+    if (!coversLoaded.value) void refreshCoversDir()
   }
 
   return {
@@ -533,7 +549,7 @@ export const useMetaStore = defineStore('meta', () => {
     status,
     work,
     saved,
-    preImgPath,
+    coversPath,
     candidateCovers,
     candidatePage,
     pageLoading,
@@ -568,8 +584,8 @@ export const useMetaStore = defineStore('meta', () => {
     addCustomTag,
     removeCustomTag,
     setCandidatePage,
-    refreshPreImgDir,
-    ensurePreImgDir,
+    refreshCoversDir,
+    ensureCoversDir,
     clearResult,
   }
 })

@@ -50,6 +50,15 @@ type GameFolder struct {
 	Executables []GameExecutable `json:"executables"` // 按文件名排序（os.ReadDir 的既定顺序），不按大小
 }
 
+// Subfolder 是一级子文件夹的轻量引用（名字 + 绝对路径）。
+//
+// 用途：游戏库「按文件夹名」添加时，名字喂给搜索、路径留着**入库时到里面挑 exe**
+// （用户要求：通过文件夹名匹配到的作品，入库时读取该文件夹内的 exe 记录启动位置）。
+type Subfolder struct {
+	Name string `json:"name"`
+	Path string `json:"path"` // 绝对路径
+}
+
 // SkippedFolder 记录被跳过的子文件夹：读不动（权限/坏盘/被占用），不是扫描失败。
 type SkippedFolder struct {
 	Path   string `json:"path"`
@@ -76,30 +85,29 @@ type GameScanResult struct {
 // 容错：某个子文件夹读不动（无权限、坏盘、被独占）只记进 Skipped 并继续，
 // 不让一个坏文件夹毁掉整次扫描。
 func (s *ScanService) ScanExecutablesInSubfolders(ctx context.Context, root string) (GameScanResult, error) {
-	root, folderNames, err := readChildDirectories(ctx, root)
+	root, folders, err := readChildDirectories(ctx, root)
 	if err != nil {
 		return GameScanResult{}, err
 	}
 
 	result := GameScanResult{
 		Root:    root,
-		Folders: make([]GameFolder, 0, len(folderNames)),
+		Folders: make([]GameFolder, 0, len(folders)),
 		Skipped: make([]SkippedFolder, 0),
 	}
 
-	for _, folderName := range folderNames {
+	for _, folder := range folders {
 		if err := ctx.Err(); err != nil {
 			return result, fmt.Errorf("扫描被取消: %w", err)
 		}
 
-		folderPath := filepath.Join(root, folderName)
-		executables, err := executablesIn(ctx, folderPath)
+		executables, err := executablesIn(ctx, folder.Path)
 		if err != nil {
 			// 取消要中止整次扫描；其余（权限/IO）只跳过这一个文件夹。
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return result, fmt.Errorf("扫描被取消: %w", ctxErr)
 			}
-			result.Skipped = append(result.Skipped, SkippedFolder{Path: folderPath, Reason: err.Error()})
+			result.Skipped = append(result.Skipped, SkippedFolder{Path: folder.Path, Reason: err.Error()})
 			continue
 		}
 		if len(executables) == 0 {
@@ -107,13 +115,25 @@ func (s *ScanService) ScanExecutablesInSubfolders(ctx context.Context, root stri
 		}
 
 		result.Folders = append(result.Folders, GameFolder{
-			FolderName:  folderName,
-			FolderPath:  folderPath,
+			FolderName:  folder.Name,
+			FolderPath:  folder.Path,
 			Executables: executables,
 		})
 	}
 
 	return result, nil
+}
+
+// ScanSubfolders 只读根目录一层，返回一级子文件夹的「名字 + 绝对路径」。
+//
+// 与 ScanSubfolderNames 的区别只是多带路径：游戏库「按文件夹名」添加时，
+// 入库要拿这个路径到文件夹里挑 exe（见 PickGameExecutable）。
+func (s *ScanService) ScanSubfolders(ctx context.Context, root string) ([]Subfolder, error) {
+	_, folders, err := readChildDirectories(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	return folders, nil
 }
 
 // ScanSubfolderNames 只读根目录一层，返回一级子文件夹名（按名称排序）。
@@ -125,11 +145,111 @@ func (s *ScanService) ScanExecutablesInSubfolders(ctx context.Context, root stri
 // 与上一个方法的另一个差别：没有 .exe 的文件夹这里也照样返回（纯名单不做判断），
 // 要不要过滤交给调用方。
 func (s *ScanService) ScanSubfolderNames(ctx context.Context, root string) ([]string, error) {
-	_, folderNames, err := readChildDirectories(ctx, root)
+	folders, err := s.ScanSubfolders(ctx, root)
 	if err != nil {
 		return nil, err
 	}
-	return folderNames, nil
+	names := make([]string, 0, len(folders))
+	for _, folder := range folders {
+		names = append(names, folder.Name)
+	}
+	return names, nil
+}
+
+// 挑主程序时优先认的名字（用户要求）。
+const (
+	unityCrashHandler64 = "UnityCrashHandler64.exe"
+	preferredGameExe    = "Game.exe"
+)
+
+// PickGameExecutable 从一个游戏文件夹里挑出最可能是「游戏主程序」的 .exe。
+//
+// 规则（用户 2026-11-16 明确要求）：
+//  1. 先排除 Unity 崩溃处理器 UnityCrashHandler64.exe（它在，但绝不是游戏）；
+//  2. 有 Game.exe 就优先选它（最常见的主程序命名）；
+//  3. 否则在剩下的 exe 里，选「文件名与文件夹名匹配字符最多」的那个
+//     （按去掉扩展名后的名字算最长公共子序列，大小写不敏感；并列时取 ReadDir 顺序第一个）。
+//
+// 找不到 exe（或只剩崩溃处理器）时返回空串 + nil：这不是错误 —— 入库照常进行，
+// 位置留空，等用户第一次启动时再选（用户要求里有这条兜底）。
+func PickGameExecutable(ctx context.Context, folderPath, folderName string) (string, error) {
+	folderPath = strings.TrimSpace(folderPath)
+	if folderPath == "" {
+		return "", errors.New("游戏文件夹为空")
+	}
+	abs, err := filepath.Abs(folderPath)
+	if err != nil {
+		return "", fmt.Errorf("解析游戏文件夹 %q 失败: %w", folderPath, err)
+	}
+	folderPath = filepath.Clean(abs)
+	if strings.TrimSpace(folderName) == "" {
+		folderName = filepath.Base(folderPath)
+	}
+
+	executables, err := executablesIn(ctx, folderPath)
+	if err != nil {
+		return "", fmt.Errorf("读取游戏文件夹 %s 失败: %w", folderPath, err)
+	}
+	if len(executables) == 0 {
+		return "", nil
+	}
+
+	candidates := make([]GameExecutable, 0, len(executables))
+	for _, exe := range executables {
+		if strings.EqualFold(exe.FileName, unityCrashHandler64) {
+			continue
+		}
+		candidates = append(candidates, exe)
+	}
+	if len(candidates) == 0 {
+		return "", nil
+	}
+
+	for _, exe := range candidates {
+		if strings.EqualFold(exe.FileName, preferredGameExe) {
+			return exe.Path, nil
+		}
+	}
+
+	target := strings.ToLower(folderName)
+	best := candidates[0]
+	bestScore := -1
+	for _, exe := range candidates {
+		score := longestCommonSubsequence(strings.ToLower(exe.Name), target)
+		if score > bestScore {
+			best = exe
+			bestScore = score
+		}
+	}
+	return best.Path, nil
+}
+
+// longestCommonSubsequence 是两个字符串的最长公共子序列长度（按 rune 算，
+// 文件夹名里常有中文/空格，按字节比会切坏字符）。
+// 只用于挑主程序，字符串都很短，O(n*m) 的 DP 足够。
+func longestCommonSubsequence(a, b string) int {
+	left, right := []rune(a), []rune(b)
+	if len(left) == 0 || len(right) == 0 {
+		return 0
+	}
+	dp := make([][]int, len(left)+1)
+	for i := range dp {
+		dp[i] = make([]int, len(right)+1)
+	}
+	for i := 1; i <= len(left); i++ {
+		for j := 1; j <= len(right); j++ {
+			if left[i-1] == right[j-1] {
+				dp[i][j] = dp[i-1][j-1] + 1
+				continue
+			}
+			if dp[i-1][j] > dp[i][j-1] {
+				dp[i][j] = dp[i-1][j]
+			} else {
+				dp[i][j] = dp[i][j-1]
+			}
+		}
+	}
+	return dp[len(left)][len(right)]
 }
 
 // ===== 内部实现 =====
@@ -137,7 +257,7 @@ func (s *ScanService) ScanSubfolderNames(ctx context.Context, root string) ([]st
 // readChildDirectories 校验根目录并列出它的一级子文件夹（绝对路径 + 名称）。
 //
 // 两个对外方法共用这一份校验，保证「什么算合法根目录」只有一处定义。
-func readChildDirectories(ctx context.Context, root string) (string, []string, error) {
+func readChildDirectories(ctx context.Context, root string) (string, []Subfolder, error) {
 	root, err := normalizeScanRoot(root)
 	if err != nil {
 		return "", nil, err
@@ -148,17 +268,20 @@ func readChildDirectories(ctx context.Context, root string) (string, []string, e
 		return root, nil, fmt.Errorf("读取目录 %s 失败: %w", root, err)
 	}
 
-	names := make([]string, 0, len(entries))
+	folders := make([]Subfolder, 0, len(entries))
 	for _, entry := range entries {
 		// 目录很大时别让人等一个已经撤销的操作：每个条目查一次取消。
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return root, nil, fmt.Errorf("扫描被取消: %w", ctxErr)
 		}
 		if isDirectory(root, entry) {
-			names = append(names, entry.Name())
+			folders = append(folders, Subfolder{
+				Name: entry.Name(),
+				Path: filepath.Join(root, entry.Name()),
+			})
 		}
 	}
-	return root, names, nil
+	return root, folders, nil
 }
 
 // normalizeScanRoot 把用户给的目录变成可靠的绝对路径，并在解析前就拒掉坏输入。

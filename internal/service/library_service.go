@@ -18,6 +18,7 @@ import (
 	"WeedyBox/internal/database"
 	"WeedyBox/internal/model"
 	getmeta "WeedyBox/internal/service/getMeta"
+	"WeedyBox/internal/service/scan"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -111,21 +112,26 @@ func (s *LibraryService) Fetch(ctx context.Context, req FetchWorkRequest) (map[s
 	return decorate(work, nil, false), nil
 }
 
-// StoreRequest 是「入库」的入参：来源 + 编号，外加**可选的游戏启动位置**。
+// StoreRequest 是「入库」的入参：来源 + 编号，外加**游戏启动位置的来源**。
 //
-// GamePath 由「扫描添加」带进来（扫描时已经拿到了 exe 的绝对路径），
-// 这样刚入库的游戏在游戏库里点「游戏启动」就能直接跑，不用再选一次程序。
-// 手动搜索入库没有这个路径：留空即可，前端第一次点启动时会弹系统文件框让用户选。
+// 三种情况（前端按扫描方式带进来，用户 2026-11-16 要求「入库时就把 exe 记下来」）：
+//   - GamePath：按 exe 名扫到 / 手动搜索时用户选了程序 → 直接记录这个 exe；
+//   - GameFolder + GameFolderName：按文件夹名扫到（Steam 库或本地文件夹）→
+//     入库时到文件夹里挑主程序（scan.PickGameExecutable：排崩溃处理器、优先 Game.exe、
+//     再选与文件夹名匹配字符最多的 exe）；
+//   - 都为空：手动搜索且用户取消选择 → 位置留空，第一次启动时再让用户选。
 type StoreRequest struct {
-	WorkID   string `json:"workId"`
-	Source   string `json:"source"`   // 空 = dlsite
-	GamePath string `json:"gamePath"` // 空 = 不记录/不覆盖已有位置
+	WorkID         string `json:"workId"`
+	Source         string `json:"source"`         // 空 = dlsite
+	GamePath       string `json:"gamePath"`       // exe 绝对路径（已知时）
+	GameFolder     string `json:"gameFolder"`     // 游戏文件夹绝对路径（按文件夹名匹配时）
+	GameFolderName string `json:"gameFolderName"` // 文件夹名，用来在多个 exe 里挑主程序
 }
 
 // Store 把作品**真正收进游戏库**（只有用户点「入库」时才走这里）：
 //
 //   - 文本：联网抓一份元数据（库里已有**完整** raw_json 时直接复用，不重复下载），写进 library_works；
-//   - 图片：DownloadCover 原样落到 preImg/，并把落地位置记进库。
+//   - 图片：DownloadCover 优先下载 webp 并落到 covers/，并把落地位置记进库。
 //
 // **入库前校验**（扫描添加会一次入库几十部，必须挡住空壳）：抓回来的数据没有编号或名称
 // 就报错、不写库；库里已有的 raw_json 如果残缺（旧数据/解析退化）也会重新抓一份。
@@ -149,13 +155,15 @@ func (s *LibraryService) Store(ctx context.Context, req StoreRequest) (map[strin
 	if strings.TrimSpace(source) == "" {
 		source = database.SourceDLsite
 	}
+	// 入库时就确定要记录的游戏程序位置（直接给 exe / 从文件夹里挑 / 留空）
+	gamePath := s.resolveStoreGamePath(ctx, req)
 
 	// ① 库里已有**完整**文本：不再抓；封面也在了就直接返回。
 	//   raw_json 残缺（没有编号/名称）时走联网重抓，避免把空壳一直复用下去。
 	if row, err := s.DB.FindLibraryWork(ctx, source, workID); err == nil && row != nil {
 		if work, ok := workFromRawJSON(row); ok && workIsComplete(work) {
 			// 重新入库时带上扫描到的 exe 路径：顺手把启动位置更新掉
-			if perr := s.saveGamePath(ctx, source, workID, req.GamePath); perr != nil {
+			if perr := s.saveGamePath(ctx, source, workID, gamePath); perr != nil {
 				return nil, perr
 			}
 			if strings.TrimSpace(row.CoverAbsPath) == "" {
@@ -194,11 +202,11 @@ func (s *LibraryService) Store(ctx context.Context, req StoreRequest) (map[strin
 	}
 
 	// 扫描添加时顺手记录游戏启动位置（放在封面下载之前：封面失败不该连位置一起丢）
-	if err := s.saveGamePath(ctx, source, workID, req.GamePath); err != nil {
+	if err := s.saveGamePath(ctx, source, workID, gamePath); err != nil {
 		return nil, err
 	}
 
-	// ③ 封面：原样落到 preImg/ 并记账（文本已入库，这里失败时前端会提示重试）
+	// ③ 封面：优先下载同名 webp 并落到 covers/ 记账（文本已入库，这里失败时前端会提示重试）
 	if coverURL := strOf(work["coverUrl"]); coverURL != "" {
 		if _, derr := s.ensureMeta().DownloadCover(ctx, workID, coverURL); derr != nil {
 			return nil, fmt.Errorf("元数据已入库，但封面下载失败: %w", derr)
@@ -222,9 +230,14 @@ func (s *LibraryService) List(ctx context.Context, source string) ([]model.Libra
 	return s.DB.ListLibraryWorks(ctx, source)
 }
 
-// Remove 从游戏库删掉一条作品（磁盘上的图片保留）。
+// Remove 从游戏库删掉一条作品，并删除它入库时保存在 covers/ 的封面图片。
+//
+// 删文件放在删库记录之前：文件删不掉（被占用/权限）时直接报错、库记录保留，
+// 用户还能重试；反过来先删记录会让图片变成谁也找不到的孤儿文件。
+// 一次入库可能下过多次封面（重名 -2/-3），所以按 library_cover_files 的记录逐个删，
+// 不只删作品表里的最新指针。
 func (s *LibraryService) Remove(ctx context.Context, workID, source string) error {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	if s.DB == nil {
@@ -236,6 +249,44 @@ func (s *LibraryService) Remove(ctx context.Context, workID, source string) erro
 	}
 	if strings.TrimSpace(source) == "" {
 		source = database.SourceDLsite
+	}
+
+	covers, err := s.DB.ListCoverFiles(ctx, source, workID)
+	if err != nil {
+		return fmt.Errorf("读取封面记录失败: %w", err)
+	}
+	row, ferr := s.DB.FindLibraryWork(ctx, source, workID)
+	if ferr != nil {
+		return ferr
+	}
+
+	// 作品表里的 cover_abs_path 可能指向一条没有下载记录的旧文件，也一并删；
+	// 路径去重（Windows 大小写不敏感）。
+	paths := make([]string, 0, len(covers)+1)
+	seen := make(map[string]struct{}, len(covers)+1)
+	addPath := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		key := strings.ToLower(path)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		paths = append(paths, path)
+	}
+	for _, cover := range covers {
+		addPath(cover.AbsPath)
+	}
+	if row != nil {
+		addPath(row.CoverAbsPath)
+	}
+
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("删除封面图片 %s 失败: %w", path, err)
+		}
 	}
 	return s.DB.DeleteLibraryWork(ctx, source, workID)
 }
@@ -338,6 +389,29 @@ func (s *LibraryService) CoverDataURL(ctx context.Context, workID, source string
 }
 
 // ===== 内部实现 =====
+
+// resolveStoreGamePath 决定这次入库要记录的游戏程序位置（用户 2026-11-16 要求「入库时便存储相关 exe」）：
+//
+//  1. 直接给了 exe（按 exe 名扫到 / 手动搜索时用户选了程序）→ 用它；
+//  2. 只给了游戏文件夹（按文件夹名扫到，Steam 库或本地文件夹）→ 进文件夹挑主程序：
+//     先排除 UnityCrashHandler64.exe，有 Game.exe 优先，再选与文件夹名匹配字符最多的 exe；
+//  3. 什么都没有（手动搜索且用户取消选择）→ 空串，第一次启动时再让用户选。
+//
+// 挑不到 exe 不阻断入库：位置留空即可，别因为一个探测失败把整部作品卡在库外。
+func (s *LibraryService) resolveStoreGamePath(ctx context.Context, req StoreRequest) string {
+	if path := strings.TrimSpace(req.GamePath); path != "" {
+		return path
+	}
+	folder := strings.TrimSpace(req.GameFolder)
+	if folder == "" {
+		return ""
+	}
+	picked, err := scan.PickGameExecutable(ctx, folder, req.GameFolderName)
+	if err != nil {
+		return ""
+	}
+	return picked
+}
 
 // saveGamePath 记录「这个作品在本机上的游戏程序位置」（扫描添加带进来的 exe 路径）。
 //

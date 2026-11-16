@@ -63,9 +63,9 @@ export interface SearchResponse {
 
 export interface DownloadResult {
   id: string
-  /** 相对工作目录的目录名，固定为 preImg */
+  /** 相对工作目录的目录名，固定为 covers */
   dir: string
-  /** 相对路径，如 preImg/RJ01721474_cover.jpg */
+  /** 相对路径，如 covers/RJ01721474_cover.webp */
   path: string
   /** 实际绝对位置，方便对照 */
   absPath: string
@@ -117,8 +117,8 @@ export const metaApi = {
   },
 
   /** 图片落地目录的绝对路径 */
-  async preImgDir(): Promise<string> {
-    return (await MetaApiService.PreImgDir()) ?? 'preImg'
+  async coversDir(): Promise<string> {
+    return (await MetaApiService.CoversDir()) ?? 'covers'
   },
 
   /**

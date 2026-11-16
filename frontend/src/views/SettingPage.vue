@@ -43,7 +43,7 @@
       <!-- 清理缓存：进入本页即扫描 cache/ 占用并显示在按钮左边（CacheCleanup 组件里 onMounted 做） -->
       <SettingsItem
         label="清理缓存"
-        description="搜索结果的缩略图缓存在 cache/，随时可删；退出应用时也会自动清空（preImg/ 里的入库封面不受影响）"
+        description="搜索结果的缩略图缓存在 cache/，随时可删；退出应用时也会自动清空（covers/ 里的入库封面不受影响）"
       >
         <CacheCleanup />
       </SettingsItem>

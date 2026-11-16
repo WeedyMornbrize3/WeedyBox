@@ -312,8 +312,15 @@ export const useScanStore = defineStore('scan', () => {
         match.storing = true
         match.storeError = ''
         try {
-          // 把扫描时拿到的 exe 路径一起入库：游戏库里点「游戏启动」就不用再选程序
-          const saved = await libraryApi.storeIn(match.workId, match.entry.path ?? '')
+          // 入库时把启动位置一起带上（用户要求「入库时便存储相关 exe」）：
+          //   - 按 exe 名扫到 → 直接给 exe 路径；
+          //   - 按文件夹名扫到（Steam / 本地文件夹）→ 给文件夹，后端进文件夹挑主程序
+          //     （排除 UnityCrashHandler64、优先 Game.exe、再选与文件夹名匹配最多的 exe）。
+          const saved = await libraryApi.storeIn(match.workId, {
+            gamePath: match.entry.origin === 'exe' ? (match.entry.path ?? '') : '',
+            gameFolder: match.entry.origin === 'folder' ? (match.entry.folderPath ?? '') : '',
+            gameFolderName: match.entry.origin === 'folder' ? match.entry.name : '',
+          })
           match.stored = true
           match.selected = false
           // 用后端返回的完整元数据回填：名称/封面以服务端为准，信息行显示刚抓到的作品信息
@@ -398,8 +405,14 @@ export const useScanStore = defineStore('scan', () => {
     scanning.value = true
     try {
       if (source.value === 'steam') {
-        const names = await scanApi.steamGames()
-        entries.value = names.map((name) => ({ name, detail: 'Steam 库' }))
+        const folders = await scanApi.steamFolders()
+        // Steam 只给文件夹名：记下 origin='folder' + 绝对路径，入库时后端进文件夹挑 exe
+        entries.value = folders.map((folder) => ({
+          name: folder.name,
+          detail: 'Steam 库',
+          origin: 'folder',
+          folderPath: folder.path,
+        }))
       } else {
         const root = folderPath.value.trim()
         if (!root) {
@@ -411,17 +424,29 @@ export const useScanStore = defineStore('scan', () => {
           const list: ScannedGame[] = []
           for (const folder of result.folders ?? []) {
             for (const exe of folder.executables ?? []) {
-              // path 是 exe 的绝对路径：入库时一起写进 library_works.game_path，
-              // 之后点「游戏启动」就直接跑这个程序（不再让用户选一次）
-              list.push({ name: exe.name, detail: `${folder.folderName} · ${exe.fileName}`, path: exe.path })
+              // 按 exe 名扫到：path 就是这个 exe 的绝对路径，入库直接记录，
+              // 之后点「游戏启动」就跑这个程序（不再让用户选一次）
+              list.push({
+                name: exe.name,
+                detail: `${folder.folderName} · ${exe.fileName}`,
+                origin: 'exe',
+                path: exe.path,
+                folderPath: folder.folderPath,
+              })
             }
           }
           entries.value = list
           const skipped = result.skipped?.length ?? 0
           if (skipped > 0) status.value = `已跳过 ${skipped} 个读不动的子文件夹`
         } else {
-          const names = await scanApi.subfolderNames(root)
-          entries.value = names.map((name) => ({ name, detail: root }))
+          const folders = await scanApi.subfolders(root)
+          // 按文件夹名扫到：入库时后端进这个文件夹挑主程序
+          entries.value = folders.map((folder) => ({
+            name: folder.name,
+            detail: root,
+            origin: 'folder',
+            folderPath: folder.path,
+          }))
         }
       }
       done.value = true

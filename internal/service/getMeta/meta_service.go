@@ -24,14 +24,8 @@ import (
 	"strings"
 )
 
-// preImgDir 是封面图片的落地目录。用**相对路径**，因此它的绝对位置
-// 取决于进程的工作目录（实测我们会从仓库根目录跑，于是落在 WeedyBox/preImg/）。
-// 返回值里同时给出这个相对路径和解析后的绝对路径，避免"到底存哪了"的猜测。
-// 如果没有该文件夹就新建  -needcheck
-const preImgDir = "preImg"
-
 // cacheDir 是「搜索结果缩略图」的本地缓存目录（相对工作目录，不存在就建）。
-// 刻意与 preImg 分开：preImg 是**入库后的正式封面**（要记账、不能丢），
+// 刻意与 coversDir 分开：coversDir 是**入库后的正式封面**（要记账、不能丢），
 // cache 只是搜索列表里瞄一眼用的临时图，随时可以整目录删掉重下。
 const cacheDir = "cache"
 
@@ -187,8 +181,10 @@ func (s *MetaApiService) SearchWorks(ctx context.Context, keyword string, page i
 	return resp, nil
 }
 
-// DownloadCover 下载封面并**原样**存到工作目录的相对路径 preImg/ 下，返回落盘信息。
-// 不改分辨率、不转换格式；webp 也原样存 .webp。
+// DownloadCover 下载封面并保存到工作目录的相对路径 covers/ 下，返回落盘信息。
+//
+// 格式策略（2026-11-16 用户要求）：**不引入图像编码库**，下载时优先探测同名 .webp
+// 档位（DLsite 通常有，体积更小）；服务器没有就回落到原图，原样保存。
 func (s *MetaApiService) DownloadCover(ctx context.Context, workID, coverURL string) (map[string]any, error) {
 	coverURL = strings.TrimSpace(coverURL)
 	if coverURL == "" {
@@ -199,17 +195,17 @@ func (s *MetaApiService) DownloadCover(ctx context.Context, workID, coverURL str
 		id = "unknown"
 	}
 
-	data, ext, err := s.fetchImage(ctx, coverURL)
+	data, ext, err := s.fetchImagePreferringWebP(ctx, coverURL)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := os.MkdirAll(preImgDir, 0o755); err != nil {
-		return nil, fmt.Errorf("创建目录 %s 失败: %w", preImgDir, err)
+	if err := os.MkdirAll(coversDir, 0o755); err != nil {
+		return nil, fmt.Errorf("创建目录 %s 失败: %w", coversDir, err)
 	}
 
 	name := fmt.Sprintf("%s_cover%s", id, ext)
-	relPath := filepath.Join(preImgDir, name)
+	relPath := filepath.Join(coversDir, name)
 
 	savedPath, err := writeFileUnique(relPath, data)
 	if err != nil {
@@ -225,7 +221,7 @@ func (s *MetaApiService) DownloadCover(ctx context.Context, workID, coverURL str
 		record := &model.CoverFile{
 			Source:   database.SourceDLsite,
 			WorkID:   id,
-			Dir:      preImgDir,
+			Dir:      coversDir,
 			Path:     filepath.ToSlash(savedPath),
 			AbsPath:  absPath,
 			Bytes:    int64(len(data)),
@@ -239,7 +235,7 @@ func (s *MetaApiService) DownloadCover(ctx context.Context, workID, coverURL str
 
 	return map[string]any{
 		"id":       id,
-		"dir":      preImgDir,                   // 相对工作目录
+		"dir":      coversDir,                   // 相对工作目录
 		"path":     filepath.ToSlash(savedPath), // 相对路径，落在哪个盘都稳定
 		"absPath":  absPath,                     // 实际绝对位置，方便对照
 		"bytes":    len(data),
@@ -248,11 +244,11 @@ func (s *MetaApiService) DownloadCover(ctx context.Context, workID, coverURL str
 	}, nil
 }
 
-// PreImgDir 返回图片落地目录的绝对路径，前端可以显示"存到哪了"。
-func (s *MetaApiService) PreImgDir() string {
-	abs, err := filepath.Abs(preImgDir)
+// CoversDir 返回封面落地目录的绝对路径，前端可以显示"存到哪了"。
+func (s *MetaApiService) CoversDir() string {
+	abs, err := filepath.Abs(coversDir)
 	if err != nil {
-		return preImgDir
+		return coversDir
 	}
 	return abs
 }
@@ -262,7 +258,8 @@ func (s *MetaApiService) PreImgDir() string {
 // 为什么要缓存：DLsite 的封面直链在 webview 里不一定加载得出来（Referer/成人确认），
 // 而搜索候选只是一排小图，落一份到本地最稳；目录不存在就建。
 // 已缓存过的作品**不再联网**：文件名固定 <编号>_cover.<ext>（缓存语义，允许覆盖，
-// 不像 preImg 那样加 -2 后缀 —— 那是"存档"，一份都不能丢）。
+// 不像 covers 那样加 -2 后缀 —— 那是"存档"，一份都不能丢）。
+// 下载同样优先探测 .webp 版本（用户要求本机图片尽量用 webp），拿不到就回落到原图。
 func (s *MetaApiService) CacheCover(ctx context.Context, workID, coverURL string) (string, error) {
 	id, ok := NormalizeDLsiteID(workID)
 	if !ok {
@@ -287,7 +284,7 @@ func (s *MetaApiService) CacheCover(ctx context.Context, workID, coverURL string
 	}
 
 	// ② 下载后落到 cache/，再转成 data URL 返回
-	data, ext, err := s.fetchImage(ctx, coverURL)
+	data, ext, err := s.fetchImagePreferringWebP(ctx, coverURL)
 	if err != nil {
 		return "", err
 	}
