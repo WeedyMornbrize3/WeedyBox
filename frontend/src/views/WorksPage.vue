@@ -51,12 +51,15 @@
           :game-path-exists="meta.gamePathExists"
           :running="meta.gameRunning"
           :launching="meta.launching"
+          :show-tags="false"
           @download="handleStoreIn"
           @launch="meta.launchGame"
           @change-path="meta.changeGamePath"
         />
-        <!-- 我的标签：用户自己加，存后端 work_tags 表（与 DLsite 抓来的 tags 分开） -->
-        <MetaUserTags />
+        <!-- Steam 源的动态：评价汇总 / 当前在线 / 最近公告（DLsite 源没有这块） -->
+        <MetaSteamStats v-if="meta.source === 'steam'" />
+        <!-- 标签：抓取来的 tags 与用户自己加的合并成一份，改完点「保存」才写库 -->
+        <MetaTagEditor />
         <!-- exe 被删除/移走：提示用户用「更换位置」重新选程序（启动按钮同时禁用） -->
         <MetaMessage v-if="meta.gameWarning" tone="error" :text="meta.gameWarning" />
         <!-- 入库失败 / 启动失败要看得见：这页没有别的提示条，静默失败会让人以为点了没反应 -->
@@ -83,7 +86,8 @@ import { useLibraryStore } from '../stores/libraryStore'
 import MetaEmptyState from '../components/meta/MetaEmptyState.vue'
 import MetaMessage from '../components/meta/MetaMessage.vue'
 import MetaSection from '../components/meta/MetaSection.vue'
-import MetaUserTags from '../components/meta/MetaUserTags.vue'
+import MetaSteamStats from '../components/meta/MetaSteamStats.vue'
+import MetaTagEditor from '../components/meta/MetaTagEditor.vue'
 import MetaWorkDetails from '../components/meta/MetaWorkDetails.vue'
 import MetaWorkOverview from '../components/meta/MetaWorkOverview.vue'
 

@@ -42,18 +42,20 @@
         v-if="library.works.length || !library.loading"
         class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3"
       >
-        <!-- 一张卡片 = 封面按钮 + 右上角删除按钮（同级，不嵌套：button 里不能再放 button） -->
-        <div v-for="item in library.works" :key="item.source + item.workId" class="group relative">
+        <!-- 一张卡片 = 封面按钮 + 右上角删除按钮（同级，不嵌套：button 里不能再放 button）
+             封面统一 2:3 等比裁切（用户要求：Steam / DLsite / 以后所有来源都一样）：
+             Steam 的 library_600x900 本身就是 2:3，DLsite 的 4:3 图会被 object-cover 居中裁掉两边。 -->
+        <div v-for="item in library.works" :key="itemKey(item)" class="group relative">
           <button
             type="button"
             class="relative block w-full overflow-hidden rounded-lg border-theme bg-secondary cursor-pointer p-0"
             :aria-label="`打开「${item.name}」的作品详情`"
-            @click="openWork(item.workId)"
+            @click="openWork(item)"
           >
-            <span class="block w-full aspect-[4/3]">
+            <span class="block w-full aspect-[2/3]">
               <img
-                v-if="library.covers[item.workId]"
-                :src="library.covers[item.workId]"
+                v-if="library.coverFor(item)"
+                :src="library.coverFor(item)"
                 :alt="item.name"
                 class="w-full h-full object-cover"
                 draggable="false"
@@ -76,19 +78,19 @@
           <button
             type="button"
             class="lib-del btn-row absolute top-1.5 right-1.5 opacity-75 group-hover:opacity-100 group-focus-within:opacity-100 hover:opacity-100 focus-visible:opacity-100"
-            :class="{ 'is-armed opacity-100 scale-110': armedId === item.workId }"
+            :class="{ 'is-armed opacity-100 scale-110': armedKey === itemKey(item) }"
             :disabled="library.removingId === item.workId"
-            :title="deleteTitle(item.workId)"
-            :aria-label="deleteTitle(item.workId)"
-            @click.stop="handleRemove(item.workId)"
-            @mouseleave="cancelArm(item.workId)"
-            @blur="cancelArm(item.workId)"
+            :title="deleteTitle(item)"
+            :aria-label="deleteTitle(item)"
+            @click.stop="handleRemove(item)"
+            @mouseleave="cancelArm(item)"
+            @blur="cancelArm(item)"
           >
             <span
               :class="
                 library.removingId === item.workId
                   ? 'i-lucide-loader-circle spin'
-                  : armedId === item.workId
+                  : armedKey === itemKey(item)
                     ? 'i-lucide-check'
                     : 'i-lucide-trash-2'
               "
@@ -181,11 +183,24 @@
             <!-- 扫描添加：扫出来的名字点一下就进搜索（名字同时会写进手动搜索的输入框） -->
             <ScanPanel v-if="addMode === 'scan'" class="min-h-0" @detail="openScanResult" />
 
-            <!-- 手动搜索：原来的流程原样保留，只是改叫「手动」 -->
+            <!-- 手动搜索：原来的流程原样保留，只是改叫「手动」；
+                 来源可以在 DLsite 与 Steam 之间切换（Steam 走 storesearch，候选最多 10 条） -->
             <template v-else>
-              <p class="m-0 text-xs text-tertiary">
-                手动搜索：输入 RJ 编号精确抓取（如 RJ01721474），或输入作品名做模糊搜索；搜到的作品<b class="font-medium text-secondary">不会自动入库</b>，点开详情后再点「入库」。
-              </p>
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xs text-secondary">搜索来源</span>
+                <button
+                  v-for="option in SEARCH_SOURCE_OPTIONS"
+                  :key="option.value"
+                  type="button"
+                  class="chip"
+                  :class="{ 'chip-active': meta.searchSource === option.value }"
+                  :aria-pressed="meta.searchSource === option.value"
+                  @click="meta.setSearchSource(option.value)"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+              <p class="m-0 text-xs text-tertiary">{{ searchHint }}</p>
               <MetaSearchBar v-model="meta.keyword" :loading="meta.loading" @submit="submitSearch" />
             </template>
 
@@ -193,8 +208,15 @@
             <MetaMessage v-if="addMode === 'manual' && meta.status" :text="meta.status" />
             <MetaMessage v-if="addMode === 'manual' && meta.pageLoading" :text="`正在加载第 ${meta.candidatePage} 页…`" />
 
-            <!-- 模糊搜索的候选：每页 10 个，翻到哪页才取那一页的 30 条里的 10 条并下预览图 -->
-            <template v-if="addMode === 'manual' && meta.candidateTotal > 0">
+            <!-- Steam 候选：最多 10 条，没有分页；点「详情」按 appid 取商店详情 -->
+            <template v-if="addMode === 'manual' && meta.searchSource === 'steam' && meta.steamCandidates.length">
+              <div class="min-h-0 flex-1 overflow-y-auto scrollbar-theme -mx-5 border-t-theme-light">
+                <MetaCandidateList :candidates="meta.steamCandidates" @select="chooseSteamCandidate" />
+              </div>
+            </template>
+
+            <!-- DLsite 模糊搜索的候选：每页 10 个，翻到哪页才取那一页的 30 条里的 10 条并下预览图 -->
+            <template v-else-if="addMode === 'manual' && meta.candidateTotal > 0">
               <div class="min-h-0 flex-1 overflow-y-auto scrollbar-theme -mx-5 border-t-theme-light">
                 <MetaCandidateList
                   :candidates="meta.pagedCandidates"
@@ -220,10 +242,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMetaStore } from '../stores/metaStore'
 import { useLibraryStore } from '../stores/libraryStore'
+import type { LibrarySource, LibraryWork } from '../services/libraryService'
 import MetaCandidateList from '../components/meta/MetaCandidateList.vue'
 import MetaMessage from '../components/meta/MetaMessage.vue'
 import MetaPager from '../components/meta/MetaPager.vue'
@@ -234,34 +257,52 @@ import ScanPanel from '../components/library/ScanPanel.vue'
 /** 「添加游戏」弹窗的两种方式：扫描添加（默认）/ 手动搜索（原搜索流程） */
 type AddMode = 'scan' | 'manual'
 
+/** 手动搜索的两个来源（用户要求「手动搜索可以是 steam 也可以是 DLsite」） */
+const SEARCH_SOURCE_OPTIONS: { value: LibrarySource; label: string }[] = [
+  { value: 'dlsite', label: 'DLsite' },
+  { value: 'steam', label: 'Steam' },
+]
+
 const library = useLibraryStore()
 const meta = useMetaStore()
 const router = useRouter()
 
+/** 两种来源的输入提示：DLsite 支持 RJ 精确抓，Steam 只能按名字（候选最多 10 条） */
+const searchHint = computed(() =>
+  meta.searchSource === 'steam'
+    ? '输入游戏名搜索 Steam 商店（最多 10 个候选，没有分页）；点「详情」按 appid 取商店信息。搜到的作品不会自动入库，点开详情后再点「入库」。'
+    : '输入 RJ 编号精确抓取（如 RJ01721474），或输入作品名做模糊搜索；搜到的作品不会自动入库，点开详情后再点「入库」。',
+)
+
+/** 一张卡片的唯一 key（编号在两个来源里可能重复，所以带上 source） */
+function itemKey(item: Pick<LibraryWork, 'source' | 'workId'>): string {
+  return `${item.source}:${item.workId}`
+}
+
 /** 删除是破坏性操作，第一次点只"上膛"，再点一次才真删（与 TODO 删除同一套路） */
-const armedId = ref('')
+const armedKey = ref('')
 /** 搜索弹窗开关 */
 const searchOpen = ref(false)
 /** 弹窗当前方式：默认扫描添加；切到手动搜索走原来的输入框流程 */
 const addMode = ref<AddMode>('scan')
 
-function deleteTitle(workId: string): string {
-  if (library.removingId === workId) return '删除中…'
-  return armedId.value === workId ? '再点一次删除' : '从游戏库删除（连点两下）'
+function deleteTitle(item: LibraryWork): string {
+  if (library.removingId === item.workId) return '删除中…'
+  return armedKey.value === itemKey(item) ? '再点一次删除' : '从游戏库删除（连点两下）'
 }
 
 /** 移开鼠标 / 按钮失焦就撤销"再点一次"的待确认态（TodoItem 同款逻辑） */
-function cancelArm(workId: string) {
-  if (armedId.value === workId) armedId.value = ''
+function cancelArm(item: LibraryWork) {
+  if (armedKey.value === itemKey(item)) armedKey.value = ''
 }
 
-async function handleRemove(workId: string) {
-  if (armedId.value !== workId) {
-    armedId.value = workId
+async function handleRemove(item: LibraryWork) {
+  if (armedKey.value !== itemKey(item)) {
+    armedKey.value = itemKey(item)
     return
   }
-  armedId.value = ''
-  await library.remove(workId)
+  armedKey.value = ''
+  await library.remove(item)
 }
 
 /**
@@ -274,6 +315,8 @@ function openAddGame() {
   meta.error = ''
   meta.status = ''
   meta.keyword = ''
+  // 来源回到默认的 DLsite：上次切到 Steam 不该成为下次开窗的"惊喜"
+  meta.setSearchSource('dlsite')
   addMode.value = 'scan'
   searchOpen.value = true
 }
@@ -291,22 +334,30 @@ function closeSearch() {
  * （用户报的 bug）。空关键词时 runSearch 只提示「搜索栏不能为空」并返回 false。
  */
 async function submitSearch() {
-  const searched = await meta.runSearch()
+  // 来源由弹窗里的 chip 决定：DLsite 走原流程，Steam 走 storesearch
+  const searched = meta.searchSource === 'steam' ? await meta.runSteamSearch() : await meta.runSearch()
   if (searched && meta.work) finishSearch()
 }
 
 /**
  * 点扫描结果里的「详情」：按编号精确抓取后进 /works 核对。
+ * Steam 条目按 appid 读商店详情（source='steam'），其余仍走 DLsite 缓存优先。
  * 写库不在这里 —— 是否入库由 ScanPanel 的「全部入库 / 入库所选」决定。
  */
-async function openScanResult(workId: string) {
-  await meta.loadById(workId)
+async function openScanResult(workId: string, source: LibrarySource = 'dlsite') {
+  await meta.loadById(workId, false, source)
   if (meta.work) finishSearch()
 }
 
-/** 点候选「详情」：精确抓取 → 进作品库 */
+/** 点候选「详情」：精确抓取 → 进作品库（候选永远来自 DLsite 手动搜索） */
 async function chooseCandidate(id: string) {
-  await meta.loadById(id)
+  await meta.loadById(id, false, 'dlsite')
+  if (meta.work) finishSearch()
+}
+
+/** 点 Steam 候选「详情」：按 appid 取商店详情（source='steam'）→ 进作品库 */
+async function chooseSteamCandidate(id: string) {
+  await meta.loadById(id, false, 'steam')
   if (meta.work) finishSearch()
 }
 
@@ -320,10 +371,11 @@ function finishSearch() {
 /**
  * 点封面进入作品库详情：
  * 先进 /works 再 loadById —— loadById 是缓存优先（库里有就不联网），所以详情几乎是瞬间出来的。
+ * 必须把卡片的来源一并带过去：同一个编号在 dlsite / steam 里是两条记录。
  */
-async function openWork(workId: string) {
+async function openWork(item: LibraryWork) {
   await router.push('/works')
-  await meta.loadById(workId)
+  await meta.loadById(item.workId, false, item.source as LibrarySource)
 }
 
 onMounted(() => {

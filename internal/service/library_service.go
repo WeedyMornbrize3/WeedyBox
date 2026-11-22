@@ -75,14 +75,17 @@ func (s *LibraryService) Fetch(ctx context.Context, req FetchWorkRequest) (map[s
 
 	keyword := strings.TrimSpace(req.Keyword)
 	workID := strings.TrimSpace(req.WorkID)
+	source := normalizeWorkSource(req.Source)
+
+	// Steam 源：编号就是 appid，走商店接口（没有"按名字搜"这一步，搜索仍只属于 DLsite）
+	if source == database.SourceSteam {
+		return s.fetchSteamWork(ctx, workID, req.Refresh)
+	}
+
 	if workID == "" {
 		if id, ok := getmeta.NormalizeDLsiteID(keyword); ok {
 			workID = id
 		}
-	}
-	source := req.Source
-	if strings.TrimSpace(source) == "" {
-		source = database.SourceDLsite
 	}
 
 	// ① 缓存
@@ -109,7 +112,37 @@ func (s *LibraryService) Fetch(ctx context.Context, req FetchWorkRequest) (map[s
 		return nil, errors.New("后端返回了无法识别的作品数据")
 	}
 
-	return decorate(work, nil, false), nil
+	// 强制刷新（refresh=true）也要把库里的记录挂回来：封面指针与 game_path 决定
+	// 「入库 / 游戏启动」按钮和封面显示，不该因为"这次走了网络"就丢。
+	row, _ := s.DB.FindLibraryWork(ctx, source, workID)
+	return decorate(work, row, false), nil
+}
+
+// fetchSteamWork 取一个 Steam 游戏：**缓存优先**（库里已有完整 raw_json 就直接读）。
+//
+// 与 DLsite 分支共用同一套「缓存优先、只读不写」语义，只是数据源换成
+// MetaApiService.FetchSteamWork（appdetails）。编号必须是纯数字 appid。
+func (s *LibraryService) fetchSteamWork(ctx context.Context, appID string, refresh bool) (map[string]any, error) {
+	appID = getmeta.NormalizeSteamAppID(appID)
+	if appID == "" {
+		return nil, errors.New("Steam 来源需要纯数字的 appid（如 1229490）")
+	}
+
+	if !refresh {
+		if row, err := s.DB.FindLibraryWork(ctx, database.SourceSteam, appID); err == nil && row != nil {
+			if work, ok := workFromRawJSON(row); ok && workIsComplete(work) {
+				return decorate(work, row, true), nil
+			}
+		}
+	}
+
+	work, err := s.ensureMeta().FetchSteamWork(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	// 与 DLsite 分支同理：刷新也挂上库里的封面/位置指针
+	row, _ := s.DB.FindLibraryWork(ctx, database.SourceSteam, appID)
+	return decorate(work, row, false), nil
 }
 
 // StoreRequest 是「入库」的入参：来源 + 编号，外加**游戏启动位置的来源**。
@@ -151,12 +184,14 @@ func (s *LibraryService) Store(ctx context.Context, req StoreRequest) (map[strin
 	if workID == "" {
 		return nil, errors.New("作品编号为空，无法入库")
 	}
-	source := req.Source
-	if strings.TrimSpace(source) == "" {
-		source = database.SourceDLsite
-	}
+	source := normalizeWorkSource(req.Source)
 	// 入库时就确定要记录的游戏程序位置（直接给 exe / 从文件夹里挑 / 留空）
 	gamePath := s.resolveStoreGamePath(ctx, req)
+
+	// Steam 源：元数据来自商店接口，封面来自本机 appcache\librarycache，走单独一条路径
+	if source == database.SourceSteam {
+		return s.storeSteamWork(ctx, workID, gamePath)
+	}
 
 	// ① 库里已有**完整**文本：不再抓；封面也在了就直接返回。
 	//   raw_json 残缺（没有编号/名称）时走联网重抓，避免把空壳一直复用下去。
@@ -217,6 +252,95 @@ func (s *LibraryService) Store(ctx context.Context, req StoreRequest) (map[strin
 		return decorate(work, saved, false), nil
 	}
 	return decorate(work, nil, false), nil
+}
+
+// storeSteamWork 把一个 Steam 游戏收进游戏库（source='steam'，编号=appid）。
+//
+// 与 DLsite 的 Store 同一套策略：
+//   - 库里已有完整 raw_json 就不再抓（只补位置/封面）；
+//   - 否则联网抓一份 → 校验完整性 → 写库；
+//   - 位置在入库时就记录（扫描添加带进来的安装目录 → PickGameExecutable）。
+//
+// 封面**不联网**：Steam 的 2:3 竖版封面在本机 `appcache\librarycache\<appid>\`，
+// 找到就复制进 covers/ 并记账；**找不到就不使用图像**（用户明确要求），不算错误。
+func (s *LibraryService) storeSteamWork(ctx context.Context, appID, gamePath string) (map[string]any, error) {
+	appID = getmeta.NormalizeSteamAppID(appID)
+	if appID == "" {
+		return nil, errors.New("Steam 游戏编号无效（应为纯数字 appid）")
+	}
+
+	// ① 库里已有完整元数据：不再抓；顺手更新位置、补封面
+	if row, err := s.DB.FindLibraryWork(ctx, database.SourceSteam, appID); err == nil && row != nil {
+		if work, ok := workFromRawJSON(row); ok && workIsComplete(work) {
+			if perr := s.saveGamePath(ctx, database.SourceSteam, appID, gamePath); perr != nil {
+				return nil, perr
+			}
+			if strings.TrimSpace(row.CoverAbsPath) == "" {
+				if _, ierr := s.importSteamCover(ctx, appID); ierr != nil {
+					return nil, ierr
+				}
+			}
+			if saved, ferr := s.DB.FindLibraryWork(ctx, database.SourceSteam, appID); ferr == nil && saved != nil {
+				return decorate(work, saved, true), nil
+			}
+			return decorate(work, row, true), nil
+		}
+	}
+
+	// ② 抓商店详情（appdetails）
+	work, err := s.ensureMeta().FetchSteamWork(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	if !workIsComplete(work) {
+		return nil, fmt.Errorf("Steam 游戏 %s 的元数据不完整（缺少名称或详情字段），已取消入库", appID)
+	}
+
+	row := rowFromWork(database.SourceSteam, work)
+	row.WorkID = appID
+	if err := s.DB.UpsertLibraryWork(ctx, &row); err != nil {
+		return nil, fmt.Errorf("写入游戏库失败: %w", err)
+	}
+
+	// 扫描添加时顺手记录游戏启动位置（放在封面之前：封面失败不该连位置一起丢）
+	if err := s.saveGamePath(ctx, database.SourceSteam, appID, gamePath); err != nil {
+		return nil, err
+	}
+
+	// ③ 本机封面：librarycache 里有就导入，没有就留空
+	if _, ierr := s.importSteamCover(ctx, appID); ierr != nil {
+		return nil, ierr
+	}
+
+	if saved, ferr := s.DB.FindLibraryWork(ctx, database.SourceSteam, appID); ferr == nil && saved != nil {
+		return decorate(work, saved, false), nil
+	}
+	return decorate(work, nil, false), nil
+}
+
+// importSteamCover 把 Steam 缓存的封面复制进 covers/ 并记账，返回源文件路径。
+// 找不到封面返回空串 + nil（用户要求：没有对应文件夹就不使用图像）。
+func (s *LibraryService) importSteamCover(ctx context.Context, appID string) (string, error) {
+	image, err := scan.SteamCoverImage(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(image) == "" {
+		return "", nil
+	}
+	if _, ierr := s.ensureMeta().ImportCoverFile(ctx, database.SourceSteam, appID, image); ierr != nil {
+		return "", fmt.Errorf("元数据已入库，但导入 Steam 封面失败: %w", ierr)
+	}
+	return image, nil
+}
+
+// normalizeWorkSource 统一来源标识：空值一律当 dlsite（与 database 的口径一致）。
+func normalizeWorkSource(source string) string {
+	s := strings.ToLower(strings.TrimSpace(source))
+	if s == "" {
+		return database.SourceDLsite
+	}
+	return s
 }
 
 // List 列出游戏库里所有作品（最近入库的在前）。source 传空串 = 所有来源。
@@ -291,76 +415,100 @@ func (s *LibraryService) Remove(ctx context.Context, workID, source string) erro
 	return s.DB.DeleteLibraryWork(ctx, source, workID)
 }
 
-// ===== 用户自定义标签 =====
+// ===== 作品标签 =====
 //
-// 与 DLsite 抓来的 `tags` 分开存：抓取标签随元数据刷新会变，用户自己加的标签是
-// 他的资产，不能因为重新抓取就消失。归属是「来源 + 编号」，所以对还没入库的作品
-// 也能加（作品库详情页可以从搜索结果直接进入）。
+// 作品详情页只有**一份**标签列表：抓取来的 tags 与用户自己加的标签在这里被当成
+// 同一份东西让用户整理（删掉不想要的、补上自己的），点「保存」后整份写进 work_tags，
+// 并标记为"已改写"—— 之后重新抓取元数据也不会把它冲掉（与"自己加的标签重抓不丢"
+// 是同一条原则）。归属是「来源 + 编号」，所以对还没入库的作品也能整理。
 
-// maxUserTagLength 是单个自定义标签的长度上限（按字符数，不是字节）。
+// maxUserTagLength 是单个标签的长度上限（按字符数，不是字节）。
 const maxUserTagLength = 32
 
-// normalizeUserTag 自定义标签的清洗：去掉首尾空白，中间连续空白压成一个空格。
+// maxUserTagCount 是一次保存的标签条数上限（抓取来的标签本身 ≤64，留出追加空间）。
+const maxUserTagCount = 128
+
+// normalizeUserTag 标签清洗：去掉首尾空白，中间连续空白压成一个空格。
 func normalizeUserTag(raw string) string {
 	return strings.Join(strings.Fields(raw), " ")
 }
 
-// ListTags 列出用户给这个作品加的自定义标签（不含 DLsite 抓来的 tags）。
-func (s *LibraryService) ListTags(ctx context.Context, workID, source string) ([]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	if s.DB == nil {
-		return []string{}, nil
+// normalizeTagSet 清洗用户提交的整份标签列表：逐条 normalize、丢空值、按首次出现去重。
+// 太长/太多直接报错而不是静默截断 —— 用户能看见是哪一条出了问题，改完再保存。
+func normalizeTagSet(raw []string) ([]string, error) {
+	out := make([]string, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for _, item := range raw {
+		tag := normalizeUserTag(item)
+		if tag == "" {
+			continue
+		}
+		if utf8.RuneCountInString(tag) > maxUserTagLength {
+			return nil, fmt.Errorf("标签「%s」超过 %d 个字符", tag, maxUserTagLength)
+		}
+		if _, dup := seen[tag]; dup {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
 	}
-	workID = strings.TrimSpace(workID)
-	if workID == "" {
-		return nil, errors.New("作品编号为空")
+	if len(out) > maxUserTagCount {
+		return nil, fmt.Errorf("标签最多 %d 个", maxUserTagCount)
 	}
-	return s.DB.ListWorkTags(ctx, source, workID)
+	return out, nil
 }
 
-// AddTag 添加一个自定义标签，返回添加后的完整列表。
-func (s *LibraryService) AddTag(ctx context.Context, workID, tag, source string) ([]string, error) {
+// GetTags 读一个作品的标签集合。
+//
+//   - Edited=true：用户保存过整份列表，Tags 就是他定的那一份（work_tags 里的全部）；
+//   - Edited=false：还没整理过，Tags 里只有旧版本逐条加过的标签（可能为空），
+//     前端要再与抓取来的 tags 合并成初始列表。
+func (s *LibraryService) GetTags(ctx context.Context, workID, source string) (model.TagSet, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
 	if s.DB == nil {
-		return nil, errors.New("数据库未就绪")
+		return model.TagSet{Tags: []string{}}, nil
 	}
 	workID = strings.TrimSpace(workID)
-	tag = normalizeUserTag(tag)
 	if workID == "" {
-		return nil, errors.New("作品编号为空")
+		return model.TagSet{}, errors.New("作品编号为空")
 	}
-	if tag == "" {
-		return nil, errors.New("标签不能为空")
+	edited, err := s.DB.WorkTagsEdited(ctx, source, workID)
+	if err != nil {
+		return model.TagSet{}, err
 	}
-	if utf8.RuneCountInString(tag) > maxUserTagLength {
-		return nil, fmt.Errorf("标签最长 %d 个字符", maxUserTagLength)
+	tags, err := s.DB.ListWorkTags(ctx, source, workID)
+	if err != nil {
+		return model.TagSet{}, err
 	}
-	if err := s.DB.AddWorkTag(ctx, source, workID, tag); err != nil {
-		return nil, err
+	if tags == nil {
+		tags = []string{}
 	}
-	return s.DB.ListWorkTags(ctx, source, workID)
+	return model.TagSet{Tags: tags, Edited: edited}, nil
 }
 
-// RemoveTag 删除一个自定义标签，返回删除后的完整列表。
-func (s *LibraryService) RemoveTag(ctx context.Context, workID, tag, source string) ([]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+// SetTags 用整份列表覆盖保存这个作品的标签（用户点「保存」时才调用）。
+// 返回保存后的集合（已清洗、已去重），前端据此更新"已保存"基准。
+func (s *LibraryService) SetTags(ctx context.Context, workID, source string, tags []string) (model.TagSet, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	if s.DB == nil {
-		return nil, errors.New("数据库未就绪")
+		return model.TagSet{}, errors.New("数据库未就绪")
 	}
 	workID = strings.TrimSpace(workID)
 	if workID == "" {
-		return nil, errors.New("作品编号为空")
+		return model.TagSet{}, errors.New("作品编号为空")
 	}
-	if err := s.DB.RemoveWorkTag(ctx, source, workID, normalizeUserTag(tag)); err != nil {
-		return nil, err
+	cleaned, err := normalizeTagSet(tags)
+	if err != nil {
+		return model.TagSet{}, err
 	}
-	return s.DB.ListWorkTags(ctx, source, workID)
+	if err := s.DB.SaveWorkTags(ctx, source, workID, cleaned); err != nil {
+		return model.TagSet{}, err
+	}
+	return model.TagSet{Tags: cleaned, Edited: true}, nil
 }
 
 // CoverDataURL 把游戏库里记录的本地封面读成 data URL，给 <img> 直接显示。//

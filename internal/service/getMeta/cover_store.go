@@ -14,6 +14,7 @@ package getmeta
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	pathpkg "path"
@@ -21,6 +22,7 @@ import (
 	"strings"
 
 	"WeedyBox/internal/database"
+	"WeedyBox/internal/model"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -202,4 +204,93 @@ func webpVariantURL(rawURL string) string {
 		return strings.TrimSuffix(base, ext) + ".webp" + suffix
 	}
 	return ""
+}
+
+// ImportCoverFile 把一个**本机已有**的图片文件复制进 covers/ 并记账。
+//
+// 用途：Steam 的封面不是从网上下载的，而是 Steam 客户端早就存在
+// `appcache\librarycache\<appid>\library_600x900.jpg`（见 scan.SteamCoverImage）。
+// 这里只做「复制 + 记账」，格式原样保留（本地图已经是 jpg/png，不再探测 webp）。
+//
+// 与 DownloadCover 的差别只在数据来源：落盘规则完全一致（不覆盖同名、重名加 -2/-3），
+// 这样「从游戏库移除作品时删封面」的那套逻辑不用区分来源。
+func (s *MetaApiService) ImportCoverFile(ctx context.Context, source, workID, srcPath string) (map[string]any, error) {
+	srcPath = strings.TrimSpace(srcPath)
+	if srcPath == "" {
+		return nil, errors.New("封面源文件为空")
+	}
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return nil, fmt.Errorf("读取本地封面失败: %w", err)
+	}
+	if len(data) == 0 {
+		return nil, errors.New("本地封面内容为空")
+	}
+	if len(data) > maxCoverBytes {
+		return nil, fmt.Errorf("本地封面超过 %d 字节上限，已放弃", maxCoverBytes)
+	}
+
+	// 后缀按真实内容判定（Steam 的 jpg 有时其实是 png/webp）
+	ext := imageExt(srcPath, "", data)
+	if err := os.MkdirAll(coversDir, 0o755); err != nil {
+		return nil, fmt.Errorf("创建目录 %s 失败: %w", coversDir, err)
+	}
+
+	relPath := filepath.Join(coversDir, safeCoverBase(workID)+"_cover"+ext)
+	savedPath, err := writeFileUnique(relPath, data)
+	if err != nil {
+		return nil, err
+	}
+	absPath, _ := filepath.Abs(savedPath)
+
+	// 记账失败只打日志：图已经存好了，不该因为记账失败让用户重导一遍
+	if s.DB != nil {
+		record := &model.CoverFile{
+			Source:   normalizeCoverSource(source),
+			WorkID:   workID,
+			Dir:      coversDir,
+			Path:     filepath.ToSlash(savedPath),
+			AbsPath:  absPath,
+			Bytes:    int64(len(data)),
+			Suffix:   ext,
+			CoverURL: srcPath, // 记下"从哪来的"，方便以后核对
+		}
+		if rerr := s.DB.RecordCoverFile(ctx, record); rerr != nil {
+			fmt.Printf("记录封面落地位置失败（文件已保存，本次仍算成功）: %v\n", rerr)
+		}
+	}
+
+	return map[string]any{
+		"id":           workID,
+		"dir":          coversDir,
+		"path":         filepath.ToSlash(savedPath),
+		"absPath":      absPath,
+		"bytes":        len(data),
+		"suffix":       ext,
+		"coverUrl":     srcPath,
+		"importedFrom": filepath.ToSlash(srcPath),
+	}, nil
+}
+
+// safeCoverBase 把编号变成安全的文件名（Steam 是纯数字，DLsite 是 RJ…；
+// 万一将来有别的来源，也别让路径分隔符之类的字符跑进文件名）。
+func safeCoverBase(workID string) string {
+	base := strings.TrimSpace(workID)
+	if base == "" {
+		return "unknown"
+	}
+	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "*", "_", "?", "_", "\"", "_", "<", "_", ">", "_", "|", "_")
+	base = replacer.Replace(base)
+	if base == "" {
+		return "unknown"
+	}
+	return base
+}
+
+// normalizeCoverSource 空来源按 dlsite 处理（与 database 的口径一致）。
+func normalizeCoverSource(source string) string {
+	if strings.TrimSpace(source) == "" {
+		return database.SourceDLsite
+	}
+	return strings.ToLower(strings.TrimSpace(source))
 }

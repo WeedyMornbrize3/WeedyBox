@@ -8,19 +8,27 @@
 //
 // 封面走 base64 data URL（后端 libraryApi.coverDataUrl）：Wails webview 对 file:// 的
 // 支持至今没实机验证过，而 data URL 一定显示得出来，封面本来也只有几百 KB。
+//
+// 多来源（2026-11-21 加 Steam）：列表**不按来源过滤**（dlsite / steam 一起显示），
+// 封面缓存的 key 用 `来源:编号`，避免两个来源的编号撞车。
 
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { LIBRARY_SOURCE_DLSITE, libraryApi } from '../services/libraryService'
-import type { LibraryWork } from '../services/libraryService'
+import { libraryApi } from '../services/libraryService'
+import type { LibrarySource, LibraryWork } from '../services/libraryService'
 import { toMessage } from '../utils/metaFormat'
+
+/** 封面缓存的 key：来源 + 编号（dlsite: RJ… / steam: appid） */
+function coverKey(work: Pick<LibraryWork, 'source' | 'workId'>): string {
+  return `${work.source}:${work.workId}`
+}
 
 export const useLibraryStore = defineStore('library', () => {
   // ===== State =====
   const works = ref<LibraryWork[]>([])
   const loading = ref(false)
   const error = ref('')
-  /** 作品编号 → 本地封面 data URL（空串表示"查过了、没有封面"） */
+  /** `来源:编号` → 本地封面 data URL（空串表示"查过了、没有封面"） */
   const covers = ref<Record<string, string>>({})
   const removingId = ref('')
   /** 是否已经加载过一次（避免每次进页面都闪一下 loading） */
@@ -32,14 +40,14 @@ export const useLibraryStore = defineStore('library', () => {
 
   // ===== Actions =====
 
-  /** 拉列表 + 并发把每条的本地封面取成 data URL */
+  /** 拉列表（**所有来源**）+ 并发把每条的本地封面取成 data URL */
   async function load(force = false) {
     if (loading.value) return
     if (loaded.value && !force) return
     loading.value = true
     error.value = ''
     try {
-      works.value = await libraryApi.list(LIBRARY_SOURCE_DLSITE)
+      works.value = await libraryApi.list()
       loaded.value = true
       await loadCovers()
     } catch (err) {
@@ -54,29 +62,37 @@ export const useLibraryStore = defineStore('library', () => {
     // 逐条 await 会串行几十次 IPC；这里一次性并发，失败了那条就先留空
     const entries = await Promise.all(
       works.value.map(async (work) => {
-        if (covers.value[work.workId]) return [work.workId, covers.value[work.workId]] as const
+        const key = coverKey(work)
+        if (covers.value[key]) return [key, covers.value[key]] as const
         try {
-          const url = await libraryApi.coverDataUrl(work.workId)
-          return [work.workId, url] as const
+          const url = await libraryApi.coverDataUrl(work.workId, work.source as LibrarySource)
+          return [key, url] as const
         } catch {
-          return [work.workId, ''] as const
+          return [key, ''] as const
         }
       }),
     )
     const next = { ...covers.value }
-    for (const [id, url] of entries) next[id] = url
+    for (const [key, url] of entries) next[key] = url
     covers.value = next
   }
 
+  /** 某张卡片该显示的封面（模板只调这一个） */
+  function coverFor(work: Pick<LibraryWork, 'source' | 'workId'>): string {
+    return covers.value[coverKey(work)] ?? ''
+  }
+
   /** 从库里删一条记录（后端不删磁盘上的图片） */
-  async function remove(workId: string) {
-    removingId.value = workId
+  async function remove(work: LibraryWork) {
+    removingId.value = work.workId
     error.value = ''
     try {
-      await libraryApi.remove(workId)
-      works.value = works.value.filter((w) => w.workId !== workId)
+      await libraryApi.remove(work.workId, work.source as LibrarySource)
+      works.value = works.value.filter(
+        (w) => !(w.workId === work.workId && w.source === work.source),
+      )
       const next = { ...covers.value }
-      delete next[workId]
+      delete next[coverKey(work)]
       covers.value = next
     } catch (err) {
       error.value = `删除失败：${toMessage(err)}`
@@ -86,18 +102,20 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /** 作品刚被抓进库（或刚下完封面）时调：只刷新这一条的封面，不重拉整个列表 */
-  async function refreshCover(workId: string) {
+  async function refreshCover(workId: string, source: LibrarySource = 'dlsite') {
     try {
-      const url = await libraryApi.coverDataUrl(workId)
-      covers.value = { ...covers.value, [workId]: url }
+      const url = await libraryApi.coverDataUrl(workId, source)
+      covers.value = { ...covers.value, [`${source}:${workId}`]: url }
     } catch {
       // 取不到就是没有封面，不打扰用户
     }
   }
 
   /** 判断某个作品是否已在库里（作品库详情用） */
-  function has(workId: string): boolean {
-    return works.value.some((w) => w.workId === workId)
+  function has(workId: string, source?: string): boolean {
+    return works.value.some(
+      (w) => w.workId === workId && (source === undefined || w.source === source),
+    )
   }
 
   return {
@@ -113,6 +131,7 @@ export const useLibraryStore = defineStore('library', () => {
     // Actions
     load,
     loadCovers,
+    coverFor,
     remove,
     refreshCover,
     has,

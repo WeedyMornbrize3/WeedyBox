@@ -24,9 +24,12 @@ import (
 	"time"
 )
 
-// SourceDLsite 是当前唯一的元数据来源标识。
-// 加新来源时在这里补常量，入库时把 source 传进来即可。
-const SourceDLsite = "dlsite"
+// SourceDLsite / SourceSteam 是当前支持的元数据来源标识。
+// 加新来源时在这里补常量，入库时把 source 传进来即可（表结构来源无关）。
+const (
+	SourceDLsite = "dlsite"
+	SourceSteam  = "steam" // Steam 商店（appid 当编号），封面取本机 appcache\librarycache
+)
 
 // workColumns 列顺序固定在这里，读写共用，免得多处手写漏列。
 const workColumns = `source, work_id, name, maker, maker_id, series, series_id,
@@ -495,11 +498,18 @@ func timeOf(v interface{}) time.Time {
 	return time.Time{}
 }
 
-// ===== 作品自定义标签 =====
+// ===== 作品标签 =====
 //
-// 单独一张表、也惰性创建。刻意不挂在 library_works 上（外键/同一行）：作品库详情页
-// 可以打开一个还没入库的作品，用户在那里加的标签也要能存下来 —— 标签的归属是
+// 两张表都惰性创建，且都刻意不挂在 library_works 上（外键/同一行）：作品库详情页
+// 可以打开一个还没入库的作品，用户在那里整理的标签也要能存下来 —— 标签的归属是
 // 「来源 + 编号」，和"是否已入库"无关。
+//
+//   - work_tags      —— 标签行，id 递增 = 保存时的顺序；
+//   - work_tag_edits —— 「这个作品的标签被用户整份改写过」的标记（每作品一行）。
+//
+// 为什么需要标记：整份改写后 work_tags 里存的就是权威列表；但"用户把标签全删光"
+// 同样会让 work_tags 变空，光看行数分不清「从没整理过」与「整理成空列表」——
+// 前者要拿抓取来的 tags 当前置内容，后者必须显示为空。
 
 // ensureWorkTagsTable 惰性建表（幂等）。
 func (s *SQLiteService) ensureWorkTagsTable(ctx context.Context) error {
@@ -516,6 +526,12 @@ func (s *SQLiteService) ensureWorkTagsTable(ctx context.Context) error {
 			UNIQUE(source, work_id, tag)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_work_tags_work ON work_tags (source, work_id)`,
+		`CREATE TABLE IF NOT EXISTS work_tag_edits (
+			source TEXT NOT NULL,
+			work_id TEXT NOT NULL,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (source, work_id)
+		)`,
 	}
 	for _, query := range queries {
 		if err := s.Execute(ctx, query); err != nil {
@@ -525,7 +541,7 @@ func (s *SQLiteService) ensureWorkTagsTable(ctx context.Context) error {
 	return nil
 }
 
-// ListWorkTags 列出某个作品的自定义标签（按添加顺序）。
+// ListWorkTags 列出某个作品的标签（按保存顺序，即 work_tags.id 递增）。
 func (s *SQLiteService) ListWorkTags(ctx context.Context, source, workID string) ([]string, error) {
 	if s == nil || s.DB == nil {
 		return []string{}, nil
@@ -552,44 +568,78 @@ func (s *SQLiteService) ListWorkTags(ctx context.Context, source, workID string)
 	return tags, nil
 }
 
-// AddWorkTag 添加一个标签。重复添加不报错（UNIQUE + INSERT OR IGNORE）。
-func (s *SQLiteService) AddWorkTag(ctx context.Context, source, workID, tag string) error {
+// SaveWorkTags 用整份列表**覆盖**某个作品的标签（用户点「保存」时才走这里）：
+// 先清空、再按顺序插入、最后记一行"已改写"标记 —— 三步在同一个事务里，
+// 中途失败不会留下半份标签、也不会出现"标记了但其实没写进去"的状态。
+//
+// 传空列表是合法操作（用户把标签全删光）：work_tags 清空但标记保留，表示
+// "这个作品的标签就是空"，而不是"从没整理过"。
+func (s *SQLiteService) SaveWorkTags(ctx context.Context, source, workID string, tags []string) error {
 	if s == nil || s.DB == nil {
 		return fmt.Errorf("数据库未就绪")
 	}
 	workID = normalizeWorkID(workID)
-	tag = strings.TrimSpace(tag)
-	if workID == "" || tag == "" {
-		return fmt.Errorf("作品编号或标签为空")
+	if workID == "" {
+		return fmt.Errorf("作品编号为空")
 	}
 	if err := s.ensureWorkTagsTable(ctx); err != nil {
 		return err
 	}
-	if err := s.Execute(ctx,
-		`INSERT OR IGNORE INTO work_tags (source, work_id, tag) VALUES (?, ?, ?)`,
-		normalizeSource(source), workID, tag); err != nil {
-		return fmt.Errorf("添加标签失败: %w", err)
-	}
-	return nil
+	src := normalizeSource(source)
+	return s.Transaction(ctx, func(ctx context.Context) error {
+		if err := s.Execute(ctx,
+			`DELETE FROM work_tags WHERE source = ? AND work_id = ?`, src, workID); err != nil {
+			return fmt.Errorf("清空旧标签失败: %w", err)
+		}
+		for _, tag := range tags {
+			tag = strings.TrimSpace(tag)
+			if tag == "" {
+				continue
+			}
+			if err := s.Execute(ctx,
+				`INSERT OR IGNORE INTO work_tags (source, work_id, tag) VALUES (?, ?, ?)`,
+				src, workID, tag); err != nil {
+				return fmt.Errorf("写入标签失败: %w", err)
+			}
+		}
+		if err := s.Execute(ctx,
+			`INSERT OR REPLACE INTO work_tag_edits (source, work_id, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+			src, workID); err != nil {
+			return fmt.Errorf("标记标签已改写失败: %w", err)
+		}
+		return nil
+	})
 }
 
-// RemoveWorkTag 删除一个标签；不存在也算成功（幂等）。
-func (s *SQLiteService) RemoveWorkTag(ctx context.Context, source, workID, tag string) error {
+// WorkTagsEdited 这个作品的标签是否被用户整份改写过（work_tag_edits 里有行）。
+func (s *SQLiteService) WorkTagsEdited(ctx context.Context, source, workID string) (bool, error) {
 	if s == nil || s.DB == nil {
-		return fmt.Errorf("数据库未就绪")
+		return false, nil
 	}
 	workID = normalizeWorkID(workID)
-	tag = strings.TrimSpace(tag)
-	if workID == "" || tag == "" {
-		return nil
+	if workID == "" {
+		return false, nil
 	}
 	if err := s.ensureWorkTagsTable(ctx); err != nil {
-		return err
+		return false, err
 	}
-	if err := s.Execute(ctx,
-		`DELETE FROM work_tags WHERE source = ? AND work_id = ? AND tag = ?`,
-		normalizeSource(source), workID, tag); err != nil {
-		return fmt.Errorf("删除标签失败: %w", err)
+	rows, err := s.Query(ctx,
+		`SELECT COUNT(*) AS n FROM work_tag_edits WHERE source = ? AND work_id = ?`,
+		normalizeSource(source), workID)
+	if err != nil {
+		return false, fmt.Errorf("查询标签标记失败: %w", err)
 	}
-	return nil
+	if len(rows) == 0 {
+		return false, nil
+	}
+	// 驱动可能给 int64 / int / float64，逐个认
+	switch v := rows[0]["n"].(type) {
+	case int64:
+		return v > 0, nil
+	case int:
+		return v > 0, nil
+	case float64:
+		return v > 0, nil
+	}
+	return false, nil
 }

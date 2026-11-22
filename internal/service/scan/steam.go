@@ -105,28 +105,30 @@ func (s *ScanService) scanSteamRoots(ctx context.Context, steamRoots []string) (
 	return folders, nil
 }
 
-// steamCommonDirs 返回一个 Steam 安装目录下所有「库的 common 目录」。
+// steamLibraryRoots 返回一个 Steam 安装目录下的所有库根（主库自己 + vdf 里登记的附加库）。
 //
-// 主库固定是 <Steam>\steamapps\common；附加库来自 libraryfolders.vdf 里每条 "path"
-// （每条 path 是**库根**，common 仍在它自己的 steamapps 下）。
-// 同一个目录只返回一次：vdf 里也会列出主库自己。
-func steamCommonDirs(steamRoot string) []string {
+// 库根 = 盘上的 `<库>\steamapps` 的上一级；appmanifest 与 common 都在它下面。
+// 同一个目录只返回一次（大小写不敏感）：vdf 里也会列出主库自己。
+func steamLibraryRoots(steamRoot string) []string {
 	steamRoot = filepath.Clean(steamRoot)
 
-	dirs := make([]string, 0, 4)
+	roots := make([]string, 0, 4)
 	seen := make(map[string]struct{}, 4)
-	add := func(dir string) {
-		dir = filepath.Clean(dir)
-		key := strings.ToLower(dir)
+	add := func(root string) {
+		if strings.TrimSpace(root) == "" {
+			return
+		}
+		root = filepath.Clean(root)
+		key := strings.ToLower(root)
 		if _, ok := seen[key]; ok {
 			return
 		}
 		seen[key] = struct{}{}
-		dirs = append(dirs, dir)
+		roots = append(roots, root)
 	}
 
 	// 主库
-	add(filepath.Join(steamRoot, "steamapps", "common"))
+	add(steamRoot)
 
 	// 附加库：现役位置在 steamapps\，旧版客户端放在 config\，两处都看（缺一个很正常）。
 	vdfPaths := []string{
@@ -135,10 +137,24 @@ func steamCommonDirs(steamRoot string) []string {
 	}
 	for _, vdfPath := range vdfPaths {
 		for _, libraryRoot := range parseSteamLibraryFolders(vdfPath) {
-			add(filepath.Join(libraryRoot, "steamapps", "common"))
+			add(libraryRoot)
 		}
 	}
 
+	return roots
+}
+
+// steamCommonDirs 返回一个 Steam 安装目录下所有「库的 common 目录」。
+//
+// 主库固定是 <Steam>\steamapps\common；附加库来自 libraryfolders.vdf 里每条 "path"
+// （每条 path 是**库根**，common 仍在它自己的 steamapps 下）。
+// 同一个目录只返回一次：vdf 里也会列出主库自己。
+func steamCommonDirs(steamRoot string) []string {
+	roots := steamLibraryRoots(steamRoot)
+	dirs := make([]string, 0, len(roots))
+	for _, root := range roots {
+		dirs = append(dirs, filepath.Join(root, "steamapps", "common"))
+	}
 	return dirs
 }
 

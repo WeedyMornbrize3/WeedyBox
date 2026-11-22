@@ -10,13 +10,16 @@
 // 注意：frontend/bindings/ 是 wails3 generate bindings 生成的（已被 .gitignore 忽略），
 // 新克隆仓库后必须先跑一次生成命令，否则下面的 import 会解析失败。
 import { LibraryService } from '../../bindings/WeedyBox/internal/service'
-import type { LibraryWork } from '../../bindings/WeedyBox/internal/model/models.js'
+import type { LibraryWork, TagSet } from '../../bindings/WeedyBox/internal/model/models.js'
 import type { WorkMeta } from './metaService'
 
-export type { LibraryWork }
+export type { LibraryWork, TagSet }
 
-/** 当前唯一的元数据来源；加新来源时改后端 database.SourceDLsite 一类的常量即可 */
-export const LIBRARY_SOURCE_DLSITE = 'dlsite'
+/** 支持的元数据来源：dlsite（RJ 编号，联网抓页面）/ steam（appid，商店接口 + 本机封面） */
+export type LibrarySource = 'dlsite' | 'steam'
+
+export const LIBRARY_SOURCE_DLSITE: LibrarySource = 'dlsite'
+export const LIBRARY_SOURCE_STEAM: LibrarySource = 'steam'
 
 /**
  * 缓存优先取回来的作品 = 后端抓到的原始 json + 这几个库侧字段。
@@ -59,13 +62,19 @@ export const libraryApi = {
   /**
    * 取一个作品：**缓存优先**（只读）。
    * refresh = true 表示"我要最新的，别给我缓存"，会跳过本地库直接联网。
+   * source = steam 时 workId 是 appid（纯数字），后端走 Steam 商店接口。
    * 注意：这一步**不会**把作品写进游戏库 —— 入库是 `storeIn()` 的事。
    */
-  async fetch(keyword: string, workId = '', refresh = false): Promise<LibraryMeta> {
+  async fetch(
+    keyword: string,
+    workId = '',
+    refresh = false,
+    source: LibrarySource = LIBRARY_SOURCE_DLSITE,
+  ): Promise<LibraryMeta> {
     const result = await LibraryService.Fetch({
       keyword,
       workId,
-      source: LIBRARY_SOURCE_DLSITE,
+      source,
       refresh,
     })
     return ensure<LibraryMeta>(result as LibraryMeta | null, '未返回作品数据')
@@ -84,7 +93,7 @@ export const libraryApi = {
   async storeIn(
     workId: string,
     options: StoreInOptions = {},
-    source = LIBRARY_SOURCE_DLSITE,
+    source: LibrarySource = LIBRARY_SOURCE_DLSITE,
   ): Promise<LibraryMeta> {
     const result = await LibraryService.Store({
       workId,
@@ -102,7 +111,7 @@ export const libraryApi = {
   },
 
   /** 从游戏库删掉一条记录（磁盘上的图片不动） */
-  async remove(workId: string, source = LIBRARY_SOURCE_DLSITE): Promise<void> {
+  async remove(workId: string, source: LibrarySource = LIBRARY_SOURCE_DLSITE): Promise<void> {
     await LibraryService.Remove(workId, source)
   },
 
@@ -110,25 +119,32 @@ export const libraryApi = {
    * 本地封面的 data URL（base64），给 <img> 直接显示。
    * 没有下载过封面 / 文件被删了 → 返回空串（不是错误）。
    */
-  async coverDataUrl(workId: string, source = LIBRARY_SOURCE_DLSITE): Promise<string> {
+  async coverDataUrl(workId: string, source: LibrarySource = LIBRARY_SOURCE_DLSITE): Promise<string> {
     return (await LibraryService.CoverDataURL(workId, source)) ?? ''
   },
 
   /**
-   * 用户自定义标签（存后端 work_tags 表，与 DLsite 抓来的 tags 分开）：
-   * 加了标签的作品重新抓取元数据也不会把标签冲掉；对还没入库的作品也能加。
+   * 一个作品的标签集合（作品详情页那一排 chip 的数据源）。
+   *
+   * 标签本来有两个来源：抓取来的（元数据里的 tags）与用户自己加的。详情页把它们
+   * 合成一份列表让用户整理，点「保存」才整体写库 —— 所以这里的语义是"整份"：
+   *   - `edited=true`：库里存的就是用户整理后的那一份（重新抓取也不会被冲掉）；
+   *   - `edited=false`：还没整理过，`tags` 里只有旧版本逐条加过的标签，
+   *     前端要再与作品自带的 `tags` 合并成初始列表。
    */
-  async listTags(workId: string, source = LIBRARY_SOURCE_DLSITE): Promise<string[]> {
-    return (await LibraryService.ListTags(workId, source)) ?? []
+  async getTags(workId: string, source: LibrarySource = LIBRARY_SOURCE_DLSITE): Promise<TagSet> {
+    return ensure<TagSet>(await LibraryService.GetTags(workId, source), '未返回标签数据')
   },
 
-  /** 添加标签，返回添加后的完整列表（重复添加不报错） */
-  async addTag(workId: string, tag: string, source = LIBRARY_SOURCE_DLSITE): Promise<string[]> {
-    return (await LibraryService.AddTag(workId, tag, source)) ?? []
-  },
-
-  /** 删除标签，返回删除后的完整列表 */
-  async removeTag(workId: string, tag: string, source = LIBRARY_SOURCE_DLSITE): Promise<string[]> {
-    return (await LibraryService.RemoveTag(workId, tag, source)) ?? []
+  /**
+   * 用整份列表覆盖保存标签（唯一的写标签入口，编辑过程中不写库）。
+   * 返回保存后的集合（后端已清洗、去重），前端据此更新"已保存"基准。
+   */
+  async setTags(
+    workId: string,
+    tags: string[],
+    source: LibrarySource = LIBRARY_SOURCE_DLSITE,
+  ): Promise<TagSet> {
+    return ensure<TagSet>(await LibraryService.SetTags(workId, source, tags), '保存标签失败：后端未返回结果')
   },
 }

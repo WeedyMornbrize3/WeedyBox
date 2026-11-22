@@ -35,40 +35,40 @@ html, body, #app {
   color-scheme: light;
 
   /* 背景 */
-  --color-bg-base: #f8fafc;
-  --color-bg-primary: #ffffff;
-  --color-bg-secondary: #f1f5f9;
-  --color-bg-tertiary: #e2e8f0;
-  --color-bg-hover: #e9eff5;
-  --color-bg-card: #ffffff;
+  --color-bg-base: #f1ece2;
+  --color-bg-primary: #f3eee5;
+  --color-bg-secondary: #e6ddcc;
+  --color-bg-tertiary: #e6decf;
+  --color-bg-hover: #ebe2d3;
+  --color-bg-card: #f5f1eb;
   /* 半透明次级背景（统计栏 / 筛选栏），alpha 60% */
-  --color-bg-secondary-soft: rgba(241, 245, 249, 0.6);
+  --color-bg-secondary-soft: rgba(231, 221, 193, 0.6);
 
   /* 文本（对 #ffffff / #f8fafc 均 ≥4.5:1） */
-  --color-text-primary: #0f172a;    /* 17.9:1 */
-  --color-text-secondary: #334155;  /* 10.4:1 */
-  --color-text-tertiary: #475569;   /*  7.6:1 */
-  --color-text-muted: #64748b;      /*  4.8:1 —— 仅用于辅助小字 */
-  --color-text-inverse: #ffffff;
+  --color-text-primary: #292a0f;    /* 17.9:1 */
+  --color-text-secondary: #61513b;  /* 10.4:1 */
+  --color-text-tertiary: #615b3e;   /*  7.6:1 */
+  --color-text-muted: #84775b;      /*  4.8:1 —— 仅用于辅助小字 */
+  --color-text-inverse: #f4f0e8;
 
   /* 品牌色（Teal）
      ⚠️ #0D9488(teal-600) 作文字只有 3.74:1、白字压在其上也只有 3.74:1，
         两者都不达 AA，故文字/填充统一用 teal-700。 */
-  --color-primary: #0f766e;          /* 对白 5.47:1、对底 5.25:1 */
-  --color-primary-hover: #115e59;    /* 7.58:1 */
-  --color-primary-active: #134e4a;
-  --color-primary-light: rgba(15, 118, 110, 0.1);
+  --color-primary: #52621f;          /* 对白 5.47:1、对底 5.25:1 */
+  --color-primary-hover: #4b5c12;    /* 7.58:1 */
+  --color-primary-active: #494e13;
+  --color-primary-light: rgba(118, 101, 15, 0.1);
 
   /* 边框（非文本对比度 ≥3:1） */
-  --color-border: #cbd5e1;        /* 对卡片 1.5:1，仅作分隔 */
-  --color-border-light: #e2e8f0;
-  --color-border-dark: #94a3b8;   /* 3.0:1，用于交互控件描边 */
+  --color-border: #cfc3a8;        /* 对卡片 1.5:1，仅作分隔 */
+  --color-border-light: #d5c9b0;
+  --color-border-dark: #9f9175;   /* 3.0:1，用于交互控件描边 */
 
   /* 功能色 */
-  --color-success: #15803d;  /* 5.02:1 */
-  --color-warning: #b45309;  /* 5.02:1 */
-  --color-danger: #dc2626;   /* 4.83:1 */
-  --color-info: #1d4ed8;     /* 6.70:1 */
+  --color-success: #136431;  /* 5.02:1 */
+  --color-warning: #a78913;  /* 5.02:1 */
+  --color-danger: #ba1d1d;   /* 4.83:1 */
+  --color-info: #234dc3;     /* 6.70:1 */
 
   /* ===== 动效基调 =====
      Minimalism 取向要求动效克制且一致：同一类动作用统一时长/缓动，
@@ -85,31 +85,31 @@ html, body, #app {
   --ease-leave: cubic-bezier(0.4, 0, 1, 1);
 
   /* 阴影：Flat Design 默认不用装饰性阴影，仅浮层与焦点环使用 */
-  --color-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
-  --color-shadow-heavy: 0 8px 24px rgba(15, 23, 42, 0.12);
+  --color-shadow: 0 1px 2px rgba(42, 36, 15, 0.06);
+  --color-shadow-heavy: 0 8px 24px rgba(42, 38, 15, 0.12);
   --color-ring: var(--color-primary);
 
   /* 滚动条 */
-  --color-scrollbar: rgba(15, 23, 42, 0.18);
-  --color-scrollbar-hover: rgba(15, 23, 42, 0.32);
+  --color-scrollbar: rgba(114, 111, 89, 0.18);
+  --color-scrollbar-hover: rgba(127, 132, 154, 0.32);
 
   /* 侧边栏 */
-  --sidebar-bg: #f8fafc;
-  --sidebar-border: #e2e8f0;
+  --sidebar-bg: #f5f1e9;
+  --sidebar-border: #f0e8d7;
 
   /* 语义别名 */
   --color-bg-check: var(--color-primary);
-  --color-check-mark: #ffffff;
+  --color-check-mark: #faf8f3;
   --color-brand-text: var(--color-primary);
   --color-text-body: var(--color-text-primary);
   --color-text-hint: var(--color-text-muted);
-  --color-text-on-brand: #ffffff;
+  --color-text-on-brand: #faf8f3;
   /* 实心功能色按钮上的文字色。
      ⚠️ 不能统一用白字：深色主题下 success/brand/danger 都是「亮色」
      （#4ade80 / #2dd4bf / #f87171），白字压上去只有 1.7~2.8:1，远不达 AA；
      必须换成深色文字（9~10:1）。浅色主题反之。 */
-  --color-text-on-success: #ffffff;
-  --color-text-on-danger: #ffffff;
+  --color-text-on-success: #faf8f3;
+  --color-text-on-danger: #faf8f3;
 }
 
 /* ===== 深色主题 ===== */
@@ -117,7 +117,7 @@ html, body, #app {
   color-scheme: dark;
 
   /* 背景（比纯黑更柔和，避免 OLED 拖影与强对比疲劳） */
-  --color-bg-base: #101418;
+  --color-bg-base: #0b0e12;
   --color-bg-primary: #101418;
   --color-bg-secondary: #1b222a;
   --color-bg-tertiary: #232c35;
@@ -144,20 +144,20 @@ html, body, #app {
   --color-border-dark: #4a5764;
 
   /* 功能色：深色底改用亮色调 */
-  --color-success: #4ade80;  /* 9.84:1 */
-  --color-warning: #fbbf24;  /* 10.27:1 */
-  --color-danger: #f87171;   /* 6.20:1 */
-  --color-info: #60a5fa;
+  --color-success: #4adea3;  /* 9.84:1 */
+  --color-warning: #f4fb24;  /* 10.27:1 */
+  --color-danger: #f87185;   /* 6.20:1 */
+  --color-info: #60cefa;
 
   --color-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   --color-shadow-heavy: 0 8px 24px rgba(0, 0, 0, 0.55);
   --color-ring: var(--color-primary);
 
-  --color-scrollbar: rgba(255, 255, 255, 0.16);
-  --color-scrollbar-hover: rgba(255, 255, 255, 0.3);
+  --color-scrollbar: rgba(149, 155, 171, 0.16);
+  --color-scrollbar-hover: rgba(31, 35, 48, 0.3);
 
-  --sidebar-bg: #0d1116;
-  --sidebar-border: #232c35;
+  --sidebar-bg: #101418;
+  --sidebar-border: #22232e;
 
   /* 语义别名：深色下品牌色是亮色，勾选框/按钮上的文字必须用深色 */
   --color-bg-check: var(--color-primary);

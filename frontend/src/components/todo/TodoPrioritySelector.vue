@@ -15,7 +15,7 @@
       class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border-none cursor-pointer bg-transparent text-xs transition-colors duration-200 whitespace-nowrap hover:bg-hover"
       :class="
         todoStore.curPriority === option.value
-          ? 'bg-card text-primary font-medium shadow-theme'
+          ? 'bg-primary text-primary font-medium shadow-theme'
           : 'text-tertiary'
       "
       :aria-pressed="todoStore.curPriority === option.value"

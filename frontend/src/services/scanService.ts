@@ -8,15 +8,19 @@
 //   - origin='folder' → 按文件夹名扫到（Steam 库 / 本地文件夹），folderPath 是文件夹绝对路径，
 //                       入库时由后端进文件夹挑主程序（排除 UnityCrashHandler64、优先 Game.exe）。
 //
+// Steam 源（2026-11-21）：不再拿 `common` 下的文件夹名去 DLsite 搜，而是直接按
+// appmanifest 里的 appid 取 Steam 商店详情；封面由后端从本机 appcache\librarycache 找。
+// 所以 Steam 的条目带 source='steam' + appId。
+//
 // 注意：frontend/bindings/ 是 wails3 generate bindings 生成的（已被 .gitignore 忽略），
 // 新克隆仓库后必须先跑一次生成命令，否则下面的 import 会解析失败。
 import { ScanService } from '../../bindings/WeedyBox/internal/service/scan'
-import type { GameScanResult, Subfolder } from '../../bindings/WeedyBox/internal/service/scan'
+import type { GameScanResult, SteamApp, Subfolder } from '../../bindings/WeedyBox/internal/service/scan'
 import { DialogService } from '../../bindings/WeedyBox/internal/service'
 
-export type { GameScanResult, Subfolder }
+export type { GameScanResult, SteamApp, Subfolder }
 
-/** 扫描出来的一条候选：name 喂给搜索，detail 说明它从哪来，origin/path 供入库记录 exe */
+/** 扫描出来的一条候选：name 说明它是谁，detail 说明它从哪来，origin/path 供入库记录 exe */
 export interface ScannedGame {
   name: string
   detail: string
@@ -26,12 +30,21 @@ export interface ScannedGame {
   path?: string
   /** 游戏文件夹绝对路径（origin='folder' 时有） */
   folderPath?: string
+  /** 元数据来源：dlsite（按名字搜索）/ steam（appid 直接取商店详情） */
+  source?: 'dlsite' | 'steam'
+  /** Steam appid（source='steam' 时有） */
+  appId?: string
 }
 
 export const scanApi = {
   /** Steam：本机所有库 steamapps\common 的一级子文件夹（名字 + 绝对路径，已去重、已排序） */
   async steamFolders(): Promise<Subfolder[]> {
     return (await ScanService.ScanSteamGameFolders()) ?? []
+  },
+
+  /** Steam：按 appmanifest 列出已安装游戏（appid / 名称 / 安装目录 / 库根），供 Steam 源入库 */
+  async steamApps(): Promise<SteamApp[]> {
+    return (await ScanService.ScanSteamApps()) ?? []
   },
 
   /** 本地目录：每个一级子文件夹里的 .exe（不递归、不含根目录自己的 exe） */

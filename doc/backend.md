@@ -114,7 +114,7 @@
 
 **标签 `Tags`**：分类（`dd a[href*="/genre/"]`）+ 作品形式（按 a/span 元素取）+ 社团名/作者/剧情/插画/声优（按元素取）+ 年龄；用 `splitTagText` 按空白与 `/` 切分、去重，上限 64。多值字段不能取整段 dd 文本（中文页相邻元素无空白，会粘成一串）。
 
-**用户自定义标签**：`work_tags` 表（`UNIQUE(source, work_id, tag)`，惰性建表）+ `LibraryService.ListTags/AddTag/RemoveTag`（标签 ≤32 字），与抓来的 tags 分开存、重抓不丢。
+**作品标签（合并编辑）**：`work_tags`（`UNIQUE(source, work_id, tag)`，惰性建表，存用户整理后的整份列表）+ `work_tag_edits`（"已改写"标记，用来区分「从没整理过」与「整理成空」）+ `LibraryService.GetTags/SetTags`（整份读写：单条 ≤32 字、≤128 条；`SetTags` 是唯一写标签入口）。详情页把抓来的 `tags` 与它对成一份列表编辑，保存后重抓元数据也不会被冲掉。
 
 `SearchWorkByName` 每项只有 `ID` / `Name` / `Cover`。
 

@@ -8,6 +8,7 @@ Wails v3 (Go) + Vue 3 + Pinia + UnoCSS 桌面应用。本目录只记录**常用
 | [frontend.md](./frontend.md) | 前端：路由、Pinia store、组件、API 封装 |
 | [styles.md](./styles.md) | UnoCSS 自定义规则、shortcuts、CSS 变量主题 |
 | [conventions.md](./conventions.md) | 目录约定、构建命令、注意事项 |
+| [steam-api.md](./steam-api.md) | Steam 公开接口清单（2026-11-22 实测：哪些免 key 可用、哪些要 key、哪些已失效） |
 
 ## 目录速查
 

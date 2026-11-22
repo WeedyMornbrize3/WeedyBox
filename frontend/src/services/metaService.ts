@@ -34,6 +34,8 @@ export interface WorkMeta {
   outline?: Array<{ label: string; value: string }>
   sourceUrl?: string
   fetchedAt?: string
+  /** Steam 源专有：商店条目的原始类型（game/dlc/tool…），入库前据此跳过非游戏 */
+  steamType?: string
   [key: string]: unknown
 }
 
@@ -72,6 +74,59 @@ export interface DownloadResult {
   bytes: number
   suffix: string
   coverUrl: string
+}
+
+/** Steam 店铺搜索的一条候选（storesearch 最多返回 10 条） */
+export interface SteamSearchItem {
+  /** appid（后端转成字符串，与作品编号同一口径） */
+  id: string
+  name: string
+  cover?: string
+  /** 已格式化的价格（¥108.00）；免费/未定价时为空 */
+  price?: string
+  /** storesearch 的 type（基本都是 app） */
+  type?: string
+}
+
+export interface SteamSearchResponse {
+  query: string
+  total: number
+  items: SteamSearchItem[]
+}
+
+/** 「文件夹名 → appid」的匹配结果（matched=false 表示没猜出来，不是错误） */
+export interface SteamMatch {
+  matched: boolean
+  appId?: string
+  name?: string
+  cover?: string
+}
+
+/** Steam 评价汇总（GetItems 的 reviews.summary_filtered，label 已本地化） */
+export interface SteamReviewSummary {
+  count: number
+  percentPositive: number
+  score?: number
+  label?: string
+}
+
+/** Steam 公告（date 是 Unix 秒） */
+export interface SteamNewsItem {
+  gid: string
+  title: string
+  url: string
+  author?: string
+  date: number
+  feedlabel?: string
+}
+
+/** /works「Steam 动态」：评价汇总 + 在线人数 + 最近公告（三项各自可能缺失） */
+export interface SteamStats {
+  id: string
+  reviews?: SteamReviewSummary
+  players?: number
+  news?: SteamNewsItem[]
+  fetchedAt?: string
 }
 
 /** cache/ 目录的占用统计（设置页「清理缓存」旁边显示用） */
@@ -145,5 +200,35 @@ export const metaApi = {
   async clearCache(): Promise<ClearCacheResult> {
     const raw = (await MetaApiService.ClearCache()) as Partial<ClearCacheResult> | null
     return { files: raw?.files ?? 0, bytes: raw?.bytes ?? 0, rest: raw?.rest ?? 0 }
+  },
+
+  /** 按名字搜索 Steam 商店（候选最多 10 条，无分页）。 */
+  async searchSteam(term: string): Promise<SteamSearchResponse> {
+    const raw = (await MetaApiService.SearchSteamWorks(term)) as Partial<SteamSearchResponse> | null
+    return {
+      query: raw?.query ?? term,
+      total: raw?.total ?? 0,
+      items: (raw?.items ?? []) as SteamSearchItem[],
+    }
+  },
+
+  /**
+   * 用文件夹名猜 appid（扫描「按文件夹名」时用）。
+   * matched=false = 没猜出来，调用方退回 DLsite 名字搜索即可，不要当错误处理。
+   */
+  async matchSteamApp(folderName: string): Promise<SteamMatch> {
+    const raw = (await MetaApiService.MatchSteamAppByFolder(folderName)) as Partial<SteamMatch> | null
+    return {
+      matched: Boolean(raw?.matched),
+      appId: raw?.appId as string | undefined,
+      name: raw?.name as string | undefined,
+      cover: raw?.cover as string | undefined,
+    }
+  },
+
+  /** /works 的「Steam 动态」：评价汇总 + 在线人数 + 最近公告（三项各自可能缺失）。 */
+  async steamStats(appId: string): Promise<SteamStats> {
+    const raw = (await MetaApiService.FetchSteamStats(appId)) as SteamStats | null
+    return ensure<SteamStats>(raw, '拿不到 Steam 动态')
   },
 }

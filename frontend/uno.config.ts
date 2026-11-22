@@ -2,11 +2,11 @@
 // 设计系统：Flat Design（2D / 无装饰阴影 / 排版驱动 / 图标语义化）
 // 配色：Teal 主色（浅色 #0F766E / 深色 #2DD4BF）+ 状态色，全部按 WCAG AA 4.5:1 核验。
 // 所有颜色只以 CSS 变量形式引用（见 src/styles/global.css），此处不出现硬编码色值。
-import { defineConfig, presetUno, presetAttributify, presetIcons } from 'unocss'
+import { defineConfig, presetWind4, presetAttributify, presetIcons } from 'unocss'
 
 export default defineConfig({
   presets: [
-    presetUno(),
+    presetWind4(),
     presetAttributify({
       prefix: 'un-',
       prefixedOnly: false,

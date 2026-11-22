@@ -18,6 +18,7 @@ import { scanApi } from '../services/scanService'
 import type { ScannedGame } from '../services/scanService'
 import { metaApi } from '../services/metaService'
 import { libraryApi } from '../services/libraryService'
+import type { LibrarySource } from '../services/libraryService'
 import { useLibraryStore } from './libraryStore'
 import { toMessage } from '../utils/metaFormat'
 
@@ -126,23 +127,58 @@ export const useScanStore = defineStore('scan', () => {
     return [info.maker, info.workType, info.releaseDate, info.fileSize].filter(Boolean).join(' · ')
   }
 
+  /** 从绝对路径取最后一段（挑主程序时要拿它跟 exe 名比对；Windows/posix 分隔符都认） */
+  function folderBaseName(path: string): string {
+    const parts = path.split(/[\\/]+/).filter(Boolean)
+    return parts.length ? parts[parts.length - 1] : ''
+  }
+
   /**
    * 库里这条记录算不算"已入库"：不只看编号，还要看它有没有详情字段。
    * 旧解析器写进来的空壳（只有名字+封面）不算 —— 让用户能重新点一次入库，
    * 后端会按新模板重抓详情并覆盖库里的空壳，历史数据因此能自愈。
    */
-  function libraryEntryComplete(workId: string) {
-    const entry = useLibraryStore().works.find((w) => w.workId === workId)
+  function libraryEntryComplete(workId: string, source: LibrarySource) {
+    const entry = useLibraryStore().works.find((w) => w.workId === workId && w.source === source)
     if (!entry) return null
     const rich = Boolean(entry.maker || entry.workType || entry.releaseDate || entry.series)
     return { entry, rich }
+  }
+
+  /** 一行的元数据来源（Steam 条目带 appid，其余都是 DLsite 按名字搜） */
+  function matchSource(match: ScanMatch): LibrarySource {
+    return match.entry.source === 'steam' ? 'steam' : 'dlsite'
   }
 
   /** 一行是否已是库里成员（本次刚入的，或库里已有且数据完整） */
   function isStored(match: ScanMatch): boolean {
     if (match.stored) return true
     if (!match.workId) return false
-    return Boolean(libraryEntryComplete(match.workId)?.rich)
+    return Boolean(libraryEntryComplete(match.workId, matchSource(match))?.rich)
+  }
+
+  /**
+   * 「按文件夹名」扫到的条目先问一次 Steam（2026-11-22）：
+   * 文件夹名 → storesearch → 归一化后比对完全一致/前缀重合，命中就把这行改成 Steam 条目
+   * （source='steam' + appId）。猜不到返回 false，调用方继续走原来的 DLsite 名字搜索。
+   *
+   * 为什么要有这一步：Steam 源原本只能靠 appmanifest 识别（= 必须装过），而文件夹里的
+   * 游戏经常是"拷过来的/重装没登记"。按名字猜 appid 能补上这个空档；猜错的代价也小 ——
+   * 详情页/入库前用户都能看到匹配到的是哪个游戏。
+   */
+  async function matchSteamEntry(match: ScanMatch): Promise<boolean> {
+    if (match.entry.source === 'steam' || match.entry.origin !== 'folder') return false
+    try {
+      const found = await metaApi.matchSteamApp(match.entry.name)
+      if (!found.matched || !found.appId) return false
+      match.entry.source = 'steam'
+      match.entry.appId = found.appId
+      match.entry.detail = `Steam · ${found.appId}`
+      return true
+    } catch {
+      // 网络/接口失败就静默回退 DLsite：多一条 Steam 候选是加分项，不该让整行报错
+      return false
+    }
   }
 
   /** 搜一个名字：命中作品（名字里带 RJ）直接用详情，否则取模糊搜索的第一个候选 */
@@ -150,7 +186,38 @@ export const useScanStore = defineStore('scan', () => {
     match.state = 'searching'
     match.message = ''
     match.storeError = ''
+    // 先试 Steam（只有"按文件夹名"且还不是 Steam 的条目才会真去问），再走原来的分支
+    await matchSteamEntry(match)
+    if (token !== searchToken) return
     try {
+      // Steam 条目：appid 已知，直接取商店详情（缓存优先），不走 DLsite 按名字搜
+      if (matchSource(match) === 'steam') {
+        const appID = match.entry.appId ?? ''
+        if (!appID) {
+          match.state = 'empty'
+          match.message = '该 Steam 条目没有 appid，已跳过'
+          return
+        }
+        const work = await libraryApi.fetch('', appID, false, 'steam')
+        if (token !== searchToken) return
+        match.workId = appID
+        match.workName = work.name || match.entry.name
+        match.cover = work.coverUrl ?? ''
+        match.info = describeWork(work)
+        // 非游戏条目（Steamworks 共享组件、工具、DLC…）：标成"跳过"，不给入库按钮
+        const steamType = String(work.steamType ?? '')
+        if (steamType && steamType !== 'game') {
+          match.state = 'empty'
+          match.message = `Steam 条目类型是 ${steamType}，不是游戏，已跳过`
+          return
+        }
+        match.state = 'matched'
+        const existing = libraryEntryComplete(appID, 'steam')
+        match.stored = Boolean(existing?.rich)
+        if (existing?.rich) match.info = describeWork(existing.entry)
+        return
+      }
+
       const resp = await metaApi.searchWorks(match.entry.name, 1)
       if (token !== searchToken) return
 
@@ -174,7 +241,7 @@ export const useScanStore = defineStore('scan', () => {
       }
       // 库里已经有的直接标"已入库"，并把库里的作品信息带出来（社团/形式/发售日）；
       // 库里是空壳（没有这些字段）就不算，留给入库时重抓
-      const existing = libraryEntryComplete(match.workId)
+      const existing = libraryEntryComplete(match.workId, 'dlsite')
       match.stored = Boolean(existing?.rich)
       if (existing?.rich) match.info = describeWork(existing.entry)
     } catch (err) {
@@ -191,7 +258,7 @@ export const useScanStore = defineStore('scan', () => {
    */
   async function loadDetail(match: ScanMatch, token: number) {
     try {
-      const work = await libraryApi.fetch('', match.workId)
+      const work = await libraryApi.fetch('', match.workId, false, matchSource(match))
       if (token !== searchToken) return
       match.workName = work.name || match.workName
       match.cover = work.coverUrl || match.cover
@@ -316,11 +383,17 @@ export const useScanStore = defineStore('scan', () => {
           //   - 按 exe 名扫到 → 直接给 exe 路径；
           //   - 按文件夹名扫到（Steam / 本地文件夹）→ 给文件夹，后端进文件夹挑主程序
           //     （排除 UnityCrashHandler64、优先 Game.exe、再选与文件夹名匹配最多的 exe）。
-          const saved = await libraryApi.storeIn(match.workId, {
-            gamePath: match.entry.origin === 'exe' ? (match.entry.path ?? '') : '',
-            gameFolder: match.entry.origin === 'folder' ? (match.entry.folderPath ?? '') : '',
-            gameFolderName: match.entry.origin === 'folder' ? match.entry.name : '',
-          })
+          // Steam 条目同样是"有安装目录"的形式，只是元数据来源换成 source='steam'。
+          const folder = match.entry.folderPath ?? ''
+          const saved = await libraryApi.storeIn(
+            match.workId,
+            {
+              gamePath: match.entry.origin === 'exe' ? (match.entry.path ?? '') : '',
+              gameFolder: match.entry.origin === 'folder' ? folder : '',
+              gameFolderName: match.entry.origin === 'folder' ? folderBaseName(folder) || match.entry.name : '',
+            },
+            matchSource(match),
+          )
           match.stored = true
           match.selected = false
           // 用后端返回的完整元数据回填：名称/封面以服务端为准，信息行显示刚抓到的作品信息
@@ -405,13 +478,16 @@ export const useScanStore = defineStore('scan', () => {
     scanning.value = true
     try {
       if (source.value === 'steam') {
-        const folders = await scanApi.steamFolders()
-        // Steam 只给文件夹名：记下 origin='folder' + 绝对路径，入库时后端进文件夹挑 exe
-        entries.value = folders.map((folder) => ({
-          name: folder.name,
-          detail: 'Steam 库',
+        // 读 appmanifest：拿到 appid + 名称 + 安装目录，每行直接取 Steam 商店详情
+        // （不再拿文件夹名去 DLsite 搜；封面由后端从本机 librarycache 找）
+        const apps = await scanApi.steamApps()
+        entries.value = apps.map((app) => ({
+          name: app.name,
+          detail: `Steam · ${app.appId}`,
           origin: 'folder',
-          folderPath: folder.path,
+          folderPath: app.folderPath,
+          source: 'steam',
+          appId: app.appId,
         }))
       } else {
         const root = folderPath.value.trim()

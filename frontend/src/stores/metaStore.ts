@@ -10,9 +10,9 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { metaApi } from '../services/metaService'
-import type { DownloadResult, SearchCandidate, WorkMeta } from '../services/metaService'
-import { libraryApi } from '../services/libraryService'
-import type { LibraryMeta } from '../services/libraryService'
+import type { DownloadResult, SearchCandidate, SteamStats, WorkMeta } from '../services/metaService'
+import { LIBRARY_SOURCE_DLSITE, LIBRARY_SOURCE_STEAM, libraryApi } from '../services/libraryService'
+import type { LibraryMeta, LibrarySource } from '../services/libraryService'
 import { gameApi } from '../services/gameService'
 import { looksLikeWorkId, toMessage } from '../utils/metaFormat'
 
@@ -44,6 +44,12 @@ export const useMetaStore = defineStore('meta', () => {
 
   /** 当前作品是不是从本地库读出来的（没联网）。详情卡据此显示「缓存」标记 */
   const cached = ref(false)
+  /**
+   * 当前作品来自哪个源（dlsite / steam）。
+   * 入库、启动、标签、封面都要按它取数据 —— 同一个编号在不同来源里是两条库记录，
+   * 所以从游戏库点进 /works 时必须把来源带过来（loadById 的第三个参数）。
+   */
+  const source = ref<LibrarySource>(LIBRARY_SOURCE_DLSITE)
   /** 当前作品在库里的入库 / 更新时间（空 = 不在库里） */
   const libraryUpdatedAt = ref('')
   /** 库里已有这个作品的封面时，后端注入的封面绝对路径（空 = 还没入过库/没下过封面） */
@@ -64,9 +70,26 @@ export const useMetaStore = defineStore('meta', () => {
   const gameWarning = ref('')
   /** 正在启动游戏（按钮 loading + 防连点） */
   const launching = ref(false)
-  /** 用户自己给当前作品加的标签（存后端 work_tags 表；与 DLsite 抓来的 tags 分开） */
-  const customTags = ref<string[]>([])
-  const customTagError = ref('')
+  /**
+   * 当前作品的标签列表（**编辑稿**）：抓取来的 tags 与用户自己加的标签合成一份，
+   * 删/增都只改这里，点「保存」才整体写进后端 work_tags 表。
+   */
+  const tagList = ref<string[]>([])
+  /** 上一次写入数据库的那份（或刚载入时的初始列表）；与 tagList 不同 = 有未保存改动 */
+  const tagSaved = ref<string[]>([])
+  /** 库里存的是不是用户整理过的整份列表（false = 只是旧版逐条加的标签） */
+  const tagsEdited = ref(false)
+  const tagsSaving = ref(false)
+  const tagError = ref('')
+
+  /** 手动搜索弹窗「搜哪个源」：dlsite / steam（与作品的 source 分开 —— 作品源由 loadById 决定） */
+  const searchSource = ref<LibrarySource>(LIBRARY_SOURCE_DLSITE)
+  /** Steam 搜索候选（storesearch 最多 10 条，没有分页） */
+  const steamCandidates = ref<SearchCandidate[]>([])
+  const steamSearchTotal = ref(0)
+  /** /works「Steam 动态」：评价汇总 + 在线人数 + 最近公告（只有 Steam 源才有） */
+  const steamStats = ref<SteamStats | null>(null)
+  const steamStatsLoading = ref(false)
 
   /** 后端返回的完整结构（原样展示，调试页用） */
   const raw = ref<unknown>(null)
@@ -85,10 +108,16 @@ export const useMetaStore = defineStore('meta', () => {
   const hasResult = computed(() => work.value !== null || candidates.value.length > 0)
   /**
    * 是否已入库：库里已经有这个作品的封面文件（打开页面时后端经 coverAbsPath 告知），
-   * 或本次会话刚点过入库（saved）。按钮据此从「入库」切换成「游戏启动」（不再有禁用态）。
+   * 或本次会话刚点过入库（saved），或后端带了库里这条记录的更新时间（libraryUpdatedAt）。
+   * 按钮据此从「入库」切换成「游戏启动」（不再有禁用态）。
    * 判定刻意不用"在游戏库里"：元数据随抓取就可能已有缓存行，按此判定按钮永远不可点。
+   *
+   * 为什么要带 libraryUpdatedAt：Steam 游戏可能本机没有 librarycache 封面（用户要求
+   * 没有就不使用图像），此时 coverAbsPath 为空，只看 coverAbsPath 会误判成"没入库"。
    */
-  const stored = computed(() => Boolean(saved.value) || Boolean(coverAbsPath.value))
+  const stored = computed(
+    () => Boolean(saved.value) || Boolean(coverAbsPath.value) || Boolean(libraryUpdatedAt.value),
+  )
   /**
    * 启动按钮是否该禁用：已经记了位置、但 exe 文件不存在了（被删除或移走）。
    * 这时不能直接启动，只提示用户用「更换位置」重新选程序（选择的 UI 沿用原来的系统文件框）。
@@ -96,6 +125,14 @@ export const useMetaStore = defineStore('meta', () => {
   const launchBlocked = computed(
     () => stored.value && Boolean(gamePath.value) && !gamePathExists.value,
   )
+  /**
+   * 标签是否有未保存的改动（决定「保存」按钮显不显示）。
+   * 按**完整列表**比较而不是集合：调换顺序也算改动（顺序就是保存顺序）。
+   */
+  const tagsDirty = computed(() => {
+    if (tagList.value.length !== tagSaved.value.length) return true
+    return tagList.value.some((tag, i) => tag !== tagSaved.value[i])
+  })
 
   /** 前端搜索每页条数 */
   const CANDIDATE_PAGE_SIZE = 10
@@ -141,8 +178,15 @@ export const useMetaStore = defineStore('meta', () => {
     gameStatusLoading.value = false
     gameWarning.value = ''
     launching.value = false
-    customTags.value = []
-    customTagError.value = ''
+    tagList.value = []
+    tagSaved.value = []
+    tagsEdited.value = false
+    tagsSaving.value = false
+    tagError.value = ''
+    steamCandidates.value = []
+    steamSearchTotal.value = 0
+    steamStats.value = null
+    steamStatsLoading.value = false
     if (!opts.keepCandidates) {
       sourcePages.value = {}
       sourcePageCount.value = 1
@@ -168,6 +212,10 @@ export const useMetaStore = defineStore('meta', () => {
       return false
     }
     keyword.value = q
+    // 手动搜索有两个来源：DLsite（RJ 编号 / 名字模糊搜）与 Steam（名字 → appid）。
+    // 这里只跑 DLsite 分支；Steam 分支见 runSteamSearch（由弹窗的来源 chip 决定调哪个）。
+    searchSource.value = LIBRARY_SOURCE_DLSITE
+    source.value = LIBRARY_SOURCE_DLSITE
     searchToken += 1
     clearResult()
     loading.value = true
@@ -200,9 +248,80 @@ export const useMetaStore = defineStore('meta', () => {
     }
   }
 
+  /**
+   * 切换手动搜索的来源（弹窗里的「DLsite / Steam」chip）。
+   * 只改"这次搜哪儿"，不动当前作品：作品源由 loadById 的第三个参数决定。
+   */
+  function setSearchSource(next: LibrarySource) {
+    if (searchSource.value === next) return
+    searchSource.value = next
+    error.value = ''
+    status.value = ''
+  }
+
+  /**
+   * Steam 名字搜索（弹窗切到 Steam 来源时走这里）：
+   *   - 后端 storesearch 最多回 10 条候选，**没有分页**，所以不像 DLsite 那样按页懒加载；
+   *   - 候选不自动抓详情：由一个 appid 变成一个作品要再打一次 appdetails（见 loadById）。
+   * 返回值语义与 runSearch 一致：true = 这次真的发了请求（空关键词只提示、不搜索）。
+   */
+  async function runSteamSearch(query?: string): Promise<boolean> {
+    const q = (query ?? keyword.value).trim()
+    if (!q) {
+      error.value = '搜索栏不能为空'
+      return false
+    }
+    keyword.value = q
+    searchSource.value = LIBRARY_SOURCE_STEAM
+    searchToken += 1
+    clearResult()
+    loading.value = true
+    try {
+      const resp = await metaApi.searchSteam(q)
+      steamCandidates.value = resp.items ?? []
+      steamSearchTotal.value = resp.total ?? 0
+      raw.value = resp
+      status.value = steamCandidates.value.length
+        ? `Steam 商店搜到 ${steamCandidates.value.length} 个候选，点「详情」看作品（候选上限 10 条）`
+        : `Steam 商店没有搜到与「${q}」匹配的游戏`
+      return true
+    } catch (err) {
+      error.value = toMessage(err)
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
+   * 读当前作品的「Steam 动态」：评价汇总 / 在线人数 / 最近公告（后端一次取回）。
+   * 只有 Steam 源才有；失败就留空（详情页照常显示，不打断浏览）。
+   */
+  async function loadSteamStats() {
+    const current = work.value
+    if (!current || source.value !== LIBRARY_SOURCE_STEAM) {
+      steamStats.value = null
+      return
+    }
+    if (steamStatsLoading.value) return
+    steamStatsLoading.value = true
+    try {
+      const stats = await metaApi.steamStats(current.id)
+      // 期间换作品了：丢弃旧响应
+      if (work.value?.id !== current.id || source.value !== LIBRARY_SOURCE_STEAM) return
+      steamStats.value = stats
+    } catch {
+      steamStats.value = null
+    } finally {
+      steamStatsLoading.value = false
+    }
+  }
+
   /** 把取回来的作品塞进 state（同时记住"这是不是缓存"） */
   function applyWork(data: WorkMeta) {
     const meta = data as LibraryMeta
+    // 换作品前记一下是谁：同一个作品重新 apply（比如刚点完「入库」）时下面要保住未保存的标签
+    const previousId = work.value?.id
     work.value = data
     raw.value = data
     cached.value = Boolean(meta.cached)
@@ -216,8 +335,12 @@ export const useMetaStore = defineStore('meta', () => {
     gameWarning.value = ''
     // 用户要求：进入相关界面时先检测 exe 是否存在、游戏是否在运行
     void refreshGameStatus()
-    // 自定义标签跟着作品走：换作品时重新拉一份
-    void loadCustomTags(data.id)
+    // 标签跟着作品走：换作品时重新拉一份（抓取标签 + 库里保存过的整理结果）。
+    // 同一个作品重新 apply（例如刚点完「入库」）且手上还有没保存的标签改动时跳过，
+    // 否则那点编辑会被服务器状态覆盖掉。
+    if (previousId !== data.id || !tagsDirty.value) void loadTags(data.id)
+    // Steam 源额外取「评价 / 在线人数 / 公告」（DLsite 分支里直接清空）
+    void loadSteamStats()
     // 命中的作品从候选里剔除（已加载的每一页都要剔，否则翻页还会看到）
     if (work.value) {
       const id = work.value.id
@@ -232,14 +355,17 @@ export const useMetaStore = defineStore('meta', () => {
   /**
    * 点候选的「详情」：按编号精确抓（保留候选列表，方便连着换）。
    * refresh = true 时跳过本地库，强制联网重新抓一份（并覆盖库里的旧数据）。
+   * fromSource 把「从哪个来源点进来的」带进来（游戏库卡片 / 扫描结果行都知道来源）；
+   * 不传就沿用当前来源（例如 /works 里的「重新抓取」按钮）。
    * **不写回 keyword**：搜索框只反映用户自己输入过的内容。打开一个作品（尤其从游戏库
    * 点封面进来）不该把 RJ 编号灌进搜索框，否则下次弹搜索窗会莫名带着一串编号。
    */
-  async function loadById(id: string, refresh = false) {
+  async function loadById(id: string, refresh = false, fromSource?: LibrarySource) {
+    if (fromSource) source.value = fromSource
     clearResult({ keepCandidates: true })
     loading.value = true
     try {
-      const data = await libraryApi.fetch('', id, refresh)
+      const data = await libraryApi.fetch('', id, refresh, source.value)
       applyWork(data)
       status.value = cached.value
         ? `按编号 ${id} 从本地库读取（缓存）`
@@ -372,7 +498,7 @@ export const useMetaStore = defineStore('meta', () => {
           pickedPath = ''
         }
       }
-      const data = await libraryApi.storeIn(current.id, { gamePath: pickedPath })
+      const data = await libraryApi.storeIn(current.id, { gamePath: pickedPath }, source.value)
       applyWork(data)
       saved.value = {
         id: data.id,
@@ -408,7 +534,7 @@ export const useMetaStore = defineStore('meta', () => {
 
     gameStatusLoading.value = true
     try {
-      const status = await gameApi.status(current.id)
+      const status = await gameApi.status(current.id, source.value)
       if (work.value?.id !== current.id) return // 期间换作品了，丢弃旧响应
       gamePath.value = status.path || gamePath.value
       gamePathExists.value = status.exists
@@ -437,14 +563,14 @@ export const useMetaStore = defineStore('meta', () => {
     error.value = ''
     status.value = ''
     try {
-      let result = await gameApi.launch(current.id)
+      let result = await gameApi.launch(current.id, source.value)
       if (result.missing) {
         const picked = await gameApi.pickExecutable(`选择「${current.name}」的游戏程序`)
         if (!picked) return // 用户取消：什么都不做
-        const savedPath = await gameApi.setPath(current.id, picked)
+        const savedPath = await gameApi.setPath(current.id, picked, source.value)
         gamePath.value = savedPath.path
         gamePathExists.value = true
-        result = await gameApi.launch(current.id)
+        result = await gameApi.launch(current.id, source.value)
       }
       if (!result.started) throw new Error(result.message || '启动失败')
       gamePath.value = result.path
@@ -471,7 +597,7 @@ export const useMetaStore = defineStore('meta', () => {
     try {
       const picked = await gameApi.pickExecutable(`选择「${current.name}」的游戏程序`)
       if (!picked) return
-      const savedPath = await gameApi.setPath(current.id, picked)
+      const savedPath = await gameApi.setPath(current.id, picked, source.value)
       gamePath.value = savedPath.path
       gamePathExists.value = true
       gameRunning.value = false
@@ -483,45 +609,83 @@ export const useMetaStore = defineStore('meta', () => {
     }
   }
 
+  /** 标签去重（保序）：抓取来的 tags 与库里存的标签可能重叠 */
+  function dedupeTags(list: string[]): string[] {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const tag of list) {
+      const value = tag.trim()
+      if (!value || seen.has(value)) continue
+      seen.add(value)
+      out.push(value)
+    }
+    return out
+  }
+
   /**
-   * 读当前作品的自定义标签（后端 work_tags 表）。
+   * 读当前作品的标签集合，拼出编辑稿：
+   *   - 库里存的是用户整理过的整份列表（edited=true）→ 直接用它（重抓也不会被冲掉）；
+   *   - 还没整理过 → 抓取来的 tags 打底，旧版逐条加过的标签接在后面（去重）。
    * 失败就当没有：标签是辅助功能，不该让详情页整体报错。
    */
-  async function loadCustomTags(workId: string) {
-    customTagError.value = ''
+  async function loadTags(workId: string) {
+    tagError.value = ''
+    const fallback = () => {
+      tagsEdited.value = false
+      const initial = dedupeTags(work.value?.tags ?? [])
+      tagSaved.value = initial
+      tagList.value = [...initial]
+    }
     try {
-      customTags.value = await libraryApi.listTags(workId)
+      const state = await libraryApi.getTags(workId, source.value)
+      // 期间换作品了：丢弃旧响应（否则会把上一部的标签贴到当前作品上）
+      if (work.value?.id !== workId) return
+      const saved = dedupeTags(state.tags ?? [])
+      const initial = state.edited ? saved : dedupeTags([...(work.value?.tags ?? []), ...saved])
+      tagsEdited.value = state.edited
+      tagSaved.value = initial
+      tagList.value = [...initial]
     } catch {
-      customTags.value = []
+      if (work.value?.id !== workId) return
+      fallback()
     }
   }
 
-  /** 添加一个自定义标签；成功后列表用后端返回的为准（顺序、去重都以后端为权威） */
-  async function addCustomTag(tag: string): Promise<boolean> {
-    const current = work.value
-    const text = tag.trim()
-    if (!current || !text) return false
-    customTagError.value = ''
-    try {
-      customTags.value = await libraryApi.addTag(current.id, text)
-      return true
-    } catch (err) {
-      customTagError.value = `添加标签失败：${toMessage(err)}`
-      return false
-    }
+  /** 添加一个标签：只改本地编辑稿，等「保存」才写库；重复的不加 */
+  function addTag(tag: string): boolean {
+    const value = tag.trim()
+    if (!value || tagList.value.includes(value)) return false
+    tagList.value = [...tagList.value, value]
+    return true
   }
 
-  /** 删除一个自定义标签 */
-  async function removeCustomTag(tag: string): Promise<boolean> {
+  /** 删掉一个标签：同样只改编辑稿，等「保存」才写库 */
+  function removeTag(tag: string) {
+    tagList.value = tagList.value.filter((item) => item !== tag)
+  }
+
+  /**
+   * 把当前编辑稿**整份**写进数据库（用户点「保存」时唯一会写标签的入口）。
+   * 成功后用后端返回的列表当新的基准（后端会清洗/去重，顺序以它为准）。
+   */
+  async function saveTags(): Promise<boolean> {
     const current = work.value
-    if (!current || !tag) return false
-    customTagError.value = ''
+    if (!current || tagsSaving.value) return false
+    tagError.value = ''
+    tagsSaving.value = true
     try {
-      customTags.value = await libraryApi.removeTag(current.id, tag)
+      const state = await libraryApi.setTags(current.id, tagList.value, source.value)
+      if (work.value?.id !== current.id) return false
+      const saved = dedupeTags(state.tags ?? [])
+      tagSaved.value = saved
+      tagList.value = [...saved]
+      tagsEdited.value = state.edited
       return true
     } catch (err) {
-      customTagError.value = `移除标签失败：${toMessage(err)}`
+      tagError.value = `保存标签失败：${toMessage(err)}`
       return false
+    } finally {
+      tagsSaving.value = false
     }
   }
 
@@ -555,6 +719,7 @@ export const useMetaStore = defineStore('meta', () => {
     pageLoading,
     raw,
     cached,
+    source,
     libraryUpdatedAt,
     coverAbsPath,
     gamePath,
@@ -562,27 +727,39 @@ export const useMetaStore = defineStore('meta', () => {
     gameRunning,
     gameWarning,
     launching,
-    customTags,
-    customTagError,
+    tagList,
+    tagsEdited,
+    tagsSaving,
+    tagError,
+    searchSource,
+    steamCandidates,
+    steamSearchTotal,
+    steamStats,
+    steamStatsLoading,
     // Getters
     rawJson,
     hasResult,
     stored,
     launchBlocked,
+    tagsDirty,
     candidates,
     candidateTotal,
     candidatePageCount,
     pagedCandidates,
     // Actions
     runSearch,
+    runSteamSearch,
+    setSearchSource,
+    loadSteamStats,
     loadById,
     searchBySample,
     storeIn,
     launchGame,
     changeGamePath,
     refreshGameStatus,
-    addCustomTag,
-    removeCustomTag,
+    addTag,
+    removeTag,
+    saveTags,
     setCandidatePage,
     refreshCoversDir,
     ensureCoversDir,

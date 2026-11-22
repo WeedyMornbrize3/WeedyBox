@@ -61,3 +61,18 @@ type CoverFile struct {
 	CoverURL  string    `json:"coverUrl"`
 	CreatedAt time.Time `json:"createdAt"`
 }
+
+// TagSet 是一个作品的标签集合（作品详情页那一排 chip 的唯一数据源）。
+//
+// 标签本来有两个来源：抓取来的（DLsite / Steam 元数据里的 tags）与用户自己加的。
+// 详情页把两者合成一份列表让用户整理 —— 删掉不想要的、补上自己的，点「保存」后
+// 整份列表写进 work_tags，并以 Edited=true 标记"这份列表是用户定的"：
+// 之后重新抓取元数据也不会把它冲掉（与"自己加的标签重抓不丢"是同一条原则）。
+//
+// Edited=false 表示还没整理过：Tags 里只有旧版本逐条加过的标签，前端要再与
+// 抓取来的 tags 合并显示。
+type TagSet struct {
+	Tags   []string `json:"tags"`
+	Edited bool     `json:"edited"`
+}
+

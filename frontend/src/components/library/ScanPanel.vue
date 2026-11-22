@@ -65,10 +65,12 @@
     </template>
 
     <p v-else class="m-0 text-xs text-tertiary">
-      自动从注册表定位 Steam，汇总所有库的 steamapps\common；没装 Steam 就换成「选择文件夹」扫本地库。
+      自动读取 Steam 的 <code class="font-mono">steamapps\appmanifest_&lt;id&gt;.acf</code>，按 appid 从 Steam 商店取游戏信息；
+      封面取本机 <code class="font-mono">appcache\librarycache</code> 里该 id 目录下的 600x900 / capsule 图（没有就不用封面）。
+      没装 Steam 就换成「选择文件夹」扫本地库。
     </p>
 
-    <!-- 扫描 → 自动搜索；搜索中显示进度与「停止」 -->
+    <!-- 扫描 → 自动搜索/取详情；进行中显示进度与「停止」 -->
     <div class="flex items-center gap-2 flex-wrap">
       <button
         type="button"
@@ -79,7 +81,7 @@
         <span :class="scan.scanning ? 'i-lucide-loader-circle spin' : 'i-lucide-search'" class="icon-sm" aria-hidden="true" />
         {{ scan.scanning ? '扫描中…' : '扫描' }}
       </button>
-      <span v-if="scan.searching" class="text-xs text-tertiary">搜索中 {{ scan.searched }}/{{ scan.matches.length }}…</span>
+      <span v-if="scan.searching" class="text-xs text-tertiary">{{ searchLabel }} {{ scan.searched }}/{{ scan.matches.length }}…</span>
       <span v-else-if="scan.detailing" class="text-xs text-tertiary">获取详情 {{ scan.detailed }}/{{ scan.detailTotal }}…</span>
       <button v-if="scan.searching || scan.detailing" type="button" class="chip" @click="scan.stopSearch()">停止</button>
       <span v-else-if="scan.matches.length" class="text-xs text-tertiary">匹配 {{ scan.matchedCount }}/{{ scan.matches.length }}</span>
@@ -164,7 +166,7 @@
             <span class="i-lucide-circle-check-big icon-xs" aria-hidden="true" />
             已入库
           </span>
-          <button v-else-if="match.state === 'matched'" type="button" class="chip shrink-0" @click="emit('detail', match.workId)">
+          <button v-else-if="match.state === 'matched'" type="button" class="chip shrink-0" @click="openDetail(match)">
             详情
           </button>
           <button
@@ -191,7 +193,11 @@ import MetaMessage from '../meta/MetaMessage.vue'
 
 const scan = useScanStore()
 
-const emit = defineEmits<{ detail: [workId: string] }>()
+/** 详情要带上来源：同一个编号在 dlsite / steam 里是两条库记录 */
+const emit = defineEmits<{ detail: [workId: string, source: 'dlsite' | 'steam'] }>()
+
+/** Steam 条目按 appid 取商店详情，说法上不叫「搜索」*/
+const searchLabel = computed(() => (scan.source === 'steam' ? '获取信息' : '搜索中'))
 
 const SOURCE_OPTIONS: { value: ScanSource; label: string }[] = [
   { value: 'steam', label: 'Steam 库' },
@@ -207,22 +213,29 @@ const MODE_OPTIONS: { value: FolderScanMode; label: string }[] = [
 const modeHint = computed(() =>
   scan.mode === 'exe'
     ? '扫描每个一级子文件夹里的 .exe，用 exe 文件名当游戏名；不递归，也不含根目录自己的 exe。'
-    : '只读目录第一层，直接用子文件夹名当游戏名 —— 文件夹已按作品名规范命名时用这个，最省。',
+    : '只读目录第一层，直接用子文件夹名当游戏名。搜之前**先拿名字去 Steam 商店猜 appid**（猜中就按 Steam 取信息），猜不到再搜 DLsite。',
 )
 
 const emptyHint = computed(() => {
-  if (scan.source === 'steam') return '没有扫描到名字。没装 Steam 的话，换成「选择文件夹」扫本地库。'
+  if (scan.source === 'steam') {
+    return '没有读到已安装的 Steam 游戏（steamapps\\appmanifest_*.acf）。没装 Steam 的话，换成「选择文件夹」扫本地库。'
+  }
   if (scan.mode === 'exe') return '这些子文件夹里没有发现 .exe（根目录自己的 exe 不算）。'
   return '该目录下没有一级子文件夹。'
 })
 
 function matchTitle(match: ScanMatch): string {
   if (match.state === 'matched') return match.workName || match.entry.name
-  if (match.state === 'searching') return '搜索中…'
-  if (match.state === 'error') return '搜索失败'
-  if (match.state === 'stopped') return '未搜索（已停止）'
-  if (match.state === 'empty') return '未找到匹配作品'
+  if (match.state === 'searching') return searchLabel.value + '…'
+  if (match.state === 'error') return match.entry.source === 'steam' ? '获取 Steam 信息失败' : '搜索失败'
+  if (match.state === 'stopped') return match.entry.source === 'steam' ? '未获取（已停止）' : '未搜索（已停止）'
+  if (match.state === 'empty') return match.message ? '已跳过' : '未找到匹配作品'
   return match.entry.name
+}
+
+/** 点「详情」：带上来源进 /works 核对（Steam 条目按 appid 读，不去 DLsite 搜） */
+function openDetail(match: ScanMatch) {
+  emit('detail', match.workId, match.entry.source === 'steam' ? 'steam' : 'dlsite')
 }
 
 function toggleAll(event: Event) {

@@ -30,6 +30,8 @@ go.sum
 
 /node_modules
 
+/.tmp/
+
 # 前端构建
 /frontend/dist/
 /frontend/build/

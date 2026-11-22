@@ -4,7 +4,11 @@
 // "rowFromWork 把作品信息完整带进库列"两条，防止以后改解析时悄悄退化。
 package service
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestWorkIsComplete(t *testing.T) {
 	cases := []struct {
@@ -32,7 +36,7 @@ func TestWorkIsComplete(t *testing.T) {
 	}
 }
 
-// TestNormalizeUserTag 自定义标签的清洗：去首尾空白、中间连续空白压成一个空格。
+// TestNormalizeUserTag 标签的清洗：去首尾空白、中间连续空白压成一个空格。
 func TestNormalizeUserTag(t *testing.T) {
 	cases := map[string]string{
 		"  想玩  ": "想玩",
@@ -45,6 +49,38 @@ func TestNormalizeUserTag(t *testing.T) {
 		if got := normalizeUserTag(input); got != want {
 			t.Errorf("normalizeUserTag(%q) = %q，期望 %q", input, got, want)
 		}
+	}
+}
+
+// TestNormalizeTagSet 整份标签列表的清洗：去空、按首次出现去重、保序；
+// 单条超长 / 条数超限要报错（不静默截断），否则用户不知道该改哪一条。
+func TestNormalizeTagSet(t *testing.T) {
+	got, err := normalizeTagSet([]string{" 想玩 ", "", "想玩", "已  通关", "  "})
+	if err != nil {
+		t.Fatalf("正常列表不该报错: %v", err)
+	}
+	if strings.Join(got, ",") != "想玩,已 通关" {
+		t.Errorf("清洗结果 = %v，期望「想玩,已 通关」", got)
+	}
+
+	// 空列表合法（用户把标签全删光）
+	if out, err := normalizeTagSet(nil); err != nil || len(out) != 0 {
+		t.Errorf("空列表应清洗成空切片，实际 %v / %v", out, err)
+	}
+
+	// 超长：32 个字符是上限
+	long := strings.Repeat("长", maxUserTagLength+1)
+	if _, err := normalizeTagSet([]string{"正常", long}); err == nil {
+		t.Error("超过 32 个字符应报错")
+	}
+
+	// 超量：上限 maxUserTagCount 条
+	many := make([]string, 0, maxUserTagCount+1)
+	for i := 0; i <= maxUserTagCount; i++ {
+		many = append(many, fmt.Sprintf("标签%d", i))
+	}
+	if _, err := normalizeTagSet(many); err == nil {
+		t.Errorf("超过 %d 条应报错", maxUserTagCount)
 	}
 }
 

@@ -107,7 +107,8 @@ function pickSample(sample: string) {
 }
 
 function loadCandidate(id: string) {
-  void meta.loadById(id, true)
+  // 调试页只核对 DLsite 解析：显式指定来源，避免刚从 Steam 作品切过来时用错 source
+  void meta.loadById(id, true, 'dlsite')
 }
 
 onMounted(() => meta.ensureCoversDir())

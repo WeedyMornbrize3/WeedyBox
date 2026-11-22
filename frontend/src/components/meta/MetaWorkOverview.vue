@@ -12,7 +12,8 @@
       <h3 class="text-base font-medium text-primary m-0 leading-snug break-words">{{ work.name }}</h3>
 
       <MetaKeyValueList :rows="buildSummaryRows(work)" />
-      <MetaTags :tags="work.tags" :limit="app.tagLimit" />
+      <!-- 标签云：作品库由 MetaTagEditor 统一管（可编辑 + 保存），这里只在调试页显示 -->
+      <MetaTags v-if="showTags" :tags="work.tags" :limit="app.tagLimit" />
 
       <div class="flex items-center gap-3 flex-wrap pt-1">
         <MetaDownloadButton
@@ -57,6 +58,8 @@ defineProps<{
   running?: boolean
   /** 正在启动游戏 */
   launching?: boolean
+  /** 是否显示抓取来的标签云（作品库传 false：标签统一交给 MetaTagEditor，避免同页出现两份） */
+  showTags?: boolean
 }>()
 
 // 标签显示数量是应用级设置（设置页可调），这里只读不写
