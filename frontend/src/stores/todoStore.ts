@@ -3,21 +3,14 @@
 import { defineStore } from 'pinia'
 import { ref, reactive, computed } from 'vue'
 import { todoApi } from '../services/todoService'
-import type { Todo, TodoStats, UpdateTodoDTO } from '../../bindings/WeedyBox/internal/model'
+import type { Todo } from '../../bindings/WeedyBox/internal/model'
 
 // ===== 筛选类型 =====
-// 'pending' = 只看未完成（默认），'completed' = 只看已完成，'all' = 全部
-export type CompletedFilter = 'pending' | 'completed' | 'all'
+// 「完成状态」筛选已随完成功能一起移除（用户 2026-11-23 要求删掉完成相关功能）。
 // null = 全部优先级，0 低 / 1 中 / 2 高
 export type PriorityFilter = number | null
 // 按创建时间过滤：'all' 不限 / 'today' 今天 / 'week' 近7天 / 'month' 近30天
 export type TimeFilter = 'all' | 'today' | 'week' | 'month'
-
-export const COMPLETED_OPTIONS: { value: CompletedFilter; label: string }[] = [
-    { value: 'pending', label: '未完成' },
-    { value: 'completed', label: '已完成' },
-    { value: 'all', label: '全部' },
-]
 
 export const PRIORITY_OPTIONS: { value: PriorityFilter; label: string }[] = [
     { value: null, label: '全部' },
@@ -44,37 +37,21 @@ export const useTodoStore = defineStore('todo', () => {
     const todos = ref<Todo[]>([])
     const loading = ref(false)
     const error = ref<string | null>(null)
-    const stats = ref<TodoStats>({ total: 0, completed: 0, pending: 0 })
     const curPriority = ref<number>(1)
 
-    // 筛选条件：默认只看未完成
+    // 筛选条件：默认不筛（完成状态这一维已移除，列表里就是全部条目）
     const filters = reactive<{
-        completed: CompletedFilter
         priority: PriorityFilter
         time: TimeFilter
     }>({
-        completed: 'pending',
         priority: null,
         time: 'all',
     })
 
     // ===== Getters =====
-    const completedTodos = computed(() => 
-        todos.value.filter(t => t.completed)
-    )
-    
-    const pendingTodos = computed(() => 
-        todos.value.filter(t => !t.completed)
-    )
- 
     const highPriorityTodos = computed(() =>
         todos.value.filter(t => t.priority === 2)
     )
-
-    const completionRate = computed(() => {
-        if (stats.value.total === 0) return 0
-        return Math.round((stats.value.completed / stats.value.total) * 100)
-    })
 
     // 时间是否落在筛选范围内
     function matchTime(createdAt: string, time: TimeFilter): boolean {
@@ -91,8 +68,6 @@ export const useTodoStore = defineStore('todo', () => {
     // 应用筛选后的列表（模板渲染用这个，不再直接用 todos）
     const filteredTodos = computed(() =>
         todos.value.filter(t => {
-            if (filters.completed === 'pending' && t.completed) return false
-            if (filters.completed === 'completed' && !t.completed) return false
             if (filters.priority !== null && t.priority !== filters.priority) return false
             if (!matchTime(t.createdAt, filters.time)) return false
             return true
@@ -101,7 +76,7 @@ export const useTodoStore = defineStore('todo', () => {
 
     // 是否处于非默认筛选状态（用于空状态文案）
     const isFilterActive = computed(() =>
-        filters.completed !== 'pending' || filters.priority !== null || filters.time !== 'all'
+        filters.priority !== null || filters.time !== 'all'
     )
 
     // 筛选后为空、但原始数据不为空 —— 说明是筛选条件把内容挡住了
@@ -110,7 +85,6 @@ export const useTodoStore = defineStore('todo', () => {
     )
 
     function resetFilters() {
-        filters.completed = 'pending'
         filters.priority = null
         filters.time = 'all'
     }
@@ -120,12 +94,7 @@ export const useTodoStore = defineStore('todo', () => {
         loading.value = true
         error.value = null
         try {
-            const [todosResult, statsResult] = await Promise.all([
-                todoApi.getAll(),
-                todoApi.getStats()
-            ])
-            todos.value = todosResult
-            stats.value = statsResult
+            todos.value = await todoApi.getAll()
         } catch (e) {
             error.value = e instanceof Error ? e.message : '加载失败'
             console.error('加载 TODO 失败:', e)
@@ -142,27 +111,10 @@ export const useTodoStore = defineStore('todo', () => {
                 priority: curPriority.value
             })
             todos.value.unshift(todo)
-            await loadStats()
             return todo
         } catch (e) {
             error.value = e instanceof Error ? e.message : '创建失败'
             console.error('创建 TODO 失败:', e)
-            throw e
-        }
-    }
-
-    async function toggleComplete(id: number) {
-        try {
-            const todo = await todoApi.toggleComplete(id)
-            const index = todos.value.findIndex(t => t.id === id)
-            if (index !== -1) {
-                todos.value[index] = todo
-            }
-            await loadStats()
-            return todo
-        } catch (e) {
-            error.value = e instanceof Error ? e.message : '切换状态失败'
-            console.error('切换状态失败:', e)
             throw e
         }
     }
@@ -186,7 +138,6 @@ export const useTodoStore = defineStore('todo', () => {
         try {
             await todoApi.delete(id)
             todos.value = todos.value.filter(t => t.id !== id)
-            await loadStats()
         } catch (e) {
             error.value = e instanceof Error ? e.message : '删除失败'
             console.error('删除 TODO 失败:', e)
@@ -215,7 +166,6 @@ export const useTodoStore = defineStore('todo', () => {
 
         try {
             await todoApi.deleteMany(unique)
-            await loadStats()
             return removed.length
         } catch (e) {
             // 回滚：按原索引升序插回，恢复原有顺序
@@ -230,45 +180,6 @@ export const useTodoStore = defineStore('todo', () => {
         }
     }
 
-    /**
-     * 批量设置完成状态（供「完成全部 / 取消完成」使用）。
-     * 传 completed = true 是标记完成，false 是取消完成。
-     * 只处理状态确实需要变化的条目（已完成的不再重复请求），
-     * 复用已有的 Update 绑定，返回实际改动条数。
-     */
-    async function completeMany(ids: number[], completed: boolean) {
-        const unique = [...new Set(ids)]
-        if (unique.length === 0) return 0
-
-        // 只处理确实存在、且状态与目标不同的条目，避免无谓请求
-        const target = todos.value.filter(t => unique.includes(t.id) && t.completed !== completed)
-        if (target.length === 0) return 0
-
-        try {
-            for (const todo of target) {
-                const updated = await todoApi.update(todo.id, { completed } as UpdateTodoDTO)
-                const index = todos.value.findIndex(t => t.id === todo.id)
-                if (index !== -1) todos.value[index] = updated
-            }
-            await loadStats()
-            return target.length
-        } catch (e) {
-            error.value = e instanceof Error ? e.message : '批量更新完成状态失败'
-            console.error('批量更新完成状态失败:', e)
-            // 已成功的部分保留（后端已是事实），仅重新拉取以对齐真实状态
-            await loadTodos()
-            throw e
-        }
-    }
-
-    async function loadStats() {
-        try {
-            stats.value = await todoApi.getStats()
-        } catch (e) {
-            console.error('加载统计失败:', e)
-        }
-    }
-
     function init() {
         loadTodos()
     }
@@ -278,26 +189,19 @@ export const useTodoStore = defineStore('todo', () => {
         todos,
         loading,
         error,
-        stats,
         curPriority,
         filters,
         // Getters
-        completedTodos,
-        pendingTodos,
         highPriorityTodos,
-        completionRate,
         filteredTodos,
         isFilterActive,
         isFilteredEmpty,
         // Actions
         loadTodos,
         addTodo,
-        toggleComplete,
         updateTodo,
         deleteTodo,
         deleteMany,
-        completeMany,
-        loadStats,
         init,
         resetFilters,
     }

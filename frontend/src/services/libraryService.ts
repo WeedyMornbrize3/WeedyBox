@@ -38,6 +38,11 @@ export interface LibraryMeta extends WorkMeta {
   coverSuffix?: string
   /** 库里记录的游戏程序绝对路径（空 = 还没设置；与元数据同表，重新抓取不会丢） */
   gamePath?: string
+  /**
+   * 库里记录的启动方式（2026-11-23）：'' = 还没选过（按来源取默认 ——
+   * steam 源走 Steam URL，其它源跑本地 exe）；'steam' / 'exe' = 用户显式选过。
+   */
+  launchMode?: string
 }
 
 /** 辅助函数：确保返回值不为 null（绑定层会返回 `T | null`） */
@@ -121,6 +126,15 @@ export const libraryApi = {
    */
   async coverDataUrl(workId: string, source: LibrarySource = LIBRARY_SOURCE_DLSITE): Promise<string> {
     return (await LibraryService.CoverDataURL(workId, source)) ?? ''
+  },
+
+  /**
+   * Steam 源作品的 hero 背景图（data URL）：后端在本机 Steam 客户端缓存
+   * `appcache\librarycache` 里按 appid 找文件名含 hero 的图片并读成 base64。
+   * 本机没有（游戏没装 / 缓存被清）返回空串 —— 详情页回落到商店接口的预览图。
+   */
+  async steamHeroImage(appID: string): Promise<string> {
+    return (await LibraryService.SteamHeroImage(appID)) ?? ''
   },
 
   /**

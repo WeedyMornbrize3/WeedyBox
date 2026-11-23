@@ -170,6 +170,70 @@ func TestSteamCoverImageInRoots(t *testing.T) {
 	}
 }
 
+// TestSteamHeroImageInRoots 用户要求的背景图规则：按 appid 找目录 → 递归找文件名含 hero
+// 的图片（排除 blur 模糊占位与 logo）；没有目录/没有图都返回空串（前端退回 API 预览图）。
+func TestSteamHeroImageInRoots(t *testing.T) {
+	steamRoot := t.TempDir()
+	cacheRoot := filepath.Join(steamRoot, "appcache", "librarycache")
+
+	// ① 英文 + 中文 + 模糊版 + 600x900 封面：选中文正式版，blur/封面都不能选
+	appDir := filepath.Join(cacheRoot, "1229490")
+	writeFile(t, filepath.Join(appDir, "library_hero.jpg"), "en")
+	writeFile(t, filepath.Join(appDir, "library_hero_schinese.jpg"), "cn")
+	writeFile(t, filepath.Join(appDir, "library_hero_blur.jpg"), "blur")
+	writeFile(t, filepath.Join(appDir, "library_600x900.jpg"), "cover")
+
+	got, err := steamHeroImageInRoots(context.Background(), []string{steamRoot}, "1229490")
+	if err != nil {
+		t.Fatalf("找 hero 背景图失败: %v", err)
+	}
+	if filepath.Base(got) != "library_hero_schinese.jpg" {
+		t.Errorf("应优先中文版 library_hero，实际 %q", got)
+	}
+
+	// ② 只有嵌套目录里的 hero → 也要递归找到（Steam 会把它放在 hash 子目录里）
+	deepDir := filepath.Join(cacheRoot, "3241660")
+	writeFile(t, filepath.Join(deepDir, "c74ee023", "library_hero.jpg"), "deep")
+	writeFile(t, filepath.Join(deepDir, "0792bd65", "logo.png"), "logo")
+
+	got, err = steamHeroImageInRoots(context.Background(), []string{steamRoot}, "3241660")
+	if err != nil {
+		t.Fatalf("找 hero 背景图失败: %v", err)
+	}
+	if filepath.Base(got) != "library_hero.jpg" {
+		t.Errorf("应递归找到 hero，实际 %q", got)
+	}
+
+	// ③ 没有对应 appid 目录 → 空串
+	if got, err = steamHeroImageInRoots(context.Background(), []string{steamRoot}, "9999999"); err != nil || got != "" {
+		t.Errorf("没有目录时应返回空串，实际 %q err=%v", got, err)
+	}
+
+	// ④ 目录里只有 blur 与 600x900 封面 → 空串（不能拿模糊图/竖版封面当背景）
+	onlyBlurDir := filepath.Join(cacheRoot, "777")
+	writeFile(t, filepath.Join(onlyBlurDir, "library_hero_blur.jpg"), "blur")
+	writeFile(t, filepath.Join(onlyBlurDir, "library_600x900.jpg"), "cover")
+	if got, err = steamHeroImageInRoots(context.Background(), []string{steamRoot}, "777"); err != nil || got != "" {
+		t.Errorf("只有 blur/封面时应返回空串，实际 %q err=%v", got, err)
+	}
+}
+
+// TestSteamHeroScore 打分口径：library_hero 优先、中文版优先；blur/logo 不算 hero。
+func TestSteamHeroScore(t *testing.T) {
+	if steamHeroScore("library_hero_schinese.jpg") <= steamHeroScore("library_hero.jpg") {
+		t.Error("中文版 hero 应该优先")
+	}
+	if steamHeroScore("library_hero.jpg") <= steamHeroScore("custom_hero.jpg") {
+		t.Error("library_hero 应该比其它 hero 图优先")
+	}
+	if isSteamHeroImageName("library_hero_blur.jpg") || isSteamHeroImageName("library_hero_logo.png") {
+		t.Error("blur / logo 不该被当成背景图")
+	}
+	if isSteamHeroImageName("library_hero.jpg") != true || isSteamHeroImageName("library_600x900.jpg") {
+		t.Error("hero 文件名筛选不对")
+	}
+}
+
 // TestSteamCoverScore 打分口径：600x900 > capsule；同档中文版优先。
 func TestSteamCoverScore(t *testing.T) {
 	if steamCoverScore("library_600x900.jpg") <= steamCoverScore("library_capsule.jpg") {

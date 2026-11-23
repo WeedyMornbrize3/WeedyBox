@@ -36,3 +36,22 @@ func startDetached(path string) (uint32, error) {
 	_ = cmd.Process.Release()
 	return pid, nil
 }
+
+// startURL 用系统默认的协议处理器打开一个 URL（这里只有 steam://rungameid/<appid>）。
+//
+// 走 ShellExecuteW 的 "open" 动作，而不是自己拼 cmd /c start：
+//   - 由 shell 解析 steam: 协议并交给 Steam 客户端，不经过控制台窗口（不会闪黑框）；
+//   - 不产生子进程 PID —— Steam 客户端是常驻进程，游戏由它拉起，
+//     运行状态靠 exe 检测（Status）而不是这个返回值；
+//   - 没有脚本注入 / 引号转义问题（URL 整个作为一个参数传出去）。
+func startURL(url string) error {
+	verb, err := windows.UTF16PtrFromString("open")
+	if err != nil {
+		return err
+	}
+	target, err := windows.UTF16PtrFromString(url)
+	if err != nil {
+		return err
+	}
+	return windows.ShellExecute(0, verb, target, nil, nil, windows.SW_SHOWNORMAL)
+}

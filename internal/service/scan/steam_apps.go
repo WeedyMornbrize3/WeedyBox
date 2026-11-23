@@ -306,6 +306,112 @@ func steamCoverScore(name string) int {
 	return score
 }
 
+// ===== hero 背景图：<Steam>\appcache\librarycache\<appid>\ 里找 library_hero* =====
+
+// SteamHeroImage 在 Steam 的 appcache\librarycache 里找某个 appid 的 hero 背景图。
+//
+// 用户要求（2026-11-23）：「背景图如果是 steam 源使用本地扫描函数扫描含 hero 字样图片」。
+// Steam 客户端库页顶部那张大图就是 `<appid>\<hash>\library_hero.jpg`（中文界面还会
+// 下 `library_hero_schinese.jpg`）。找法与封面同构：先按 appid 找目录，再**不限深度**
+// 递归找文件名含 hero 的图片；`*_blur*` 只有几 KB 的模糊占位图，`*logo*` 是徽标，
+// 都不能当背景，一并排除。**没有对应目录 / 没有候选图就返回空串**（不是错误）：
+// 调用方会退回商店接口给的预览图（用户要求「没有就使用 api 获取的预览图填充」）。
+func SteamHeroImage(ctx context.Context, appID string) (string, error) {
+	return steamHeroImageInRoots(ctx, steamInstallRoots(), appID)
+}
+
+// steamHeroImageInRoots 是 SteamHeroImage 的可测试版本（注册表不好伪造）。
+func steamHeroImageInRoots(ctx context.Context, steamRoots []string, appID string) (string, error) {
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		return "", nil
+	}
+	for _, steamRoot := range steamRoots {
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("查找 hero 背景图被取消: %w", err)
+		}
+		cacheRoot := filepath.Join(steamRoot, "appcache", "librarycache")
+		folder := findSteamCacheFolder(cacheRoot, appID)
+		if folder == "" {
+			continue
+		}
+		image, err := bestSteamHeroIn(ctx, folder)
+		if err != nil {
+			return "", err
+		}
+		if image != "" {
+			return image, nil
+		}
+	}
+	return "", nil
+}
+
+// bestSteamHeroIn 递归找该目录下最合适的 hero 图（按名字打分；越浅越优先）。
+func bestSteamHeroIn(ctx context.Context, folder string) (string, error) {
+	best := ""
+	bestScore := -1
+	walkErr := filepath.WalkDir(folder, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // 单个文件/子目录读不动就跳过，不影响整张背景图
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		name := strings.ToLower(entry.Name())
+		if !isSteamHeroImageName(name) {
+			return nil
+		}
+		score := steamHeroScore(name)
+		if rel, relErr := filepath.Rel(folder, path); relErr == nil {
+			score -= strings.Count(rel, string(filepath.Separator)) // 越深越差
+		}
+		if score > bestScore {
+			best, bestScore = path, score
+		}
+		return nil
+	})
+	if walkErr != nil {
+		if errors.Is(walkErr, context.Canceled) || errors.Is(walkErr, context.DeadlineExceeded) {
+			return "", fmt.Errorf("查找 hero 背景图被取消: %w", walkErr)
+		}
+		// 其余遍历错误（目录恰好被删）当作"没找到"，背景图不是关键路径
+	}
+	return best, nil
+}
+
+// isSteamHeroImageName 只认图片，且文件名必须带 hero（用户要求）；
+// blur（模糊占位）与 logo（徽标）不是背景图，排除。
+func isSteamHeroImageName(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".jpg", ".jpeg", ".png", ".webp":
+	default:
+		return false
+	}
+	lower := strings.ToLower(name)
+	if !strings.Contains(lower, "hero") {
+		return false
+	}
+	return !strings.Contains(lower, "blur") && !strings.Contains(lower, "logo")
+}
+
+// steamHeroScore 给候选 hero 图打分：
+//
+//	正式 hero（library_hero.jpg）> 其它含 hero 的图；
+//	同档里中文版优先（与封面口径一致，也和游戏库中文界面显示同一张图）。
+func steamHeroScore(name string) int {
+	score := 0
+	if strings.HasPrefix(name, "library_hero") {
+		score += 100
+	}
+	if strings.Contains(name, "schinese") {
+		score += 20
+	}
+	return score
+}
+
 // ===== 小工具 =====
 
 func firstMatch(re *regexp.Regexp, text string) string {

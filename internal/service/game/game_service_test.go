@@ -226,6 +226,159 @@ func textOf(v any) string {
 	return ""
 }
 
+// ===== 启动方式（launch_mode）：2026-11-23 新增，Steam 源可选 Steam URL / 本地 exe =====
+
+// seedLibraryWorkSource 按指定来源预置一条库记录（Steam 源用 appid 当编号）。
+func seedLibraryWorkSource(t *testing.T, s *GameService, source, workID string) {
+	t.Helper()
+	work := &model.LibraryWork{
+		Source:  source,
+		WorkID:  workID,
+		Name:    "测试作品",
+		RawJSON: `{"id":"` + workID + `","name":"测试作品"}`,
+	}
+	if err := s.DB.UpsertLibraryWork(context.Background(), work); err != nil {
+		t.Fatalf("准备作品失败: %v", err)
+	}
+}
+
+// 默认值解析：Steam 源 -> steam（URL），其它源 -> exe；库里存的非法值退回默认。
+func TestResolveLaunchMode(t *testing.T) {
+	cases := []struct {
+		name   string
+		stored string
+		source string
+		want   string
+	}{
+		{"Steam 源没选过 -> Steam URL", "", database.SourceSteam, database.LaunchModeSteam},
+		{"DLsite 源没选过 -> 本地 exe", "", database.SourceDLsite, database.LaunchModeExe},
+		{"Steam 源显式选本地 exe", database.LaunchModeExe, database.SourceSteam, database.LaunchModeExe},
+		{"Steam 源显式选 Steam URL", database.LaunchModeSteam, database.SourceSteam, database.LaunchModeSteam},
+		{"无法识别的值退回默认", "bogus", database.SourceSteam, database.LaunchModeSteam},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := resolveLaunchMode(c.stored, c.source); got != c.want {
+				t.Fatalf("resolveLaunchMode(%q,%q) = %q，期望 %q", c.stored, c.source, got, c.want)
+			}
+		})
+	}
+}
+
+// 切换启动方式：写进库、返回生效值；非法值/非 Steam 源选 steam 都要报错。
+func TestSetLaunchMode_Persists(t *testing.T) {
+	s := newTestGameService(t)
+	ctx := context.Background()
+	seedLibraryWorkSource(t, s, database.SourceSteam, "1229490")
+
+	state, err := s.SetLaunchMode(ctx, SetLaunchModeRequest{
+		WorkID: "1229490", Source: database.SourceSteam, Mode: database.LaunchModeExe,
+	})
+	if err != nil {
+		t.Fatalf("切换到本地 exe 失败: %v", err)
+	}
+	if state.Mode != database.LaunchModeExe {
+		t.Fatalf("返回的生效方式应为 exe，实际 %q", state.Mode)
+	}
+	if got, _ := s.DB.GetLaunchMode(ctx, database.SourceSteam, "1229490"); got != database.LaunchModeExe {
+		t.Fatalf("库里应存 exe，实际 %q", got)
+	}
+
+	// 切回 Steam URL（用户要求：Steam 源默认使用 URL 启动）
+	state, err = s.SetLaunchMode(ctx, SetLaunchModeRequest{
+		WorkID: "1229490", Source: database.SourceSteam, Mode: database.LaunchModeSteam,
+	})
+	if err != nil {
+		t.Fatalf("切换回 Steam 启动失败: %v", err)
+	}
+	if state.Mode != database.LaunchModeSteam {
+		t.Fatalf("返回的生效方式应为 steam，实际 %q", state.Mode)
+	}
+
+	// 非法取值：报错而不是静默写成默认
+	if _, err := s.SetLaunchMode(ctx, SetLaunchModeRequest{
+		WorkID: "1229490", Source: database.SourceSteam, Mode: "bogus",
+	}); err == nil {
+		t.Fatal("非法启动方式应该报错")
+	}
+
+	// DLsite 作品没有 appid，不允许选 Steam 方式
+	seedLibraryWork(t, s, "RJ01234567")
+	if _, err := s.SetLaunchMode(ctx, SetLaunchModeRequest{
+		WorkID: "RJ01234567", Source: database.SourceDLsite, Mode: database.LaunchModeSteam,
+	}); err == nil {
+		t.Fatal("非 Steam 来源不该能选 Steam 启动")
+	}
+}
+
+// Status 要带回生效的启动方式：Steam 源默认 steam，DLsite 源默认 exe。
+func TestStatus_ReportsLaunchMode(t *testing.T) {
+	s := newTestGameService(t)
+	seedLibraryWorkSource(t, s, database.SourceSteam, "1229490")
+	seedLibraryWork(t, s, "RJ01234567")
+
+	steamStatus, err := s.Status(context.Background(), "1229490", database.SourceSteam)
+	if err != nil {
+		t.Fatalf("读取 Steam 作品状态失败: %v", err)
+	}
+	if steamStatus.LaunchMode != database.LaunchModeSteam {
+		t.Fatalf("Steam 源默认应走 Steam URL，实际 %q", steamStatus.LaunchMode)
+	}
+
+	dlStatus, err := s.Status(context.Background(), "RJ01234567", database.SourceDLsite)
+	if err != nil {
+		t.Fatalf("读取 DLsite 作品状态失败: %v", err)
+	}
+	if dlStatus.LaunchMode != database.LaunchModeExe {
+		t.Fatalf("DLsite 源默认应跑本地 exe，实际 %q", dlStatus.LaunchMode)
+	}
+}
+
+// Steam 方式下没有 appid 的数字编号：Launch 直接报错，绝不会去唤起 Steam
+// （测试里绝不能真的执行 startURL，这条用例就是用来守住这个分支的）。
+func TestLaunch_SteamModeRejectsInvalidAppID(t *testing.T) {
+	s := newTestGameService(t)
+	ctx := context.Background()
+	seedLibraryWorkSource(t, s, database.SourceSteam, "NOTANAPP")
+	if _, err := s.SetLaunchMode(ctx, SetLaunchModeRequest{
+		WorkID: "NOTANAPP", Source: database.SourceSteam, Mode: database.LaunchModeSteam,
+	}); err != nil {
+		t.Fatalf("设置 Steam 启动方式失败: %v", err)
+	}
+
+	result, err := s.Launch(ctx, "NOTANAPP", database.SourceSteam)
+	if err == nil {
+		t.Fatal("非数字 appid 在 Steam 方式下应该报错")
+	}
+	if result.Started || result.Missing {
+		t.Fatalf("报错时不该标记为已启动/缺失，实际 %+v", result)
+	}
+}
+
+// 切回本地 exe 方式后：没有记录位置仍然是 Missing（走原来的选程序流程），
+// 不会因为来源是 Steam 就误发 Steam URL。
+func TestLaunch_SteamWorkInExeModeWithoutPathIsMissing(t *testing.T) {
+	s := newTestGameService(t)
+	ctx := context.Background()
+	seedLibraryWorkSource(t, s, database.SourceSteam, "1229490")
+	if _, err := s.SetLaunchMode(ctx, SetLaunchModeRequest{
+		WorkID: "1229490", Source: database.SourceSteam, Mode: database.LaunchModeExe,
+	}); err != nil {
+		t.Fatalf("切换到本地 exe 失败: %v", err)
+	}
+
+	result, err := s.Launch(ctx, "1229490", database.SourceSteam)
+	if err != nil {
+		t.Fatalf("没有位置不该报错: %v", err)
+	}
+	if result.Started || !result.Missing {
+		t.Fatalf("期望 Started=false / Missing=true，实际 %+v", result)
+	}
+	if result.Mode != database.LaunchModeExe {
+		t.Fatalf("回执里应说明用了 exe 方式，实际 %q", result.Mode)
+	}
+}
+
 // Status：还没设置位置 → Path/Exists/Running 全 false（前端据此允许第一次点启动去选程序）。
 func TestStatus_NoPath(t *testing.T) {
 	s := newTestGameService(t)

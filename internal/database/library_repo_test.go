@@ -424,8 +424,8 @@ func TestSetGamePath_RequiresLibraryWork(t *testing.T) {
 	}
 }
 
-// 老库文件（library_works 还没有 game_path 列）：读写位置时要自动补列。
-func TestEnsureGamePathColumn_MigratesOldTable(t *testing.T) {
+// 老库文件（library_works 还没有 game_path / launch_mode 列）：读写前要自动补列。
+func TestEnsureLibraryColumns_MigratesOldTable(t *testing.T) {
 	s := newTestService(t)
 	ctx := context.Background()
 
@@ -473,5 +473,75 @@ func TestEnsureGamePathColumn_MigratesOldTable(t *testing.T) {
 	}
 	if got != `D:\old\game.exe` {
 		t.Fatalf("旧库迁移后位置不对，实际 %q", got)
+	}
+
+	// 启动方式是 2026-11-23 新增的列：旧库同样要在读写前补上
+	if err := s.SetLaunchMode(ctx, SourceDLsite, work.WorkID, LaunchModeSteam); err != nil {
+		t.Fatalf("旧库写启动方式失败（迁移没生效？）: %v", err)
+	}
+	mode, err := s.GetLaunchMode(ctx, SourceDLsite, work.WorkID)
+	if err != nil {
+		t.Fatalf("旧库读启动方式失败: %v", err)
+	}
+	if mode != LaunchModeSteam {
+		t.Fatalf("旧库迁移后启动方式不对，实际 %q", mode)
+	}
+}
+
+// ===== 启动方式（library_works.launch_mode，与元数据 / 位置同表） =====
+
+// 启动方式写在同一行上：重新抓取元数据不能把它冲掉；非法值直接报错。
+func TestLaunchMode_SameRowAsLibraryWork(t *testing.T) {
+	s := newTestService(t)
+	ctx := context.Background()
+
+	work := sampleWork()
+	if err := s.UpsertLibraryWork(ctx, &work); err != nil {
+		t.Fatalf("准备作品失败: %v", err)
+	}
+
+	// 没选过时读出来是空串（不是错误），由调用方按来源取默认值
+	if mode, err := s.GetLaunchMode(ctx, SourceDLsite, work.WorkID); err != nil || mode != "" {
+		t.Fatalf("没选过时应是空串 + nil，实际 mode=%q err=%v", mode, err)
+	}
+
+	if err := s.SetLaunchMode(ctx, SourceDLsite, work.WorkID, LaunchModeSteam); err != nil {
+		t.Fatalf("写入启动方式失败: %v", err)
+	}
+	got, err := s.FindLibraryWork(ctx, SourceDLsite, work.WorkID)
+	if err != nil || got == nil {
+		t.Fatalf("读取作品失败: work=%+v err=%v", got, err)
+	}
+	if got.LaunchMode != LaunchModeSteam {
+		t.Fatalf("启动方式应挂在作品行上，实际 %q", got.LaunchMode)
+	}
+
+	// 刷新元数据（名称变了）：启动方式不能被 Upsert 冲掉
+	work.Name = "改名了"
+	if err := s.UpsertLibraryWork(ctx, &work); err != nil {
+		t.Fatalf("刷新元数据失败: %v", err)
+	}
+	got, err = s.FindLibraryWork(ctx, SourceDLsite, work.WorkID)
+	if err != nil || got == nil {
+		t.Fatalf("刷新后读取失败: work=%+v err=%v", got, err)
+	}
+	if got.Name != "改名了" || got.LaunchMode != LaunchModeSteam {
+		t.Fatalf("刷新后应为「新名字 + 原启动方式」，实际 name=%q launchMode=%q", got.Name, got.LaunchMode)
+	}
+
+	// 非法启动方式直接报错，不静默写成别的值
+	if err := s.SetLaunchMode(ctx, SourceDLsite, work.WorkID, "bogus"); err == nil {
+		t.Fatal("非法启动方式应该报错")
+	}
+}
+
+// 作品不在库里时不许写启动方式（与 SetGamePath 同一条约束）。
+func TestSetLaunchMode_RequiresLibraryWork(t *testing.T) {
+	s := newTestService(t)
+	if err := s.SetLaunchMode(context.Background(), SourceDLsite, "RJ01721474", LaunchModeExe); err == nil {
+		t.Fatal("没入库的作品不该能写启动方式")
+	}
+	if got, _ := s.FindLibraryWork(context.Background(), SourceDLsite, "RJ01721474"); got != nil {
+		t.Fatalf("不该凭空造作品行，实际 %+v", got)
 	}
 }

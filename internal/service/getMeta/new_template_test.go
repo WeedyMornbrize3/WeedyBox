@@ -230,6 +230,33 @@ func TestParseWorkTagsIncludeDetailFields(t *testing.T) {
 	}
 }
 
+// TestParseWorkPreviewImages 画廊大图列表：第一张是 _img_main（游戏库卡片用的封面），
+// 之后按序号是 _img_smp1、_img_smp2…（作品详情页拿第二张当背景，用户 2026-11-23 要求）。
+// 同一张图的 webp 变体与 _100x100 / _240x240 缩略图不能混进来。
+func TestParseWorkPreviewImages(t *testing.T) {
+	service := &MetaService{}
+	work, err := service.parseWork(loadFixture(t, "work_new_zh_RJ01232863.html"), "RJ01232863")
+	if err != nil {
+		t.Fatalf("解析中文模板页面失败: %v", err)
+	}
+
+	base := "https://img.dlsite.jp/modpub/images2/work/doujin/RJ01233000/RJ01232863_"
+	want := []string{
+		base + "img_main.jpg",
+		base + "img_smp1.jpg",
+		base + "img_smp2.jpg",
+		base + "img_smp3.jpg",
+	}
+	if strings.Join(work.PreviewImages, "|") != strings.Join(want, "|") {
+		t.Errorf("PreviewImages = %v，期望 %v", work.PreviewImages, want)
+	}
+	for _, u := range work.PreviewImages {
+		if strings.Contains(u, "_100x100") || strings.Contains(u, "_240x240") || strings.HasSuffix(u, ".webp") {
+			t.Errorf("预览图里混进了缩略图 / webp 变体：%q", u)
+		}
+	}
+}
+
 // TestParseWorkRejectsPageWithoutName 页面结构再变化时宁可报错，也不能返回空壳。
 func TestParseWorkRejectsPageWithoutName(t *testing.T) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader("<html><body><p>nothing here</p></body></html>"))

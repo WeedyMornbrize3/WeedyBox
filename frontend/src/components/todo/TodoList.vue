@@ -3,10 +3,11 @@
      只保留必要元素；筛选默认收起，批量操作只在有选中时才出现（渐进披露）。
 
      批量操作模型：
-       行的左侧选择框负责「选中哪些」，工具栏右侧的
-       「完成全部 / 删除全部」对选中集合执行动作。
-       两个按钮都要求**连点两下**（第一下进入待确认态，第二下才执行），
-       并且不会弹任何确认框或展开额外面板。 -->
+       行的左侧选择框负责「选中哪些」，工具栏右侧的「删除所选」
+       对选中集合执行删除。
+       按钮要求**连点两下**（第一下进入待确认态，第二下才执行），
+       并且不会弹任何确认框或展开额外面板。
+       （「完成全部 / 取消完成」已随完成功能一起移除，2026-11-23。） -->
 <template>
   <div class="todo-container select-none h-full min-h-0 flex flex-col gap-3">
     <!-- 页头 -->
@@ -18,7 +19,7 @@
     <!-- 统计 + 新建优先级（有数据时才出现） -->
     <Transition name="fade-rise">
       <div v-if="hasTodos" class="flex items-center gap-3 flex-shrink-0">
-        <TodoStats :stats="todoStore.stats" class="flex-1 min-w-0" />
+        <TodoStats :todos="todoStore.filteredTodos" class="flex-1 min-w-0" />
         <TodoPrioritySelector class="flex-shrink-0" />
       </div>
     </Transition>
@@ -60,36 +61,8 @@
           {{ allVisibleSelected ? '取消全选' : '全选' }}
         </button>
 
-        <!-- 批量操作：对「已选中」执行。没有选中时不渲染，避免一排禁用按钮占位 -->
+        <!-- 批量删除：对「已选中」执行。没有选中时不渲染，避免一排禁用按钮占位 -->
         <div v-if="selectedIds.length" class="ml-auto flex items-center gap-1.5">
-          <button
-            type="button"
-            class="bulk-btn"
-            :class="[uncompleteMode ? 'bulk-uncomplete' : 'bulk-complete', { 'is-armed': armed === 'complete' }]"
-            :style="{ '--bulk-accent': uncompleteMode ? 'var(--color-warning)' : 'var(--color-success)' }"
-            :disabled="completing"
-            :aria-label="completing
-              ? (uncompleteMode ? '正在取消完成' : '正在完成')
-              : armed === 'complete'
-                ? `再次点击确认将这 ${selectedIds.length} 项${completeActionLabel}`
-                : `将选中的 ${selectedIds.length} 项${completeActionLabel}（需连点两下确认）`"
-            @click="handleCompleteClick"
-            @mouseleave="disarm"
-            @blur="disarm"
-          >
-            <span
-              class="icon-xs"
-              :class="completing
-                ? 'i-lucide-loader-circle spin'
-                : armed === 'complete'
-                  ? 'i-lucide-check'
-                  : uncompleteMode ? 'i-lucide-circle' : 'i-lucide-circle-check-big'"
-              aria-hidden="true"
-            />
-            {{ completing ? (uncompleteMode ? '取消中…' : '完成中…') : armed === 'complete' ? '再点一次确认' : completeActionLabel }}
-            <span class="bulk-count">{{ selectedIds.length }}</span>
-          </button>
-
           <button
             type="button"
             class="bulk-btn bulk-delete"
@@ -109,7 +82,7 @@
               :class="deleting ? 'i-lucide-loader-circle icon-xs spin' : armed === 'delete' ? 'i-lucide-check icon-xs' : 'i-lucide-trash-2 icon-xs'"
               aria-hidden="true"
             />
-            {{ deleting ? '删除中…' : armed === 'delete' ? '再点一次确认' : '删除全部' }}
+            {{ deleting ? '删除中…' : armed === 'delete' ? '再点一次确认' : '删除所选' }}
             <span class="bulk-count">{{ selectedIds.length }}</span>
           </button>
         </div>
@@ -190,7 +163,6 @@
           :is-updating="busyIds.has(todo.id)"
           :is-deleting="busyIds.has(todo.id)"
           @select="toggleSelected"
-          @toggle="handleToggle"
           @delete="handleDelete"
           @copy="handleCopy"
         />
@@ -234,7 +206,6 @@ function toggleFilterPanel() {
 const activeFilterCount = computed(() => {
   const f = todoStore.filters
   let n = 0
-  if (f.completed !== 'pending') n++
   if (f.priority !== null) n++
   if (f.time !== 'all') n++
   return n
@@ -273,19 +244,10 @@ const clearSelection = () => {
   disarm()
 }
 
-// ===== 批量操作：连点两下 =====
-// 同一个时刻只允许一个按钮处于待确认态，避免「以为在确认完成、其实点的是删除」。
-const armed = ref<'complete' | 'delete' | null>(null)
-const completing = ref(false)
+// ===== 批量删除：连点两下 =====
+// 「完成」相关的批量操作已随完成功能移除（2026-11-23），这里只剩删除。
+const armed = ref<'delete' | null>(null)
 const deleting = ref(false)
-
-// 在「已完成」筛选下，列表里看到的都是已完成项，
-// 此时按钮语义反转为「取消完成」——把选中项改回未完成。
-const uncompleteMode = computed(() => todoStore.filters.completed === 'completed')
-
-const completeActionLabel = computed(() =>
-  uncompleteMode.value ? '取消完成' : '标记为已完成'
-)
 
 const disarm = () => {
   armed.value = null
@@ -296,26 +258,15 @@ watch(selectedIds, disarm)
 
 // 切换筛选时清空所有选择。
 // 理由：筛选会换掉列表里可见的条目，留着旧选择会造成
-// 「看不见的选中项被批量操作带上」——尤其是「已完成」筛选下
-// 按钮语义会反转成取消完成，残留选择极易误操作。
+// 「看不见的选中项被批量删除带上」，极易误操作。
 // 同时撤销待确认态，避免按钮停在 armed 状态。
 watch(
-  () => [todoStore.filters.completed, todoStore.filters.priority, todoStore.filters.time],
+  () => [todoStore.filters.priority, todoStore.filters.time],
   () => {
     clearSelection()
     disarm()
   }
 )
-
-function handleCompleteClick() {
-  if (completing.value || !selectedIds.value.length) return
-  if (armed.value !== 'complete') {
-    armed.value = 'complete'
-    return
-  }
-  armed.value = null
-  void completeSelected()
-}
 
 function handleDeleteClick() {
   if (deleting.value || !selectedIds.value.length) return
@@ -325,28 +276,6 @@ function handleDeleteClick() {
   }
   armed.value = null
   void deleteSelected()
-}
-
-async function completeSelected() {
-  const ids = [...selectedIds.value]
-  if (!ids.length) return
-  // 在「已完成」筛选下反向操作：把选中项改回未完成
-  const targetCompleted = !uncompleteMode.value
-  completing.value = true
-  try {
-    const n = await todoStore.completeMany(ids, targetCompleted)
-    showToast(
-      'success',
-      n > 0
-        ? (targetCompleted ? `已完成 ${n} 项` : `已取消完成 ${n} 项`)
-        : (targetCompleted ? '所选条目均已完成' : '所选条目均未完成')
-    )
-    clearSelection()
-  } catch (e) {
-    showToast('error', e instanceof Error ? e.message : '批量更新完成状态失败')
-  } finally {
-    completing.value = false
-  }
 }
 
 async function deleteSelected() {
@@ -376,7 +305,7 @@ function setBusy(id: number, busy: boolean) {
 }
 
 // ===== 轻量反馈条 =====
-// 只显示「已完成/已删除」这类一次性结果，长时间停留的错误统一由 store.error 渲染在列表区。
+// 只显示「已删除」这类一次性结果，长时间停留的错误统一由 store.error 渲染在列表区。
 const toast = ref<{ kind: 'error' | 'success'; text: string } | null>(null)
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -398,10 +327,6 @@ async function runWithBusy(id: number, action: () => Promise<unknown>, okText: s
     setBusy(id, false)
   }
 }
-
-// 单条完成 / 取消完成（行右侧按钮）
-const handleToggle = (id: number) =>
-  runWithBusy(id, () => todoStore.toggleComplete(id), '已更新完成状态')
 
 // 单条删除：确认动作由 TodoItem 的「连点两下」承担，这里不弹确认框
 const handleDelete = (id: number) => {
@@ -498,14 +423,14 @@ onBeforeUnmount(() => {
   transform: translateY(-4px);
 }
 
-/* ===== 批量操作按钮（完成全部 / 取消完成 / 删除全部）=====
-   三个按钮严格同构，只有 accent 语义色不同（由模板以内联 --bulk-accent 传入）：
+/* ===== 批量操作按钮（删除所选）=====
+   现在只剩这一个按钮（完成相关的两个已随完成功能移除）：
      默认态：透明底 + accent 描边 + accent 文字
      hover  ：填 accent + 反色文字
-     待确认 ：同 hover，另加一圈外描边以强调（.is-armed）
+     待确认 ：同 hover + 填 accent（.is-armed），不再额外加外描边
    把颜色放在 scoped 里而不是模板工具类，是为了避免再踩
    「UnoCSS 出序/同权重覆盖」那类静默失效——这里只有一处决定颜色。
-   反色文字必须用随主题翻转的语义变量：深色主题下 success/danger 是亮色，
+   反色文字必须用随主题翻转的语义变量：深色主题下 danger 是亮色，
    白字压上去只有 1.7~2.8:1，不达标。 */
 .bulk-btn {
   display: flex;
@@ -551,15 +476,8 @@ onBeforeUnmount(() => {
 }
 
 /* 各动作的反色文字：默认（浅色主题）为白字，深色主题在下方覆盖 */
-.bulk-complete,
-.bulk-uncomplete,
 .bulk-delete {
   --bulk-on-accent: #ffffff;
-}
-
-[data-theme="dark"] .bulk-complete,
-[data-theme="dark"] .bulk-uncomplete {
-  --bulk-on-accent: #04211f;
 }
 
 [data-theme="dark"] .bulk-delete {

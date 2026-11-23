@@ -1,9 +1,10 @@
 // frontend/src/services/todoService.ts
+// TODO 的前端封装。2026-11-23 起「完成」功能已移除：
+// 不再有 toggleComplete / getStats（后端接口仍在，只是前端不用了）。
 
 import { TodoService } from '../../bindings/WeedyBox/internal/service'
 import type { 
     Todo, 
-    TodoStats, 
     CreateTodoDTO, 
     UpdateTodoDTO 
 } from '../../bindings/WeedyBox/internal/model'
@@ -33,10 +34,6 @@ export const todoApi = {
         return ensure(await TodoService.Update(id, dto), `更新 TODO ${id} 失败`)
     },
 
-    async toggleComplete(id: number): Promise<Todo> {
-        return ensure(await TodoService.ToggleComplete(id), `切换 TODO ${id} 状态失败`)
-    },
-
     async delete(id: number): Promise<void> {
         await TodoService.Delete(id)
     },
@@ -45,9 +42,5 @@ export const todoApi = {
     async deleteMany(ids: number[]): Promise<void> {
         if (ids.length === 0) return
         await TodoService.DeleteByIDs(ids)
-    },
-
-    async getStats(): Promise<TodoStats> {
-        return (await TodoService.GetStats()) ?? { total: 0, completed: 0, pending: 0 }
     },
 }

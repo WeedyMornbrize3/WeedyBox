@@ -14,6 +14,7 @@ import type { DownloadResult, SearchCandidate, SteamStats, WorkMeta } from '../s
 import { LIBRARY_SOURCE_DLSITE, LIBRARY_SOURCE_STEAM, libraryApi } from '../services/libraryService'
 import type { LibraryMeta, LibrarySource } from '../services/libraryService'
 import { gameApi } from '../services/gameService'
+import type { LibraryLaunchMode } from '../services/gameService'
 import { looksLikeWorkId, toMessage } from '../utils/metaFormat'
 
 /** 快捷示例：省得每次手打编号（编号精确抓取 + 作品名模糊搜索各来一个） */
@@ -60,6 +61,12 @@ export const useMetaStore = defineStore('meta', () => {
    * 入库后「游戏启动」按钮按它启动，为空时第一次点击会弹系统文件框让用户选 exe。
    */
   const gamePath = ref('')
+  /**
+   * 库里记录的启动方式（2026-11-23）：'' = 没选过（按来源取默认），
+   * 'steam' = steam://rungameid/<appid>，'exe' = 本地程序。
+   * 与 gamePath 同表（library_works.launch_mode），随 Fetch/Store 带回来。
+   */
+  const launchMode = ref<LibraryLaunchMode>('')
   /** 记录的 exe 文件此刻是否还在（进入详情时由后端检测；false = 已删除/变更位置） */
   const gamePathExists = ref(true)
   /** 游戏此刻是否正在运行（进入详情时检测 + 页面定时轮询） */
@@ -90,6 +97,12 @@ export const useMetaStore = defineStore('meta', () => {
   /** /works「Steam 动态」：评价汇总 + 在线人数 + 最近公告（只有 Steam 源才有） */
   const steamStats = ref<SteamStats | null>(null)
   const steamStatsLoading = ref(false)
+  /**
+   * Steam 源作品的 hero 背景图（data URL）：后端在本机 Steam 客户端缓存
+   * appcache\librarycache 里按 appid 找文件名含 hero 的图片并读成 base64。
+   * 空串 = 本机没有（游戏没装 / 缓存被清），详情页回落到商店接口的预览图。
+   */
+  const heroImage = ref('')
 
   /** 后端返回的完整结构（原样展示，调试页用） */
   const raw = ref<unknown>(null)
@@ -119,11 +132,26 @@ export const useMetaStore = defineStore('meta', () => {
     () => Boolean(saved.value) || Boolean(coverAbsPath.value) || Boolean(libraryUpdatedAt.value),
   )
   /**
-   * 启动按钮是否该禁用：已经记了位置、但 exe 文件不存在了（被删除或移走）。
-   * 这时不能直接启动，只提示用户用「更换位置」重新选程序（选择的 UI 沿用原来的系统文件框）。
+   * 生效的启动方式（2026-11-23）：
+   *   - 用户显式选过（库里 launch_mode 非空）就用它；
+   *   - 否则按来源取默认 —— Steam 源走 steam://rungameid/<appid>（用户要求：默认 URL），
+   *     DLsite 源只能跑本地 exe。
+   */
+  const effectiveLaunchMode = computed<Exclude<LibraryLaunchMode, ''>>(() => {
+    if (launchMode.value === 'steam' || launchMode.value === 'exe') return launchMode.value
+    return source.value === LIBRARY_SOURCE_STEAM ? 'steam' : 'exe'
+  })
+  /** 当前是否「通过 Steam 启动」（决定按钮提示、是否还需要本地 exe） */
+  /**
+   * 启动按钮是否该禁用：exe 方式下已经记了位置、但 exe 文件不存在了（被删除或移走）。
+   * Steam 方式不需要本地 exe（游戏装没装、装在哪由 Steam 客户端管），所以不禁用。
    */
   const launchBlocked = computed(
-    () => stored.value && Boolean(gamePath.value) && !gamePathExists.value,
+    () =>
+      stored.value &&
+      effectiveLaunchMode.value === 'exe' &&
+      Boolean(gamePath.value) &&
+      !gamePathExists.value,
   )
   /**
    * 标签是否有未保存的改动（决定「保存」按钮显不显示）。
@@ -132,6 +160,44 @@ export const useMetaStore = defineStore('meta', () => {
   const tagsDirty = computed(() => {
     if (tagList.value.length !== tagSaved.value.length) return true
     return tagList.value.some((tag, i) => tag !== tagSaved.value[i])
+  })
+
+  /**
+   * 详情页 hero 区域的大背景图（用户 2026-11-23 定稿）：
+   *   - Steam 源：优先本机扫描到的 hero 图（后端转 data URL）；没有就用商店接口的
+   *     预览图（background_raw / background / 第一张截图），最后才退到封面；
+   *   - DLsite 源：用画廊的**第二张**预览图（第一张是游戏库卡片封面，见
+   *     getFromDlsite.go 的 previewImages）。
+   * 旧缓存（2026-11-23 之前入库的）没有预览图列表，从封面 URL 推一张 `_img_smp1`
+   * 兜底 —— 推出来的图不一定存在，<img> 加载失败时 hero 会退成纯渐变底。
+   */
+  const backgroundUrl = computed(() => {
+    const current = work.value
+    if (!current) return ''
+    const previews = Array.isArray(current.previewImages) ? current.previewImages : []
+
+    if (source.value === LIBRARY_SOURCE_STEAM) {
+      if (heroImage.value) return heroImage.value
+      const steam = (current.steam ?? {}) as Record<string, unknown>
+      const screenshots = Array.isArray(steam.screenshots)
+        ? (steam.screenshots as Array<Record<string, unknown>>)
+        : []
+      // 用户要求「没有本地 hero 就使用 api 获取的预览图填充」：预览图 = 商店截图，
+      // 比 page_bg_raw（Steam 页头背景，很多游戏是一张很暗的纹理）更像"游戏画面"。
+      // background* 放在截图之后兜底，最后才是 16:9 header 封面。
+      const url = firstImageUrl([
+        ...screenshots.map((shot) => shot.path_full),
+        steam.background_raw,
+        steam.background,
+        ...previews,
+      ])
+      return url || current.coverUrl || ''
+    }
+
+    // DLsite：第二张预览图作背景（用户要求）；只有一张预览图时就用它
+    if (previews.length > 1) return previews[1]
+    if (previews.length === 1) return previews[0]
+    return deriveDlsitePreviewUrl(current.coverUrl) || current.coverUrl || ''
   })
 
   /** 前端搜索每页条数 */
@@ -173,6 +239,7 @@ export const useMetaStore = defineStore('meta', () => {
     libraryUpdatedAt.value = ''
     coverAbsPath.value = ''
     gamePath.value = ''
+    launchMode.value = ''
     gamePathExists.value = true
     gameRunning.value = false
     gameStatusLoading.value = false
@@ -187,6 +254,7 @@ export const useMetaStore = defineStore('meta', () => {
     steamSearchTotal.value = 0
     steamStats.value = null
     steamStatsLoading.value = false
+    heroImage.value = ''
     if (!opts.keepCandidates) {
       sourcePages.value = {}
       sourcePageCount.value = 1
@@ -317,6 +385,22 @@ export const useMetaStore = defineStore('meta', () => {
     }
   }
 
+  /**
+   * 读 Steam 源作品的 hero 背景图（本机 Steam 客户端缓存，后端转 data URL）。
+   * 只有 Steam 源才有；本机没有就留空 —— 详情页会回落到商店接口的预览图。
+   */
+  async function loadSteamHeroImage(appID: string) {
+    try {
+      const url = await libraryApi.steamHeroImage(appID)
+      if (!url) return
+      // 期间换作品了：丢弃旧响应（否则会把上一部的大图贴到当前作品上）
+      if (work.value?.id !== appID || source.value !== LIBRARY_SOURCE_STEAM) return
+      heroImage.value = url
+    } catch {
+      // 背景图是装饰，拿不到不影响详情页
+    }
+  }
+
   /** 把取回来的作品塞进 state（同时记住"这是不是缓存"） */
   function applyWork(data: WorkMeta) {
     const meta = data as LibraryMeta
@@ -330,6 +414,8 @@ export const useMetaStore = defineStore('meta', () => {
     // 游戏启动位置就在库记录上（与元数据同表），随 Fetch/Store 一起带回来。
     // 先按"文件存在/未运行"占位，避免按钮闪一下禁用态；紧接着再问后端真实状态。
     gamePath.value = meta.gamePath ?? ''
+    const storedMode = (meta.launchMode ?? '').toLowerCase()
+    launchMode.value = storedMode === 'steam' || storedMode === 'exe' ? storedMode : ''
     gamePathExists.value = Boolean(gamePath.value)
     gameRunning.value = false
     gameWarning.value = ''
@@ -341,6 +427,9 @@ export const useMetaStore = defineStore('meta', () => {
     if (previousId !== data.id || !tagsDirty.value) void loadTags(data.id)
     // Steam 源额外取「评价 / 在线人数 / 公告」（DLsite 分支里直接清空）
     void loadSteamStats()
+    // Steam 源额外取本机 hero 背景图（DLsite 的背景图直接从作品的预览图列表取）
+    heroImage.value = ''
+    if (source.value === LIBRARY_SOURCE_STEAM) void loadSteamHeroImage(data.id)
     // 命中的作品从候选里剔除（已加载的每一页都要剔，否则翻页还会看到）
     if (work.value) {
       const id = work.value.id
@@ -489,9 +578,11 @@ export const useMetaStore = defineStore('meta', () => {
     downloading.value = true
     error.value = ''
     try {
-      // 手动搜索入库：先请用户选游戏程序；取消则照常入库，只是不记位置
+      // 手动搜索入库：先请用户选游戏程序；取消则照常入库，只是不记位置。
+      // Steam 源例外：默认走 steam://rungameid/<appid>，本机 exe 不是必需品，
+      // 入库时不再追问（用户要切「本地程序启动」时在作品页再选）。
       let pickedPath = gamePath.value && gamePathExists.value ? gamePath.value : ''
-      if (!pickedPath) {
+      if (!pickedPath && source.value !== LIBRARY_SOURCE_STEAM) {
         try {
           pickedPath = await gameApi.pickExecutable(`选择「${current.name}」的游戏程序（取消则启动时再选）`)
         } catch {
@@ -510,9 +601,15 @@ export const useMetaStore = defineStore('meta', () => {
         coverUrl: data.coverUrl ?? '',
       }
       if (data.coverAbsPath) coverAbsPath.value = data.coverAbsPath
-      status.value = pickedPath
-        ? `已入库：${data.id}（元数据已载入数据库，封面存到 covers/，游戏位置已记录）`
-        : `已入库：${data.id}（元数据已载入数据库，封面存到 covers/；未记录游戏位置，启动时会再让你选）`
+      if (source.value === LIBRARY_SOURCE_STEAM) {
+        status.value = pickedPath
+          ? `已入库：${data.id}（元数据已载入数据库，封面存到 covers/；默认通过 Steam 启动，已记录本地程序可切换）`
+          : `已入库：${data.id}（元数据已载入数据库，封面存到 covers/；启动默认通过 Steam）`
+      } else {
+        status.value = pickedPath
+          ? `已入库：${data.id}（元数据已载入数据库，封面存到 covers/，游戏位置已记录）`
+          : `已入库：${data.id}（元数据已载入数据库，封面存到 covers/；未记录游戏位置，启动时会再让你选）`
+      }
     } catch (err) {
       error.value = `入库失败：${toMessage(err)}`
     } finally {
@@ -539,8 +636,12 @@ export const useMetaStore = defineStore('meta', () => {
       gamePath.value = status.path || gamePath.value
       gamePathExists.value = status.exists
       gameRunning.value = status.running
+      // 生效方式以后端为准（默认值已按来源解析）：切换过方式后状态轮询也能对齐
+      const reportedMode = (status.launchMode ?? '').toLowerCase()
+      if (reportedMode === 'steam' || reportedMode === 'exe') launchMode.value = reportedMode
+      // Steam 方式不依赖本地 exe：没装/换了目录都不该提示"程序已被删除"
       gameWarning.value =
-        status.exists || !status.path
+        effectiveLaunchMode.value === 'steam' || status.exists || !status.path
           ? ''
           : '游戏程序已被删除或移动了位置，请点「更换位置」重新选择游戏程序'
     } catch {
@@ -564,7 +665,8 @@ export const useMetaStore = defineStore('meta', () => {
     status.value = ''
     try {
       let result = await gameApi.launch(current.id, source.value)
-      if (result.missing) {
+      // 只有 exe 方式才需要"第一次先选程序"；Steam 方式不需要本地 exe
+      if (result.missing && effectiveLaunchMode.value === 'exe') {
         const picked = await gameApi.pickExecutable(`选择「${current.name}」的游戏程序`)
         if (!picked) return // 用户取消：什么都不做
         const savedPath = await gameApi.setPath(current.id, picked, source.value)
@@ -573,12 +675,14 @@ export const useMetaStore = defineStore('meta', () => {
         result = await gameApi.launch(current.id, source.value)
       }
       if (!result.started) throw new Error(result.message || '启动失败')
-      gamePath.value = result.path
-      gamePathExists.value = true
+      if (result.path) {
+        gamePath.value = result.path
+        gamePathExists.value = true
+      }
       gameRunning.value = result.running
       gameWarning.value = ''
-      status.value = `已启动游戏：${result.path}`
-      // 稍后复核一次（进程可能秒退）
+      status.value = result.message || `已启动游戏：${result.path}`
+      // 稍后复核一次（进程可能秒退；Steam 方式下 Steam 客户端拉起游戏也需要几秒）
       void refreshGameStatus()
     } catch (err) {
       error.value = `启动游戏失败：${toMessage(err)}`
@@ -606,6 +710,41 @@ export const useMetaStore = defineStore('meta', () => {
       void refreshGameStatus()
     } catch (err) {
       error.value = `设置游戏位置失败：${toMessage(err)}`
+    }
+  }
+
+  /**
+   * 切换启动方式（Steam 源作品才有两种可选，用户 2026-11-23 要求）：
+   *   - 'steam'：写库后下次启动跑 steam://rungameid/<appid>；
+   *   - 'exe'：还没记录本地程序时先弹系统文件框选一次 exe（取消则保持原样），再写库。
+   * 只改「下次怎么启动」，不会顺手启动游戏。
+   */
+  async function setGameLaunchMode(mode: 'steam' | 'exe'): Promise<void> {
+    const current = work.value
+    if (!current || !stored.value || launching.value) return
+    // 已经在目标方式上（且 exe 方式下已经有程序）就不必重复写库
+    if (effectiveLaunchMode.value === mode && (mode === 'steam' || Boolean(gamePath.value))) return
+
+    error.value = ''
+    try {
+      if (mode === 'exe' && !gamePath.value) {
+        const picked = await gameApi.pickExecutable(`选择「${current.name}」的游戏程序`)
+        if (!picked) return // 用户取消：保持原来的启动方式
+        const savedPath = await gameApi.setPath(current.id, picked, source.value)
+        gamePath.value = savedPath.path
+        gamePathExists.value = true
+        gameWarning.value = ''
+      }
+      const state = await gameApi.setLaunchMode(current.id, mode, source.value)
+      const reported = (state.mode ?? '').toLowerCase()
+      launchMode.value = reported === 'steam' || reported === 'exe' ? reported : mode
+      status.value =
+        mode === 'steam'
+          ? `启动方式已切换：通过 Steam 启动（steam://rungameid/${current.id}）`
+          : `启动方式已切换：本地程序启动（${gamePath.value}）`
+      void refreshGameStatus()
+    } catch (err) {
+      error.value = `切换启动方式失败：${toMessage(err)}`
     }
   }
 
@@ -723,6 +862,7 @@ export const useMetaStore = defineStore('meta', () => {
     libraryUpdatedAt,
     coverAbsPath,
     gamePath,
+    launchMode,
     gamePathExists,
     gameRunning,
     gameWarning,
@@ -736,12 +876,15 @@ export const useMetaStore = defineStore('meta', () => {
     steamSearchTotal,
     steamStats,
     steamStatsLoading,
+    heroImage,
     // Getters
     rawJson,
     hasResult,
     stored,
     launchBlocked,
+    effectiveLaunchMode,
     tagsDirty,
+    backgroundUrl,
     candidates,
     candidateTotal,
     candidatePageCount,
@@ -756,6 +899,7 @@ export const useMetaStore = defineStore('meta', () => {
     storeIn,
     launchGame,
     changeGamePath,
+    setGameLaunchMode,
     refreshGameStatus,
     addTag,
     removeTag,
@@ -766,3 +910,20 @@ export const useMetaStore = defineStore('meta', () => {
     clearResult,
   }
 })
+
+/** 从若干候选里挑第一个非空字符串（Steam 原始数据的字段类型是 unknown） */
+function firstImageUrl(values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+/**
+ * 2026-11-23 之前入库的作品没有 previewImages：从封面 URL 推一张预览大图
+ * （`_img_main.jpg` → `_img_smp1.jpg`）。推出来的图未必存在，加载失败时由 <img> 报错兜底。
+ */
+function deriveDlsitePreviewUrl(coverUrl: unknown): string {
+  if (typeof coverUrl !== 'string' || !coverUrl) return ''
+  return coverUrl.replace(/_img_main(?:_\d+x\d+)?\.[a-z0-9]+$/i, '_img_smp1.jpg')
+}

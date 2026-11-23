@@ -39,6 +39,10 @@ type LibraryWork struct {
 	// 与元数据同表但独立维护 —— 重新抓取/重新入库不会覆盖它，只有用户选程序或
 	// 扫描添加带路径入库时才写；空 = 还没设置。
 	GamePath string `json:"gamePath,omitempty"`
+	// LaunchMode 是启动方式（2026-11-23 新增）：空 = 默认（Steam 源走 Steam URL，
+	// 其它源直接跑游戏程序）；"steam" = steam://rungameid/<appid>；"exe" = 本地 exe。
+	// 与 GamePath 一样单独维护，Upsert 不会覆盖它。
+	LaunchMode string `json:"launchMode,omitempty"`
 	// 入库时间与最后一次更新时间（由数据库维护）
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -75,4 +79,3 @@ type TagSet struct {
 	Tags   []string `json:"tags"`
 	Edited bool     `json:"edited"`
 }
-

@@ -31,10 +31,22 @@ const (
 	SourceSteam  = "steam" // Steam 商店（appid 当编号），封面取本机 appcache\librarycache
 )
 
+// LaunchMode* 是「怎么启动这个游戏」的取值（library_works.launch_mode）：
+//
+//   - LaunchModeSteam：跑 steam://rungameid/<appid>，由 Steam 客户端拉起游戏
+//     （只有 steam 来源才有意义，steam 来源**默认**用它）；
+//   - LaunchModeExe：直接跑本机记录的游戏程序（game_path），其它来源默认用它。
+//
+// 空串 = 还没选过，按来源取默认值（见 game 服务的 resolveLaunchMode）。
+const (
+	LaunchModeSteam = "steam"
+	LaunchModeExe   = "exe"
+)
+
 // workColumns 列顺序固定在这里，读写共用，免得多处手写漏列。
 const workColumns = `source, work_id, name, maker, maker_id, series, series_id,
 	work_type, age_rating, release_date, cover_url, source_url, raw_json, fetched_at,
-	cover_dir, cover_path, cover_abs_path, cover_bytes, cover_suffix, game_path,
+	cover_dir, cover_path, cover_abs_path, cover_bytes, cover_suffix, game_path, launch_mode,
 	created_at, updated_at`
 
 // normalizeSource 统一来源标识：空值一律当 dlsite（历史数据/老调用都只可能是它）。
@@ -84,6 +96,7 @@ func (s *SQLiteService) ensureLibraryTables(ctx context.Context) error {
 			cover_bytes INTEGER DEFAULT 0,
 			cover_suffix TEXT DEFAULT '',
 			game_path TEXT DEFAULT '',
+			launch_mode TEXT DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(source, work_id)
@@ -115,35 +128,54 @@ func (s *SQLiteService) ensureLibraryTables(ctx context.Context) error {
 		}
 	}
 
-	// 旧库文件里 library_works 还没有 game_path 列（2026-11 新增「游戏启动」）。
+	// 旧库文件里 library_works 可能还没有后来新增的列
+	// （2026-11 的 game_path「游戏启动」、2026-11-23 的 launch_mode「启动方式」）。
 	// CREATE TABLE IF NOT EXISTS 不会补列，所以这里显式迁移一次。
-	return s.ensureGamePathColumn(ctx)
+	if err := s.ensureGamePathColumn(ctx); err != nil {
+		return err
+	}
+	return s.ensureLaunchModeColumn(ctx)
 }
 
 // ensureGamePathColumn 给**已经存在的** library_works 补上 game_path 列（幂等）。
+func (s *SQLiteService) ensureGamePathColumn(ctx context.Context) error {
+	return s.ensureLibraryWorkColumn(ctx, "game_path",
+		`ALTER TABLE library_works ADD COLUMN game_path TEXT DEFAULT ''`)
+}
+
+// ensureLaunchModeColumn 给**已经存在的** library_works 补上 launch_mode 列（幂等）。
+func (s *SQLiteService) ensureLaunchModeColumn(ctx context.Context) error {
+	return s.ensureLibraryWorkColumn(ctx, "launch_mode",
+		`ALTER TABLE library_works ADD COLUMN launch_mode TEXT DEFAULT ''`)
+}
+
+// ensureLibraryWorkColumn 给 library_works 补一列（幂等）：先 PRAGMA 查有没有，没有才 ALTER。
 //
 // 为什么用 PRAGMA 先查再加列，而不是直接 ALTER 然后吃掉错误：
 // 直接 ALTER 在每次读写前都会失败一次，靠字符串匹配错误码判断「字段已存在」
 // 既脆弱又吵；PRAGMA table_info 是一次极快的内存查询，先把事实问清楚更稳。
 // 并发首次读写时两个 goroutine 可能都判断"缺列"、都去 ALTER，后一个会报
 // duplicate column —— 这种竞争按已存在处理即可。
-func (s *SQLiteService) ensureGamePathColumn(ctx context.Context) error {
+func (s *SQLiteService) ensureLibraryWorkColumn(ctx context.Context, column, ddl string) error {
+	if s == nil || s.DB == nil {
+		return fmt.Errorf("数据库未就绪")
+	}
 	rows, err := s.Query(ctx, `PRAGMA table_info(library_works)`)
 	if err != nil {
 		return fmt.Errorf("读取游戏库表结构失败: %w", err)
 	}
 	for _, row := range rows {
-		if textOf(row["name"]) == "game_path" {
+		if textOf(row["name"]) == column {
 			return nil
 		}
 	}
 
-	if err := s.Execute(ctx, `ALTER TABLE library_works ADD COLUMN game_path TEXT DEFAULT ''`); err != nil {
+	if err := s.Execute(ctx, ddl); err != nil {
 		// 竞争窗口：另一个调用已经加上了这一列
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			return nil
 		}
-		return fmt.Errorf("为游戏库表添加 game_path 列失败: %w", err)
+		return fmt.Errorf("为游戏库表添加 %s 列失败: %w", column, err)
 	}
 	return nil
 }
@@ -427,6 +459,73 @@ func (s *SQLiteService) SetGamePath(ctx context.Context, source, workID, path st
 	return nil
 }
 
+// ===== 游戏启动方式 =====
+//
+// launch_mode 和 game_path 同表同生命周期：空 = 没选过，按来源取默认值
+// （steam 源默认走 steam://rungameid，其它源默认跑本地 exe）。
+
+// GetLaunchMode 读一个作品的启动方式；没选过时返回空串 + nil（不是错误）。
+func (s *SQLiteService) GetLaunchMode(ctx context.Context, source, workID string) (string, error) {
+	if s == nil || s.DB == nil {
+		return "", nil
+	}
+	workID = normalizeWorkID(workID)
+	if workID == "" {
+		return "", nil
+	}
+	if err := s.ensureLibraryTables(ctx); err != nil {
+		return "", err
+	}
+
+	rows, err := s.Query(ctx,
+		`SELECT launch_mode FROM library_works WHERE source = ? AND work_id = ?`,
+		normalizeSource(source), workID)
+	if err != nil {
+		return "", fmt.Errorf("查询启动方式失败: %w", err)
+	}
+	if len(rows) == 0 {
+		return "", nil
+	}
+	return strings.ToLower(strings.TrimSpace(textOf(rows[0]["launch_mode"]))), nil
+}
+
+// SetLaunchMode 写入/更新一个作品的启动方式（mode 只接受 steam / exe / 空串）。
+//
+// 与 SetGamePath 一样只更新**已在游戏库里**的作品：库里没有这条记录时报错，
+// 不顺手插一条只有启动方式的空壳。
+func (s *SQLiteService) SetLaunchMode(ctx context.Context, source, workID, mode string) error {
+	if s == nil || s.DB == nil {
+		return fmt.Errorf("数据库未就绪")
+	}
+	workID = normalizeWorkID(workID)
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if workID == "" {
+		return fmt.Errorf("work_id 为空，无法记录启动方式")
+	}
+	if mode != "" && mode != LaunchModeSteam && mode != LaunchModeExe {
+		return fmt.Errorf("不支持的启动方式: %q（只能是 steam / exe / 空）", mode)
+	}
+	source = normalizeSource(source)
+	if err := s.ensureLibraryTables(ctx); err != nil {
+		return err
+	}
+	row, err := s.FindLibraryWork(ctx, source, workID)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return fmt.Errorf("作品 %s 不在游戏库中，无法记录启动方式（请先入库）", workID)
+	}
+
+	if err := s.Execute(ctx,
+		`UPDATE library_works SET launch_mode = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE source = ? AND work_id = ?`,
+		mode, source, workID); err != nil {
+		return fmt.Errorf("记录启动方式失败: %w", err)
+	}
+	return nil
+}
+
 // ===== 行 → 结构体 =====
 
 // rowToLibraryWork 把一行 map 摊成 LibraryWork。
@@ -454,6 +553,7 @@ func rowToLibraryWork(row map[string]interface{}) model.LibraryWork {
 		CoverBytes:   intOf(row["cover_bytes"]),
 		CoverSuffix:  textOf(row["cover_suffix"]),
 		GamePath:     textOf(row["game_path"]),
+		LaunchMode:   strings.ToLower(strings.TrimSpace(textOf(row["launch_mode"]))),
 		CreatedAt:    timeOf(row["created_at"]),
 		UpdatedAt:    timeOf(row["updated_at"]),
 	}

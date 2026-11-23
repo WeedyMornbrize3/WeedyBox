@@ -85,6 +85,10 @@ var searchPageRegex = regexp.MustCompile(`/page/(\d+)`)
 // 封面 URL 里显式的尺寸后缀，例如 _img_main_240x240.jpg → 240
 var coverSizeSuffixRegex = regexp.MustCompile(`_(\d+)x(\d+)\.[a-z0-9]+$`)
 
+// 画廊大图：_img_main.jpg（封面）/ _img_smp1.jpg（预览图 1）/ _img_smp2.jpg …
+// 注意 _100x100 / _240x240 这类缩略图另有尺寸后缀，由 coverSizeSuffixRegex 排除。
+var previewImageRegex = regexp.MustCompile(`(?i)_img_(main|smp)(\d*)\.[a-z0-9]+$`)
+
 // ===== 数据结构 =====
 
 // DLsiteWork 是一次抓取的结果。字段都是页面静态 HTML 里稳定提供的；
@@ -112,10 +116,13 @@ type DLsiteWork struct {
 	RatingCount string    `json:"ratingCount,omitempty"`
 	CoverURL    string    `json:"coverUrl,omitempty"`
 	Summary     string    `json:"summary,omitempty"` // 作品内容（简介）
-	Tags        []string  `json:"tags,omitempty"`
-	Outline     []Outline `json:"outline,omitempty"` // #work_outline 的原始 kv，未识别字段也不丢
-	SourceURL   string    `json:"sourceUrl"`
-	FetchedAt   time.Time `json:"fetchedAt"`
+	// PreviewImages 是作品页画廊里的大图（第一张是封面 _img_main，之后是 _img_smp1、_img_smp2…）。
+	// 用途：作品详情页的大背景图取第二张（用户 2026-11-23 要求），游戏库卡片仍用第一张封面。
+	PreviewImages []string  `json:"previewImages,omitempty"`
+	Tags          []string  `json:"tags,omitempty"`
+	Outline       []Outline `json:"outline,omitempty"` // #work_outline 的原始 kv，未识别字段也不丢
+	SourceURL     string    `json:"sourceUrl"`
+	FetchedAt     time.Time `json:"fetchedAt"`
 }
 
 // Outline 是作品信息表（#work_outline）里的一行，保留日文原始标签，
@@ -396,10 +403,12 @@ func (s *MetaService) parseWork(doc *goquery.Document, id string) (*DLsiteWork, 
 		RatingCount: firstNonEmpty(jsonLDValue(product, "aggregateRating", "ratingCount"), metaContent(doc, "ratingCount")),
 		CoverURL:    extractCoverURL(doc),
 		Summary:     extractSummary(doc),
-		Tags:        s.extractTags(doc, outline),
-		Outline:     outline,
-		SourceURL:   buildWorkURL(id),
-		FetchedAt:   time.Now(),
+		// 画廊大图（封面 + 预览图 1..N）：详情页背景图取第二张（见 PreviewImages）
+		PreviewImages: extractPreviewImages(doc),
+		Tags:          s.extractTags(doc, outline),
+		Outline:       outline,
+		SourceURL:     buildWorkURL(id),
+		FetchedAt:     time.Now(),
 	}
 	// 文件格式：旧页面是「WAV / mp3」；现役页面把每个格式放在 dd 里独立的 span/a 上
 	if formats := productInfoPartsAny(doc, "ファイル形式", "文件形式", "檔案形式"); len(formats) > 0 {
@@ -648,6 +657,72 @@ func coverWidthScore(raw string) int {
 	default:
 		return 1
 	}
+}
+
+// extractPreviewImages 收集作品页画廊里的大图，**保持页面顺序**：
+// 第一张是封面 `_img_main`，之后是预览图 `_img_smp1`、`_img_smp2`…
+//
+// 用户要求（2026-11-23）：「DLsite 源使用第二张预览图作背景（第一张作为游戏卡片 cover）」。
+// 页面里同一张图有两档格式（<source> 的 webp 与 <img> 的 jpg），这里优先 jpg
+// （兼容性最好，预览大图本来也不大）；缩略图（_100x100 / _240x240）不是预览大图，排除。
+func extractPreviewImages(doc *goquery.Document) []string {
+	mainURL := ""
+	samples := map[int]string{} // 序号 → URL
+	sampleIsWebp := map[int]bool{}
+	maxSample := 0
+
+	doc.Find("img, source").Each(func(_ int, sel *goquery.Selection) {
+		for _, raw := range []string{
+			sel.AttrOr("data-src", ""),
+			firstSrcSetURL(sel.AttrOr("srcset", "")),
+			sel.AttrOr("src", ""),
+		} {
+			u := normalizeSourceURL(raw)
+			if u == "" || coverSizeSuffixRegex.MatchString(u) {
+				continue // 缩略图（_100x100 / _240x240）不是预览大图
+			}
+			m := previewImageRegex.FindStringSubmatch(u)
+			if len(m) != 3 {
+				continue
+			}
+			isWebp := strings.HasSuffix(strings.ToLower(u), ".webp")
+			if strings.EqualFold(m[1], "main") {
+				// 同一张封面只留一份：webp 先出现，遇到 jpg 时替换成 jpg
+				if mainURL == "" || (strings.HasSuffix(strings.ToLower(mainURL), ".webp") && !isWebp) {
+					mainURL = u
+				}
+				continue
+			}
+
+			index := 1
+			if m[2] != "" {
+				if parsed, err := strconv.Atoi(m[2]); err == nil {
+					index = parsed
+				}
+			}
+			if _, exists := samples[index]; !exists {
+				samples[index] = u
+				sampleIsWebp[index] = isWebp
+			} else if sampleIsWebp[index] && !isWebp {
+				samples[index] = u
+				sampleIsWebp[index] = false
+			}
+			if index > maxSample {
+				maxSample = index
+			}
+		}
+	})
+
+	out := make([]string, 0, maxSample+1)
+	if mainURL != "" {
+		out = append(out, mainURL)
+	}
+	for i := 1; i <= maxSample; i++ {
+		if u, ok := samples[i]; ok {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 // extractTags 收集标签，来源比旧实现广：

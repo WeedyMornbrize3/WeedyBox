@@ -1,15 +1,9 @@
 <!-- frontend/src/components/todo/FilterBar.vue -->
-<!-- 筛选栏：完成状态 / 优先级 / 创建时间。默认只看未完成。
+<!-- 筛选栏：优先级 / 创建时间（「完成状态」筛选已随完成功能移除）。
      横向排列，放不下时横向滚动（scrollbar-theme 定义在 global.css，不能写进 UnoCSS shortcut）。 -->
 <template>
   <div class="filter-bar">
     <span class="i-lucide-list-filter icon-sm text-tertiary flex-shrink-0" aria-hidden="true" />
-
-    <FilterChipGroup
-      v-model="filters.completed"
-      label="状态"
-      :options="COMPLETED_OPTIONS"
-    />
 
     <FilterChipGroup
       v-model="filters.priority"
@@ -45,7 +39,7 @@
 
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { useTodoStore, COMPLETED_OPTIONS, PRIORITY_OPTIONS, TIME_OPTIONS } from '../../stores/todoStore'
+import { useTodoStore, PRIORITY_OPTIONS, TIME_OPTIONS } from '../../stores/todoStore'
 import FilterChipGroup from './FilterChipGroup.vue'
 
 const todoStore = useTodoStore()

@@ -52,11 +52,14 @@
         :stored="meta.stored"
         :game-path="meta.gamePath"
         :game-path-exists="meta.gamePathExists"
+        :launch-mode="meta.effectiveLaunchMode"
+        :steam-source="meta.source === 'steam'"
         :running="meta.gameRunning"
         :launching="meta.launching"
         @download="meta.storeIn"
         @launch="meta.launchGame"
         @change-path="meta.changeGamePath"
+        @set-launch-mode="meta.setGameLaunchMode"
       />
       <MetaMessage v-if="meta.gameWarning" tone="error" :text="meta.gameWarning" />
       <MetaWorkDetails :work="meta.work" />

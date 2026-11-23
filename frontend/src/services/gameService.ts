@@ -1,28 +1,36 @@
 // frontend/src/services/gameService.ts
 // 游戏启动的前端封装：对应后端 internal/service/game（Wails 服务名 GameService）。
 //
-// 一件事：把「游戏库里的作品」和「本机上的游戏程序」接起来。
+// 一件事：把「游戏库里的作品」和「本机上的游戏程序 / Steam 客户端」接起来。
 // 位置就是 library_works 表上的一列 game_path（与元数据同表，重新抓取/重新入库
 // 不会把它冲掉），随 Fetch/Store 的返回一起带到前端（LibraryMeta.gamePath）。
 //
-// 三个动作：
-//   status()      读位置 + exe 是否还在 + 游戏是否正在运行（进入页面时调一次，之后轮询）
-//   setPath()     记录/更换位置（第一次启动没有位置、或用户主动换程序时）
-//   launch()      按库里位置启动；位置缺失/文件被移动时返回 missing=true，
-//                 前端据此弹系统文件框让用户选一次 exe，而不是当成启动失败
+// 启动方式（2026-11-23）：library_works.launch_mode。Steam 源默认 steam ——
+// 跑 steam://rungameid/<appid> 交给 Steam 客户端；也可切成本地程序（game_path）。
+//
+// 四个动作：
+//   status()        读位置 + exe 是否还在 + 是否正在运行 + 生效的启动方式（进入页面时调一次，之后轮询）
+//   setPath()       记录/更换位置（第一次启动没有位置、或用户主动换程序时）
+//   setLaunchMode() 切换「通过 Steam / 本地程序」启动方式
+//   launch()        按生效方式启动；exe 方式下位置缺失/文件被移动时返回 missing=true，
+//                   前端据此弹系统文件框让用户选一次 exe，而不是当成启动失败
 //
 // 注意：frontend/bindings/ 是 wails3 generate bindings 生成的（已被 .gitignore 忽略），
 // 新克隆仓库后必须先跑一次生成命令，否则下面的 import 会解析失败。
 import { GameService } from '../../bindings/WeedyBox/internal/service/game'
 import { DialogService } from '../../bindings/WeedyBox/internal/service'
 import type {
+  GameLaunchModeState,
   GameLaunchResult,
   GamePathState,
   GameStatus,
 } from '../../bindings/WeedyBox/internal/service/game'
 import { LIBRARY_SOURCE_DLSITE } from './libraryService'
 
-export type { GameLaunchResult, GamePathState, GameStatus }
+export type { GameLaunchModeState, GameLaunchResult, GamePathState, GameStatus }
+
+/** 启动方式：空串 = 还没选过（后端按来源取默认值） */
+export type LibraryLaunchMode = '' | 'steam' | 'exe'
 
 export const gameApi = {
   /**
@@ -46,7 +54,21 @@ export const gameApi = {
   },
 
   /**
-   * 用库里记录的位置启动游戏。
+   * 切换启动方式（只有 Steam 源能选 steam）。
+   * 返回的 mode 是**生效值**（空串已按来源解析），前端据此更新 chip 选中态。
+   */
+  async setLaunchMode(
+    workId: string,
+    mode: LibraryLaunchMode,
+    source = LIBRARY_SOURCE_DLSITE,
+  ): Promise<GameLaunchModeState> {
+    const result = await GameService.SetLaunchMode({ workId, mode, source })
+    if (!result) throw new Error('切换启动方式失败：后端未返回结果')
+    return result
+  },
+
+  /**
+   * 用库里记录的启动方式启动游戏。
    * 返回 missing=true 表示「没有位置 / 文件已不在」——调用方应让用户选一次程序；
    * 真正的启动失败（进程起不来）会走 reject。
    */

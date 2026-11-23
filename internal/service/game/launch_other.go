@@ -8,6 +8,7 @@
 package game
 
 import (
+	"errors"
 	"os/exec"
 	"path/filepath"
 )
@@ -21,4 +22,10 @@ func startDetached(path string) (uint32, error) {
 	pid := uint32(cmd.Process.Pid)
 	_ = cmd.Process.Release()
 	return pid, nil
+}
+
+// startURL 非 Windows 兜底：只是为了 GOOS=darwin go build ./... 能过，
+// 本项目只构建 Windows，实际不会走到这里。
+func startURL(url string) error {
+	return errors.New("当前平台不支持通过系统协议启动: " + url)
 }

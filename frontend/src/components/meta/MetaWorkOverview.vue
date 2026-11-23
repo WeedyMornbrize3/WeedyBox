@@ -1,7 +1,9 @@
 <!-- frontend/src/components/meta/MetaWorkOverview.vue
      作品概览块：封面 + 名称 + 关键字段 + 标签 + 入库/启动按钮 + 入库回执。
      「详情卡的上半部分」—— 与 MetaWorkDetails（summary / outline）拼起来就是完整详情，
-     拆开是为了作品库能把概览放宽、把明细折叠，调试页则两块都摊开。
+     拆开是为了调试页（/testing）能把概览放宽、把明细折叠。
+     动作区（入库 / 游戏启动 + 启动方式）已抽成 MetaWorkActions：/works 的新排版
+     把它放在右侧主区顶部，调试页仍放在这里，两处共用同一份。
      按钮的语义由 MetaDownloadButton 自己判断：未入库是「入库」，已入库替换成「游戏启动」
      （位置就是 library_works 的 game_path 列，由 stores/metaStore.ts 读取/启动）。 -->
 <template>
@@ -15,20 +17,21 @@
       <!-- 标签云：作品库由 MetaTagEditor 统一管（可编辑 + 保存），这里只在调试页显示 -->
       <MetaTags v-if="showTags" :tags="work.tags" :limit="app.tagLimit" />
 
-      <div class="flex items-center gap-3 flex-wrap pt-1">
-        <MetaDownloadButton
-          :disabled="!work.coverUrl"
-          :loading="downloading"
-          :stored="stored"
-          :game-path="gamePath"
-          :game-path-exists="gamePathExists"
-          :running="running"
-          :launching="launching"
-          @click="emit('download')"
-          @launch="emit('launch')"
-          @change-path="emit('changePath')"
-        />
-      </div>
+      <MetaWorkActions
+        :disabled="!work.coverUrl"
+        :downloading="downloading"
+        :stored="stored"
+        :game-path="gamePath"
+        :game-path-exists="gamePathExists"
+        :launch-mode="launchMode"
+        :steam-source="steamSource"
+        :running="running"
+        :launching="launching"
+        @download="emit('download')"
+        @launch="emit('launch')"
+        @change-path="emit('changePath')"
+        @set-launch-mode="emit('setLaunchMode', $event)"
+      />
 
       <MetaSavedNotice v-if="saved" :saved="saved" />
     </div>
@@ -40,10 +43,10 @@ import type { DownloadResult, WorkMeta } from '../../services/metaService'
 import { useAppStore } from '../../stores/App'
 import { buildSummaryRows } from '../../utils/metaFormat'
 import MetaCoverFigure from './MetaCoverFigure.vue'
-import MetaDownloadButton from './MetaDownloadButton.vue'
 import MetaKeyValueList from './MetaKeyValueList.vue'
 import MetaSavedNotice from './MetaSavedNotice.vue'
 import MetaTags from './MetaTags.vue'
+import MetaWorkActions from './MetaWorkActions.vue'
 
 defineProps<{
   work: WorkMeta
@@ -54,6 +57,10 @@ defineProps<{
   gamePath?: string
   /** 记录的 exe 是否还存在（false = 被删除/移走） */
   gamePathExists?: boolean
+  /** 生效的启动方式（Steam 源才有 steam 这个选项） */
+  launchMode?: 'steam' | 'exe'
+  /** 当前作品是否来自 Steam 源：只有它能选「通过 Steam 启动 / 本地程序启动」 */
+  steamSource?: boolean
   /** 游戏是否正在运行 */
   running?: boolean
   /** 正在启动游戏 */
@@ -65,5 +72,10 @@ defineProps<{
 // 标签显示数量是应用级设置（设置页可调），这里只读不写
 const app = useAppStore()
 
-const emit = defineEmits<{ download: []; launch: []; changePath: [] }>()
+const emit = defineEmits<{
+  download: []
+  launch: []
+  changePath: []
+  setLaunchMode: [mode: 'steam' | 'exe']
+}>()
 </script>

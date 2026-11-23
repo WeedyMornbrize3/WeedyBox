@@ -4,18 +4,19 @@
        - 封面横向排列成网格；
        - 名称平时不占地方，鼠标悬停时用半透明面板从下往上淡入；
        - 点封面进入「作品库」详情页（/works，复用原页面，点谁就加载谁）；
-       - 每个封面右上角一个删除按钮（连点两下确认，与 TODO 的删除同套路）；
-       - **网格最后一位是一个透明圆形加号按钮「添加游戏」**，点它弹出「添加游戏」窗（「扫描添加」扫 Steam 库 / 本地文件夹，点名字即去搜索；「手动搜索」是原来的搜索流程）
-         （原来顶栏的「搜索」按钮已按用户要求去掉，功能整体搬到这个圆钮上）。
+       - **卡片上没有任何操作按钮**（用户 2026-11-23 要求）：删除等操作只在
+         「批量操作」模式下的操作栏里出现，操作栏展开在刷新按钮所在的那张卡里；
+         进入批量模式后点封面 = 选中（选中态是封面内侧一圈品牌色描边）；
+       - **「添加游戏」入口在顶栏「游戏库」卡片里**（2026-11-23 起去掉网格末尾的圆形加号），点它弹出「添加游戏」窗（「扫描添加」扫 Steam 库 / 本地文件夹，点名字即去搜索；「手动搜索」是原来的搜索流程）
+         （原来顶栏的「搜索」按钮与网格末尾的圆形加号都已移除）。
      数据全来自本地库（stores/libraryStore.ts → libraryApi.list），列表本身不发网络请求，
      断网也能看；封面是后端读文件转成的 base64 data URL（WebView 里一定显示得出来）。 -->
 <template>
   <div class="w-full max-w-5xl mx-auto h-full min-h-0 flex flex-col gap-4 select-text">
-    <!-- ── 顶部：标题 + 已入库数量 + 刷新 ───────────────
-         只有这一行（没有内容区），MetaSection 会把上下内边距收到 header 上，
-         卡片高度就由这一行内容决定，标题/数量/按钮靠 items-center 垂直居中。
-         **搜索入口不在这里**（用户要求去掉顶栏的搜索按钮）：添加游戏改用网格末尾
-         那个透明圆形加号按钮（见下方 .lib-add），点开是「添加游戏」窗（扫描添加 / 手动搜索）。 -->
+    <!-- ── 顶部：标题 + 已入库数量 + 刷新 + 添加游戏 + 批量操作 ───────────────
+         平时只有标题这一行（没有内容区），MetaSection 会把上下内边距收到 header 上；
+         「添加游戏」入口与「批量操作」按钮都放在这张卡里（用户 2026-11-23 要求）；
+         进入批量模式后，操作项在右侧的浮空长条卡片里（lib-batch-panel，图标竖排）。 -->
     <MetaSection icon="i-lucide-gamepad-2" title="游戏库">
       <template #actions>
         <!-- 已入库数量放在标题栏右侧，和按钮同一行居中 -->
@@ -30,103 +31,172 @@
           <span class="i-lucide-refresh-cw icon-xs" aria-hidden="true" />
           {{ library.loading ? '刷新中…' : '刷新' }}
         </button>
+        <!-- 「添加游戏」入口（用户 2026-11-23 要求：不再用网格末尾的圆形加号，
+             改放到「游戏库」标题所在的这张卡里） -->
+        <button
+          type="button"
+          class="text-xs text-secondary hover:text-primary flex items-center gap-1 cursor-pointer bg-transparent border-none"
+          title="添加游戏：扫描 Steam 库 / 本地文件夹，或手动搜索"
+          @click="openAddGame"
+        >
+          <span class="i-lucide-plus icon-xs" aria-hidden="true" />
+          添加游戏
+        </button>
+        <button
+          v-if="!batchMode"
+          type="button"
+          class="text-xs text-secondary hover:text-primary flex items-center gap-1 cursor-pointer bg-transparent border-none disabled:opacity-50"
+          :disabled="!library.count"
+          title="进入批量操作：选几张卡一起删除"
+          @click="enterBatch"
+        >
+          <span class="i-lucide-list-checks icon-xs" aria-hidden="true" />
+          批量操作
+        </button>
+        <button
+          v-else
+          type="button"
+          class="text-xs text-secondary hover:text-primary flex items-center gap-1 cursor-pointer bg-transparent border-none"
+          title="退出批量操作"
+          @click="exitBatch"
+        >
+          <span class="i-lucide-x icon-xs" aria-hidden="true" />
+          退出批量
+        </button>
       </template>
+
     </MetaSection>
 
     <MetaMessage v-if="library.error" tone="error" :text="library.error" />
 
     <!-- ── 网格：自己开滚动（MainLayout 的 router-view 是 overflow-hidden） ── -->
-    <div class="flex-1 min-h-0 overflow-y-auto scrollbar-theme pr-2">
-      <!-- 网格在有作品或已读完时都渲染：空库也要能看到末尾那个「添加游戏」圆钮 -->
-      <div
-        v-if="library.works.length || !library.loading"
-        class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3"
-      >
-        <!-- 一张卡片 = 封面按钮 + 右上角删除按钮（同级，不嵌套：button 里不能再放 button）
-             封面统一 2:3 等比裁切（用户要求：Steam / DLsite / 以后所有来源都一样）：
-             Steam 的 library_600x900 本身就是 2:3，DLsite 的 4:3 图会被 object-cover 居中裁掉两边。 -->
-        <div v-for="item in library.works" :key="itemKey(item)" class="group relative">
-          <button
-            type="button"
-            class="relative block w-full overflow-hidden rounded-lg border-theme bg-secondary cursor-pointer p-0"
-            :aria-label="`打开「${item.name}」的作品详情`"
-            @click="openWork(item)"
-          >
-            <span class="block w-full aspect-[2/3]">
-              <img
-                v-if="library.coverFor(item)"
-                :src="library.coverFor(item)"
-                :alt="item.name"
-                class="w-full h-full object-cover"
-                draggable="false"
-              />
-              <span v-else class="flex-center w-full h-full text-muted">
-                <span class="i-lucide-image-off icon-lg" aria-hidden="true" />
-              </span>
-            </span>
-
-            <!-- 名称：平时藏在封面下沿之外，hover / 键盘聚焦时半透明面板向上淡入 -->
-            <span class="lib-name translate-y-full opacity-0 transition-[transform,opacity] duration-200 ease-out group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100" aria-hidden="true">
-              {{ item.name }}
-            </span>
-          </button>
-
-          <!-- 右上角删除：连点两下确认（armed 态变红 + 勾），
-               鼠标移开或按钮失焦就撤销待确认态 —— 与 TodoItem 的删除按钮同一套逻辑。
-               外观也照搬 TodoItem：btn-row 尺寸 + 静息 75% 不透明 + hover/聚焦提亮，
-               颜色状态（红描边 / hover 填红 / armed 填红 + 轻微放大）见下方 .lib-del。 -->
-          <button
-            type="button"
-            class="lib-del btn-row absolute top-1.5 right-1.5 opacity-75 group-hover:opacity-100 group-focus-within:opacity-100 hover:opacity-100 focus-visible:opacity-100"
-            :class="{ 'is-armed opacity-100 scale-110': armedKey === itemKey(item) }"
-            :disabled="library.removingId === item.workId"
-            :title="deleteTitle(item)"
-            :aria-label="deleteTitle(item)"
-            @click.stop="handleRemove(item)"
-            @mouseleave="cancelArm(item)"
-            @blur="cancelArm(item)"
-          >
-            <span
-              :class="
-                library.removingId === item.workId
-                  ? 'i-lucide-loader-circle spin'
-                  : armedKey === itemKey(item)
-                    ? 'i-lucide-check'
-                    : 'i-lucide-trash-2'
+    <div class="flex-1 min-h-0 flex gap-4">
+      <div class="flex-1 min-h-0 overflow-y-auto scrollbar-theme pr-2">
+        <!-- 网格在有作品或已读完时都渲染：空库也要能看到末尾那个「添加游戏」圆钮 -->
+        <div
+          v-if="library.works.length || !library.loading"
+          class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3"
+        >
+          <!-- 一张卡片 = 一个封面按钮（**卡片上不再有任何操作按钮**，用户要求）。
+               封面统一 2:3 等比裁切（Steam / DLsite / 以后所有来源都一样）：
+               Steam 的 library_600x900 本身就是 2:3，DLsite 的 4:3 图会被 object-cover 居中裁掉两边。
+               批量模式：点卡片 = 选中 / 取消选中（不再进详情）；选中时**边框与遮罩都用品牌色**
+               （用户 2026-11-23 要求），边框/遮罩的具体写法在 scoped 样式里。 -->
+          <div v-for="item in library.works" :key="itemKey(item)" class="group relative">
+            <button
+              type="button"
+              class="lib-card relative block w-full overflow-hidden rounded-lg bg-secondary cursor-pointer p-0"
+              :class="{ 'lib-selected': isSelected(item) }"
+              :aria-label="
+                batchMode
+                  ? `${isSelected(item) ? '取消选择' : '选择'}「${item.name}」`
+                  : `打开「${item.name}」的作品详情`
               "
-              class="icon-xs"
-              aria-hidden="true"
-            />
-          </button>
+              :aria-pressed="batchMode ? isSelected(item) : undefined"
+              @click="handleCardClick(item)"
+            >
+              <span class="block w-full aspect-[2/3]">
+                <img
+                  v-if="library.coverFor(item)"
+                  :src="library.coverFor(item)"
+                  :alt="item.name"
+                  class="w-full h-full object-cover"
+                  draggable="false"
+                />
+                <span v-else class="flex-center w-full h-full text-muted">
+                  <span class="i-lucide-image-off icon-lg" aria-hidden="true" />
+                </span>
+              </span>
+
+              <!-- 选中遮罩：品牌色半透明铺满封面 + 居中勾选（与品牌色边框一起表达"已选中"）。
+                   平时 opacity 0 且不接收指针事件，只在 .lib-selected 时浮现。
+                   ⚠️ 类名不能叫 lib-mask：搜索弹窗的全屏遮罩已经是这个名字。 -->
+              <span class="lib-select-mask" aria-hidden="true">
+                <span class="i-lucide-check icon-lg" />
+              </span>
+
+              <!-- 名称：平时藏在封面下沿之外，hover / 键盘聚焦时半透明面板向上淡入 -->
+              <span class="lib-name translate-y-full opacity-0 transition-[transform,opacity] duration-200 ease-out group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100" aria-hidden="true">
+                {{ item.name }}
+              </span>
+            </button>
+          </div>
         </div>
 
-        <!-- 加号按钮：永远排在网格最后一位，点它 = 打开「添加游戏」窗
-             （清空输入 → 弹居中窗，默认「扫描添加」，可切「手动搜索」）。空库时它就是唯一的添加入口。
-             外观是**透明圆形**（只描一圈虚线、无底色、圆形轮廓），居中放在这一格里，
-             不跟封面卡抢 4:3 的块状视觉 —— 一眼看出这是"入口"而不是一个作品。
-             虚线边框整条写在 scoped 样式里，不走 UnoCSS 的 border-*（那些规则是
-             solid 简写，再叠一条改 style 的类会互相覆盖）。 -->
-        <div class="flex-center">
-          <button
-            type="button"
-            class="lib-add"
-            aria-label="添加游戏"
-            title="添加游戏"
-            @click="openAddGame"
-          >
-            <span class="i-lucide-plus icon-md" aria-hidden="true" />
-          </button>
-        </div>
+        <!-- 空库提示：添加入口在顶栏「游戏库」卡片里，这里只补一句"下一步做什么" -->
+        <p
+          v-if="!library.loading && !library.works.length"
+          class="m-0 py-6 text-center text-xs text-tertiary"
+        >
+          游戏库还是空的 —— 点顶部「游戏库」卡片里的「添加游戏」：扫描 Steam 库 / 本地文件夹，也可以手动输入 RJ 编号或作品名；点开详情、再点「入库」才会收进这里。
+        </p>
+        <p v-else-if="library.loading && !library.works.length" class="m-0 text-sm text-tertiary py-6 text-center">正在读取游戏库…</p>
       </div>
+      <!-- 批量操作长条：**浮空的独立小卡片**（fixed 定位，垂直位置在「游戏库」顶栏卡片
+           下方、水平位置在游戏卡片右侧的留白里，宽 56px、高随内容）。
+           **完全不参与布局** —— 网格宽度、卡片排布、滚动条位置都不变（用户 2026-11-23
+           要求「在游戏库字样下方游戏卡片右侧显示 并且使用长条浮空设计 作为独立卡片弹出」
+           「不遮盖现有ui」「不挤压现有ui」「太宽了 遮挡住了ui」）。
+           条内只放得下图标：标题图标 + 已选数量 + 全选 / 删除 / 退出三个图标按钮，
+           文字说明走 title / aria-label；选中与否由卡片自己的品牌色边框 + 遮罩表达。 -->
+      <Transition name="lib-drawer">
+        <aside v-if="batchMode" class="lib-batch-panel" aria-label="批量操作">
+          <span class="i-lucide-list-checks icon-sm section-icon" aria-hidden="true" />
 
-      <!-- 空库提示：加号按钮在上方网格里，这里只补一句"下一步做什么" -->
-      <p
-        v-if="!library.loading && !library.works.length"
-        class="m-0 py-6 text-center text-xs text-tertiary"
-      >
-        游戏库还是空的 —— 点网格里的「＋」添加游戏：扫描 Steam 库 / 本地文件夹，也可以手动输入 RJ 编号或作品名；点开详情、再点「入库」才会收进这里。
-      </p>
-      <p v-else-if="library.loading && !library.works.length" class="m-0 text-sm text-tertiary py-6 text-center">正在读取游戏库…</p>
+          <p class="lib-batch-count" :title="`已选 ${selectedCount} / ${library.count}`">
+            <span class="lib-batch-num">{{ selectedCount }}</span>
+            <span class="lib-batch-total">/{{ library.count }}</span>
+          </p>
+
+          <!-- 操作竖向排布（用户要求）：全选 / 删除所选 / 退出（删除要连点两下确认） -->
+          <div class="lib-batch-actions">
+            <button
+              type="button"
+              class="lib-batch-btn"
+              :disabled="!library.count || library.removing"
+              :title="allSelected ? '取消全选' : '全选'"
+              :aria-label="allSelected ? '取消全选' : '全选'"
+              @click="toggleSelectAll"
+            >
+              <span :class="allSelected ? 'i-lucide-square-check-big' : 'i-lucide-square'" class="icon-sm" aria-hidden="true" />
+            </button>
+
+            <button
+              type="button"
+              class="lib-batch-btn lib-batch-btn-danger"
+              :class="{ 'is-armed': batchArmed }"
+              :disabled="!selectedCount || library.removing"
+              :title="batchArmed ? '再点一次确认删除' : `删除所选（${selectedCount}）—— 连点两下确认`"
+              :aria-label="batchArmed ? '再点一次确认删除' : '删除所选'"
+              @click="handleBatchDelete"
+              @mouseleave="batchArmed = false"
+              @blur="batchArmed = false"
+            >
+              <span
+                :class="
+                  library.removing
+                    ? 'i-lucide-loader-circle spin'
+                    : batchArmed
+                      ? 'i-lucide-check'
+                      : 'i-lucide-trash-2'
+                "
+                class="icon-sm"
+                aria-hidden="true"
+              />
+            </button>
+
+            <button
+              type="button"
+              class="lib-batch-btn"
+              title="退出批量操作"
+              aria-label="退出批量操作"
+              @click="exitBatch"
+            >
+              <span class="i-lucide-x icon-sm" aria-hidden="true" />
+            </button>
+          </div>
+        </aside>
+      </Transition>
     </div>
 
     <!-- ── 添加游戏弹窗（扫描添加 / 手动搜索）：居中，周围模糊 ────────
@@ -279,30 +349,84 @@ function itemKey(item: Pick<LibraryWork, 'source' | 'workId'>): string {
   return `${item.source}:${item.workId}`
 }
 
-/** 删除是破坏性操作，第一次点只"上膛"，再点一次才真删（与 TODO 删除同一套路） */
-const armedKey = ref('')
 /** 搜索弹窗开关 */
 const searchOpen = ref(false)
 /** 弹窗当前方式：默认扫描添加；切到手动搜索走原来的输入框流程 */
 const addMode = ref<AddMode>('scan')
 
-function deleteTitle(item: LibraryWork): string {
-  if (library.removingId === item.workId) return '删除中…'
-  return armedKey.value === itemKey(item) ? '再点一次删除' : '从游戏库删除（连点两下）'
+// ===== 批量操作（用户 2026-11-23）=====
+// 「只有批量操作游戏库时才弹出操作栏」：平时卡片上没有任何按钮，
+// 点顶栏的「批量操作」才进入选卡模式，操作栏展开在刷新按钮所在的那张卡里。
+/** 是否在批量模式：进入后点卡片 = 选中 / 取消选中，不再进详情 */
+const batchMode = ref(false)
+/** 已选中的卡片 key（`source:workId`，来源不同的同编号是两条记录） */
+const selectedKeys = ref<string[]>([])
+/** 「删除所选」的待确认态：第一次点只上膛，第二次才真删 */
+const batchArmed = ref(false)
+
+/** 当前选中的库记录（删除时交给 store；按当前列表过滤，刷新后不会带上已不存在的 key） */
+const selectedWorks = computed(() =>
+  library.works.filter((item) => selectedKeys.value.includes(itemKey(item))),
+)
+const selectedCount = computed(() => selectedWorks.value.length)
+/** 当前列表是否已经全选（空库不算全选） */
+const allSelected = computed(
+  () => library.works.length > 0 && selectedWorks.value.length === library.works.length,
+)
+
+function isSelected(item: Pick<LibraryWork, 'source' | 'workId'>): boolean {
+  return selectedKeys.value.includes(itemKey(item))
 }
 
-/** 移开鼠标 / 按钮失焦就撤销"再点一次"的待确认态（TodoItem 同款逻辑） */
-function cancelArm(item: LibraryWork) {
-  if (armedKey.value === itemKey(item)) armedKey.value = ''
+/** 进入批量模式：清空上次的选择与待确认态 */
+function enterBatch() {
+  batchMode.value = true
+  selectedKeys.value = []
+  batchArmed.value = false
 }
 
-async function handleRemove(item: LibraryWork) {
-  if (armedKey.value !== itemKey(item)) {
-    armedKey.value = itemKey(item)
+/** 退出批量模式：卡片恢复成"点开详情" */
+function exitBatch() {
+  batchMode.value = false
+  selectedKeys.value = []
+  batchArmed.value = false
+}
+
+function toggleSelect(item: LibraryWork) {
+  const key = itemKey(item)
+  selectedKeys.value = selectedKeys.value.includes(key)
+    ? selectedKeys.value.filter((k) => k !== key)
+    : [...selectedKeys.value, key]
+  // 选择变了就撤销待确认态：避免「看到的是 A，确认时删的是 B」
+  batchArmed.value = false
+}
+
+function toggleSelectAll() {
+  selectedKeys.value = allSelected.value ? [] : library.works.map((item) => itemKey(item))
+  batchArmed.value = false
+}
+
+/** 点卡片：批量模式下只切换选中；平时进作品详情 */
+function handleCardClick(item: LibraryWork) {
+  if (batchMode.value) {
+    toggleSelect(item)
     return
   }
-  armedKey.value = ''
-  await library.remove(item)
+  void openWork(item)
+}
+
+/** 删除所选：连点两下确认（与 TODO 的删除同一套路，不弹确认框） */
+async function handleBatchDelete() {
+  if (!selectedCount.value || library.removing) return
+  if (!batchArmed.value) {
+    batchArmed.value = true
+    return
+  }
+  batchArmed.value = false
+  const removed = await library.removeMany(selectedWorks.value)
+  selectedKeys.value = []
+  // 全删光了就没有"选卡"的意义了，自动退回普通浏览
+  if (removed > 0 && !library.works.length) exitBatch()
 }
 
 /**
@@ -410,68 +534,147 @@ onMounted(() => {
   overflow: hidden;
 }
 
-/* ===== 右上角删除按钮 =====
-   ⚠️ 状态色必须与 components/todo/TodoItem.vue 的 .row-btn-delete 保持一致
-   （红描边 → hover 填红 → armed 填红 + 放大、文字色随主题翻转）：
-   两个删除按钮是同一层级的破坏性操作，用户可以一眼认出"这是删除"。
-   改这里要同步改 TodoItem；形状（w-7/h-7/圆角/边框宽度）由 btn-row 提供，这里只管颜色。
-   状态色全部写在这里（不在模板里叠 bg-… / text-… 类）：
-   UnoCSS 对同一属性只保留一条规则，模板与 scoped 样式混着改颜色容易互相压掉。 */
-.lib-del {
-  background-color: transparent;
-  border-color: var(--color-danger);
-  color: var(--color-danger);
+/* ===== 卡片边框 + 批量模式选中态 =====
+   基础边框写在这里（模板不再挂 border-theme）：选中时要一次改 width/color，
+   和 UnoCSS 的 border-theme 简写叠在一起会争同一属性（同属性只留一条，容易互相压掉）。
+   选中态 = **品牌色边框 + 品牌色遮罩 + 居中勾选**（用户 2026-11-23 要求两者都用品牌色）。
+   边框从 1px 变 2px：border-box 下只让内容缩 1px，不改变卡片外尺寸与圆角。 */
+.lib-card {
+  border: 1px solid var(--color-border);
+  transition: border-color var(--motion-fast) var(--ease-enter);
+}
+
+.lib-selected {
+  border: 2px solid var(--color-primary);
+}
+
+/* 选中遮罩：铺满封面，品牌色半透明；勾选图标用反色文字（浅色品牌配米白、深色品牌配深绿） */
+.lib-select-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--color-primary) 38%, transparent);
+  color: var(--color-text-on-brand);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) var(--ease-enter);
+}
+
+.lib-selected .lib-select-mask {
+  opacity: 1;
+}
+
+/* ===== 右侧批量操作长条（批量模式下浮出的独立小卡片）=====
+   用户 2026-11-23 要求：「在游戏库字样下方游戏卡片右侧显示 并且使用长条浮空设计
+   作为独立卡片弹出」「不遮盖现有ui」「不挤压现有ui」「太宽了」——
+   所以它是一张 **fixed 浮空的竖向长条卡片**：
+     · 高度自适应内容（不是整条侧边栏），圆角 + 描边 + 阴影，像一张独立卡片；
+     · 垂直位置 = 「游戏库」顶栏卡片下方（top 112px），水平位置 = 网格右侧的留白；
+     · **完全不参与布局**（网格宽度、卡片排布、滚动条位置都不变），宽只有 56px，
+       常规窗口内容两侧的留白（页面是 max-w-5xl 居中）就能容下它。
+   z-index 1050：低于标题栏（1100）、高于侧栏（1000）与页面内容。 */
+.lib-batch-panel {
+  position: fixed;
+  right: 15px;
+  z-index: 1050;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 56px;
+  padding: 12px 0;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg-card);
+  box-shadow: var(--color-shadow-heavy);
+}
+
+.lib-batch-count {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  margin: 0;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.lib-batch-num {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.lib-batch-total {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+/* 操作竖向排布（用户要求）：一条竖线三个图标按钮 */
+.lib-batch-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 长条里的图标按钮：36×36，描边口径与标题栏/行内图标按钮一致 */
+.lib-batch-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--color-border-dark);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
   transition:
     background-color var(--motion-fast) var(--ease-enter),
     border-color var(--motion-fast) var(--ease-enter),
     color var(--motion-fast) var(--ease-enter),
-    opacity var(--motion-fast) var(--ease-enter),
-    transform var(--motion-fast) var(--ease-enter);
+    opacity var(--motion-fast) var(--ease-enter);
 }
 
-/* hover 才填红（静息只描边） */
-.lib-del:hover:not(:disabled) {
-  background-color: var(--color-danger);
-  border-color: var(--color-danger);
-  color: var(--color-text-on-danger);
-}
-
-/* 待确认：实心红（与 hover 同色，靠放大 + 勾图标区分）+ 随主题翻转的深色勾 */
-.lib-del.is-armed {
-  background-color: var(--color-danger);
-  border-color: var(--color-danger);
-  color: var(--color-text-on-danger);
-}
-
-/* ===== 加号按钮（永远排在网格最后一位）=====
-   透明圆形：圆形轮廓 + 透明底（静息与 hover 都不填色）+ 居中一个加号，
-   占位跟网格列宽同一行的末尾。
-   刻意不用封面卡那种 4:3 方块：它不是作品，用圆形把它和作品卡区分开。
-   ⚠️ 虚线边框整条写在这里，不要拆成 UnoCSS 类：border-* rules 都是
-      `1px solid …` 简写，再叠一条改 border-style 的类会互相覆盖（同属性只留一条）。
-   颜色全部来自 token：静息用 --color-border-dark（3:1，交互控件描边标准），
-   hover / 键盘聚焦只换描边与图标颜色（用户要的是"透明"圆形，所以不加底色）。 */
-.lib-add {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 3.5rem;
-  height: 3.5rem;
-  padding: 0;
-  border: 1px dashed var(--color-border-dark);
-  border-radius: 50%;
-  background-color: transparent;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  transition:
-    border-color var(--motion-fast) var(--ease-enter),
-    color var(--motion-fast) var(--ease-enter);
-}
-
-.lib-add:hover,
-.lib-add:focus-visible {
+.lib-batch-btn:hover:not(:disabled) {
   border-color: var(--color-primary);
   color: var(--color-primary);
+}
+
+.lib-batch-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 删除：红描边红图标 → hover / armed 填红 + 反色（与 TODO 行内删除同一套语义） */
+.lib-batch-btn-danger {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.lib-batch-btn-danger:hover:not(:disabled),
+.lib-batch-btn-danger.is-armed {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-text-on-danger);
+}
+
+/* 弹出/收起：从右侧轻微滑入（独立卡片，不需要整条移出视口） */
+.lib-drawer-enter-active,
+.lib-drawer-leave-active {
+  transition:
+    opacity var(--motion-slow) var(--ease-enter),
+    transform var(--motion-slow) var(--ease-enter);
+}
+
+.lib-drawer-enter-from,
+.lib-drawer-leave-to {
+  opacity: 0;
+  transform: translateX(12px);
 }
 
 /* ===== 搜索弹窗 =====

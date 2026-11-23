@@ -103,6 +103,11 @@ html, body, #app {
   --color-brand-text: var(--color-primary);
   --color-text-body: var(--color-text-primary);
   --color-text-hint: var(--color-text-muted);
+  /* 压在图片上的文字与遮罩（作品详情页 hero 大背景图）：
+     游戏画面本身是深色图，与界面主题无关，所以两套主题下都用白字 + 黑色半透明遮罩。
+     只定义在 :root，深色主题继承同一组值。 */
+  --color-text-on-image: #ffffff;
+  --color-hero-veil: rgba(0, 0, 0, 0.55);
   --color-text-on-brand: #faf8f3;
   /* 实心功能色按钮上的文字色。
      ⚠️ 不能统一用白字：深色主题下 success/brand/danger 都是「亮色」

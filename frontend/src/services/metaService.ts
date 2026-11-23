@@ -36,6 +36,10 @@ export interface WorkMeta {
   fetchedAt?: string
   /** Steam 源专有：商店条目的原始类型（game/dlc/tool…），入库前据此跳过非游戏 */
   steamType?: string
+  /** 作品页画廊的大图（第一张是封面，之后是预览图 1..N；DLsite 源才有） */
+  previewImages?: string[]
+  /** Steam 源专有：完整 appdetails 原始数据（背景图 / 截图也在这里） */
+  steam?: Record<string, unknown>
   [key: string]: unknown
 }
 

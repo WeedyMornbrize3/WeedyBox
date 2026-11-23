@@ -59,11 +59,29 @@ type SetGamePathRequest struct {
 	Source string `json:"source"` // 元数据来源，空 = dlsite
 }
 
+// SetLaunchModeRequest 是「切换启动方式」的入参（Steam 源才有得选）。
+//
+// Mode："steam" = 跑 steam://rungameid/<appid> 交给 Steam 客户端；
+// "exe" = 直接跑库里记录的 game_path；空串 = 恢复默认（Steam 源走 steam，其它走 exe）。
+type SetLaunchModeRequest struct {
+	WorkID string `json:"workId"`
+	Source string `json:"source"`
+	Mode   string `json:"mode"`
+}
+
+// GameLaunchModeState 是切换启动方式后的结果。Mode 是**生效值**（空串已按来源解析）。
+type GameLaunchModeState struct {
+	WorkID string `json:"workId"`
+	Mode   string `json:"mode"`
+}
+
 // GameLaunchResult 是「启动游戏」的结果。
 //
 // Missing 单独给一个布尔字段（而不是只靠错误字符串）：前端靠它判断
 // 「是位置没设置/文件不在了，需要让用户选一次 exe」还是「启动真的失败了」，
 // 解析中文错误文案来分支太脆。
+//
+// Mode 是这次实际用的启动方式（steam / exe），前端据此显示回执。
 type GameLaunchResult struct {
 	WorkID  string `json:"workId"`
 	Path    string `json:"path"`
@@ -71,6 +89,7 @@ type GameLaunchResult struct {
 	Running bool   `json:"running"`
 	Missing bool   `json:"missing"`
 	Message string `json:"message"`
+	Mode    string `json:"mode"`
 }
 
 // GameStatus 是「这个作品的游戏状态」：位置、文件是否还在、是否正在运行。
@@ -79,12 +98,15 @@ type GameLaunchResult struct {
 //   - Path 为空        → 还没设置位置（按钮第一次点击去选程序）；
 //   - Exists = false   → 位置记了但 exe 已不在（提示"已删除或变更位置"，启动按钮禁用）；
 //   - Running = true   → 游戏正在运行（按钮显示「运行中」并禁用，防止重复启动）。
+//
+// LaunchMode 是生效的启动方式（steam / exe）：Steam 源默认 steam，其余默认 exe。
 type GameStatus struct {
-	WorkID  string `json:"workId"`
-	Path    string `json:"path"`
-	Exists  bool   `json:"exists"`
-	Running bool   `json:"running"`
-	PID     uint32 `json:"pid"`
+	WorkID     string `json:"workId"`
+	Path       string `json:"path"`
+	Exists     bool   `json:"exists"`
+	Running    bool   `json:"running"`
+	PID        uint32 `json:"pid"`
+	LaunchMode string `json:"launchMode"`
 }
 
 // ===== 对外方法 =====
@@ -141,11 +163,19 @@ func (s *GameService) Status(ctx context.Context, workID, source string) (GameSt
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	path, err := s.DB.GetGamePath(ctx, sourceOrDefault(source), status.WorkID)
+	src := sourceOrDefault(source)
+	path, err := s.DB.GetGamePath(ctx, src, status.WorkID)
 	if err != nil {
 		return status, err
 	}
 	status.Path = path
+
+	mode, err := s.DB.GetLaunchMode(ctx, src, status.WorkID)
+	if err != nil {
+		return status, err
+	}
+	status.LaunchMode = resolveLaunchMode(mode, src)
+
 	if path == "" {
 		return status, nil
 	}
@@ -160,16 +190,22 @@ func (s *GameService) Status(ctx context.Context, workID, source string) (GameSt
 	return status, nil
 }
 
-// Launch 用库里记录的位置启动游戏。
+// Launch 启动游戏：按库里记录的启动方式分流。
+//
+//   - steam 方式（Steam 源默认）：跑 steam://rungameid/<appid>，由 Steam 客户端拉起。
+//     这种方式**不需要** game_path —— 游戏装没装、装在哪由 Steam 自己管；
+//   - exe 方式（其它来源默认，或用户手动切回）：用 game_path 起独立进程。
 //
 // 分支：
-//   - 没有记录 / 记录的文件已不存在 → 返回 Started=false、Missing=true、Message 说明原因
-//     （**不报 error**：这是可预期的、需要用户选一次程序的状态，前端据此弹选择框）；
+//   - exe 方式下没有记录 / 记录的文件已不存在 → 返回 Started=false、Missing=true、
+//     Message 说明原因（**不报 error**：这是可预期的、需要用户选一次程序的状态，
+//     前端据此弹选择框）；
 //   - 有文件但进程起不来（权限/损坏/被拦截）→ 返回 error，前端按失败提示；
-//   - 成功 → Started=true、Running=true，并把 PID 载入运行缓存。
+//   - 成功 → Started=true，exe 方式还会把 PID 载入运行缓存。
 //
-// 启动方式见 launch_windows.go：独立进程 + 工作目录设为 exe 所在目录
-// （很多游戏按相对路径找资源，不设工作目录会找不到 pak/存档）。
+// 启动实现见 launch_windows.go：exe 用独立进程 + 工作目录设为 exe 所在目录
+// （很多游戏按相对路径找资源，不设工作目录会找不到 pak/存档）；
+// Steam URL 交给系统默认协议处理器（ShellExecute "open"）。
 func (s *GameService) Launch(ctx context.Context, workID, source string) (GameLaunchResult, error) {
 	result := GameLaunchResult{WorkID: strings.ToUpper(strings.TrimSpace(workID))}
 	if result.WorkID == "" {
@@ -182,11 +218,36 @@ func (s *GameService) Launch(ctx context.Context, workID, source string) (GameLa
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	path, err := s.DB.GetGamePath(ctx, sourceOrDefault(source), result.WorkID)
+	src := sourceOrDefault(source)
+
+	path, err := s.DB.GetGamePath(ctx, src, result.WorkID)
 	if err != nil {
 		return result, err
 	}
 	result.Path = path
+
+	storedMode, err := s.DB.GetLaunchMode(ctx, src, result.WorkID)
+	if err != nil {
+		return result, err
+	}
+	mode := resolveLaunchMode(storedMode, src)
+	result.Mode = mode
+
+	// Steam 方式：不需要本地 exe（没装在本地 / 用户就是要让 Steam 客户端处理都成立）
+	if mode == database.LaunchModeSteam {
+		appID := steamAppID(result.WorkID)
+		if appID == "" {
+			return result, fmt.Errorf("作品编号 %q 不是有效的 Steam appid", result.WorkID)
+		}
+		url := steamRunGameURL(appID)
+		if err := startURL(url); err != nil {
+			return result, fmt.Errorf("通过 Steam 启动失败: %w", err)
+		}
+		result.Started = true
+		result.Message = fmt.Sprintf("已请求 Steam 启动游戏（%s）", url)
+		return result, nil
+	}
+
 	if path == "" {
 		result.Missing = true
 		result.Message = "还没有记录这个游戏的启动位置"
@@ -209,6 +270,40 @@ func (s *GameService) Launch(ctx context.Context, workID, source string) (GameLa
 	return result, nil
 }
 
+// SetLaunchMode 切换一个作品的启动方式（Steam 源的作品才有"通过 Steam / 本地程序"两种）。
+//
+// 只改「下次怎么启动」，不顺手启动游戏。mode 的取值与校验见 database.SetLaunchMode；
+// 额外一条：steam 方式只对 steam 来源开放 —— dlsite 作品没有 appid，拼不出 Steam URL。
+func (s *GameService) SetLaunchMode(ctx context.Context, req SetLaunchModeRequest) (GameLaunchModeState, error) {
+	state := GameLaunchModeState{WorkID: strings.ToUpper(strings.TrimSpace(req.WorkID))}
+	if state.WorkID == "" {
+		return state, errors.New("作品编号为空")
+	}
+	if s.DB == nil {
+		return state, errors.New("数据库未就绪")
+	}
+
+	src := sourceOrDefault(req.Source)
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	switch mode {
+	case "", database.LaunchModeSteam, database.LaunchModeExe:
+	default:
+		return state, fmt.Errorf("不支持的启动方式: %q", req.Mode)
+	}
+	if mode == database.LaunchModeSteam && src != database.SourceSteam {
+		return state, errors.New("只有 Steam 来源的作品才能通过 Steam 启动")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	if err := s.DB.SetLaunchMode(ctx, src, state.WorkID, mode); err != nil {
+		return state, err
+	}
+	state.Mode = resolveLaunchMode(mode, src)
+	return state, nil
+}
+
 // ===== 内部实现 =====
 
 // sourceOrDefault 来源标识：空值一律当 dlsite（当前唯一来源）。
@@ -218,6 +313,48 @@ func sourceOrDefault(source string) string {
 		return database.SourceDLsite
 	}
 	return source
+}
+
+// defaultLaunchMode 按来源取默认启动方式（用户 2026-11-23 要求）：
+// Steam 来源默认跑 steam://rungameid/<appid>（不依赖本地 exe），其它来源只能跑本地程序。
+func defaultLaunchMode(source string) string {
+	if source == database.SourceSteam {
+		return database.LaunchModeSteam
+	}
+	return database.LaunchModeExe
+}
+
+// resolveLaunchMode 把库里存的值解析成生效值：空串/非法值一律退回来源默认，
+// 这样「从没选过」和「显式选了默认」对启动行为是一致的。
+func resolveLaunchMode(stored, source string) string {
+	switch strings.ToLower(strings.TrimSpace(stored)) {
+	case database.LaunchModeSteam:
+		return database.LaunchModeSteam
+	case database.LaunchModeExe:
+		return database.LaunchModeExe
+	default:
+		return defaultLaunchMode(source)
+	}
+}
+
+// steamAppID 校验并返回 Steam appid（纯数字）；不是数字就返回空串。
+// 不引 getMeta 包：这里只需要"是不是一串数字"，不需要商店接口那一套。
+func steamAppID(workID string) string {
+	id := strings.TrimSpace(workID)
+	if id == "" {
+		return ""
+	}
+	for _, r := range id {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return id
+}
+
+// steamRunGameURL 是 Steam 官方的「启动指定游戏」协议地址（Steam 客户端已安装时由系统转交）。
+func steamRunGameURL(appID string) string {
+	return "steam://rungameid/" + appID
 }
 
 // normalizeGamePath 把用户给的路径变成可靠的绝对路径，并校验它确实是一个存在的文件。

@@ -536,6 +536,29 @@ func (s *LibraryService) CoverDataURL(ctx context.Context, workID, source string
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
+// SteamHeroImage 读取本机 Steam 客户端缓存的 hero 背景图，转成 data URL 给详情页当大背景。
+//
+// 用户要求（2026-11-23）：「背景图如果是 steam 源使用本地扫描函数扫描含 hero 字样图片，
+// 如果没有就使用 api 获取的预览图填充」。所以这里**找不到就返回空串 + nil**（不是错误），
+// 由前端决定回落到商店接口的预览图；扫描规则见 scan.SteamHeroImage。
+// 为什么转 data URL 而不是给文件路径：与封面同一原因（Wails webview 对 file:// 没有
+// 实机验证过）；hero 图实测 200~450KB，base64 后仍是一次可接受的传输。
+func (s *LibraryService) SteamHeroImage(ctx context.Context, appID string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	image, err := scan.SteamHeroImage(ctx, getmeta.NormalizeSteamAppID(appID))
+	if err != nil || strings.TrimSpace(image) == "" {
+		return "", err
+	}
+	data, err := os.ReadFile(image)
+	if err != nil || len(data) == 0 {
+		return "", nil
+	}
+	mime := mimeBySuffix(filepath.Ext(image))
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+}
+
 // ===== 内部实现 =====
 
 // resolveStoreGamePath 决定这次入库要记录的游戏程序位置（用户 2026-11-16 要求「入库时便存储相关 exe」）：
@@ -600,6 +623,9 @@ func decorate(work map[string]any, row *model.LibraryWork, cached bool) map[stri
 	// 游戏启动位置与元数据同表（library_works.game_path），一起带给前端：
 	// 详情页据此决定「入库」按钮是否已经变成「游戏启动」并显示在哪个程序上。
 	work["gamePath"] = row.GamePath
+	// 启动方式（library_works.launch_mode，2026-11-23）：空 = 按来源取默认
+	// （steam 源走 steam://rungameid，其它走本地 exe）。详情页据此显示"通过 Steam / 本地程序"。
+	work["launchMode"] = row.LaunchMode
 	return work
 }
 

@@ -30,7 +30,8 @@ export const useLibraryStore = defineStore('library', () => {
   const error = ref('')
   /** `来源:编号` → 本地封面 data URL（空串表示"查过了、没有封面"） */
   const covers = ref<Record<string, string>>({})
-  const removingId = ref('')
+  /** 批量删除进行中（整表删除期间不许重复点） */
+  const removing = ref(false)
   /** 是否已经加载过一次（避免每次进页面都闪一下 loading） */
   const loaded = ref(false)
 
@@ -82,23 +83,43 @@ export const useLibraryStore = defineStore('library', () => {
     return covers.value[coverKey(work)] ?? ''
   }
 
-  /** 从库里删一条记录（后端不删磁盘上的图片） */
-  async function remove(work: LibraryWork) {
-    removingId.value = work.workId
+  /**
+   * 批量从游戏库里删除（页面上不再有「单卡删除」，只有批量操作栏的「删除所选」）。
+   * 逐条调后端：后端会同时删掉这条作品在 covers/ 里的封面文件；
+   * 成功的从本地列表与封面缓存里移除，失败的汇总进 error（其余照删，不整体回滚）。
+   * 返回实际删掉的条数。
+   */
+  async function removeMany(items: LibraryWork[]): Promise<number> {
+    const unique = new Map<string, LibraryWork>()
+    for (const item of items) unique.set(coverKey(item), item)
+    if (!unique.size) return 0
+
+    removing.value = true
     error.value = ''
+    const removedKeys = new Set<string>()
+    const failures: string[] = []
     try {
-      await libraryApi.remove(work.workId, work.source as LibrarySource)
-      works.value = works.value.filter(
-        (w) => !(w.workId === work.workId && w.source === work.source),
-      )
-      const next = { ...covers.value }
-      delete next[coverKey(work)]
-      covers.value = next
-    } catch (err) {
-      error.value = `删除失败：${toMessage(err)}`
+      for (const item of unique.values()) {
+        try {
+          await libraryApi.remove(item.workId, item.source as LibrarySource)
+          removedKeys.add(coverKey(item))
+        } catch (err) {
+          failures.push(`${item.name || item.workId}（${toMessage(err)}）`)
+        }
+      }
+      if (removedKeys.size) {
+        works.value = works.value.filter((w) => !removedKeys.has(coverKey(w)))
+        const next = { ...covers.value }
+        for (const key of removedKeys) delete next[key]
+        covers.value = next
+      }
+      if (failures.length) {
+        error.value = `有 ${failures.length} 款删除失败：${failures.join('；')}`
+      }
     } finally {
-      removingId.value = ''
+      removing.value = false
     }
+    return removedKeys.size
   }
 
   /** 作品刚被抓进库（或刚下完封面）时调：只刷新这一条的封面，不重拉整个列表 */
@@ -124,7 +145,7 @@ export const useLibraryStore = defineStore('library', () => {
     loading,
     error,
     covers,
-    removingId,
+    removing,
     loaded,
     // Getters
     count,
@@ -132,7 +153,7 @@ export const useLibraryStore = defineStore('library', () => {
     load,
     loadCovers,
     coverFor,
-    remove,
+    removeMany,
     refreshCover,
     has,
   }
