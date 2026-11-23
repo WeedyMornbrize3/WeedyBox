@@ -81,10 +81,10 @@
         <span :class="scan.scanning ? 'i-lucide-loader-circle spin' : 'i-lucide-search'" class="icon-sm" aria-hidden="true" />
         {{ scan.scanning ? '扫描中…' : '扫描' }}
       </button>
-      <span v-if="scan.searching" class="text-xs text-tertiary">{{ searchLabel }} {{ scan.searched }}/{{ scan.matches.length }}…</span>
+      <span v-if="scan.searching" class="text-xs text-tertiary">{{ searchLabel }} {{ scan.searched }}/{{ scan.count }}…</span>
       <span v-else-if="scan.detailing" class="text-xs text-tertiary">获取详情 {{ scan.detailed }}/{{ scan.detailTotal }}…</span>
       <button v-if="scan.searching || scan.detailing" type="button" class="chip" @click="scan.stopSearch()">停止</button>
-      <span v-else-if="scan.matches.length" class="text-xs text-tertiary">匹配 {{ scan.matchedCount }}/{{ scan.matches.length }}</span>
+      <span v-else-if="scan.matches.length" class="text-xs text-tertiary">匹配 {{ scan.matchedCount }}/{{ scan.count }}</span>
     </div>
 
     <MetaMessage v-if="scan.error" tone="error" :text="scan.error" />
@@ -106,7 +106,7 @@
         type="button"
         class="chip"
         :disabled="scan.storingAll || scan.searching || scan.detailing"
-        @click="scan.storeAll()"
+        @click="storeAll"
       >
         {{ scan.storingAll ? `入库中 ${scan.storeProgress}/${scan.storeTotal}` : `全部入库（${scan.storableCount}）` }}
       </button>
@@ -114,7 +114,7 @@
         type="button"
         class="chip chip-active"
         :disabled="scan.storingAll || scan.searching || !scan.selectedCount"
-        @click="scan.storeSelected()"
+        @click="storeSelected"
       >
         入库所选（{{ scan.selectedCount }}）
       </button>
@@ -125,8 +125,8 @@
     <div v-if="scan.matches.length" class="min-h-0 max-h-[34vh] overflow-y-auto scrollbar-theme -mx-5 border-t-theme-light">
       <ul class="list-none m-0 p-0">
         <li
-          v-for="(match, index) in scan.matches"
-          :key="match.entry.name + '#' + index"
+          v-for="match in scan.matches"
+          :key="match.entryIndex + ':' + match.source"
           class="flex items-center gap-3 px-5 py-2.5 border-b-theme-light last:border-none"
         >
           <!-- 勾选框：只有「有匹配且未入库」的行可勾；其余留同宽占位保证封面左对齐。
@@ -137,7 +137,7 @@
             class="todo-checkbox flex-shrink-0 w-[18px] h-[18px] rounded-[5px] cursor-pointer appearance-none flex-center text-transparent transition-colors duration-200 border-2 border-theme-dark bg-transparent hover:border-brand checked:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
             :checked="match.selected"
             :disabled="scan.storingAll || match.storing"
-            :aria-label="`选择「${match.workName || match.entry.name}」`"
+            :aria-label="`选择「${match.workName || match.entry.name}」（${sourceLabel(match)}）`"
             @change="scan.toggleSelect(match)"
           />
           <span v-else-if="match.state === 'searching'" class="w-[18px] shrink-0 flex-center" aria-hidden="true">
@@ -150,6 +150,8 @@
           <div class="flex-1 min-w-0">
             <p class="m-0 text-sm text-primary truncate" :title="match.message || matchTitle(match)">{{ matchTitle(match) }}</p>
             <p class="m-0 text-xs text-tertiary truncate">
+              <!-- 来源徽标：同一个文件夹最多两行（Steam 行 + DLsite 行），靠它区分 -->
+              <span class="src-tag">{{ sourceLabel(match) }}</span>
               <template v-if="match.state === 'matched'">
                 <span class="font-mono">{{ match.workId }}</span>
                 <span class="mx-1">·</span>
@@ -187,7 +189,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useScanStore } from '../../stores/scanStore'
-import type { FolderScanMode, ScanMatch, ScanSource } from '../../stores/scanStore'
+import type { FolderScanMode, ScanMatch, ScanSource, ScanStoreResult } from '../../stores/scanStore'
+import { toastError, toastSuccess } from '../../utils/toast'
 import MetaCover from '../meta/MetaCover.vue'
 import MetaMessage from '../meta/MetaMessage.vue'
 
@@ -212,8 +215,8 @@ const MODE_OPTIONS: { value: FolderScanMode; label: string }[] = [
 /** 两种识别方式的差别（用户要求的"通用 / 节约资源"两种用途） */
 const modeHint = computed(() =>
   scan.mode === 'exe'
-    ? '扫描每个一级子文件夹里的 .exe，用 exe 文件名当游戏名；不递归，也不含根目录自己的 exe。'
-    : '只读目录第一层，直接用子文件夹名当游戏名。搜之前**先拿名字去 Steam 商店猜 appid**（猜中就按 Steam 取信息），猜不到再搜 DLsite。',
+    ? '扫描每个一级子文件夹里的 .exe，用 exe 文件名当游戏名；不递归，也不含根目录自己的 exe。搜之前会同时查 Steam 商店与 DLsite。'
+    : '只读目录第一层，直接用子文件夹名当游戏名。搜之前**同时查 Steam 商店与 DLsite**：Steam 猜得到 appid 就多一行 Steam 结果，DLsite 按原名搜一条；两边都列出来让你挑。',
 )
 
 const emptyHint = computed(() => {
@@ -224,18 +227,23 @@ const emptyHint = computed(() => {
   return '该目录下没有一级子文件夹。'
 })
 
+/** 一行的来源文字（Steam / DLsite） */
+function sourceLabel(match: ScanMatch): string {
+  return match.source === 'steam' ? 'Steam' : 'DLsite'
+}
+
 function matchTitle(match: ScanMatch): string {
   if (match.state === 'matched') return match.workName || match.entry.name
   if (match.state === 'searching') return searchLabel.value + '…'
-  if (match.state === 'error') return match.entry.source === 'steam' ? '获取 Steam 信息失败' : '搜索失败'
-  if (match.state === 'stopped') return match.entry.source === 'steam' ? '未获取（已停止）' : '未搜索（已停止）'
+  if (match.state === 'error') return match.source === 'steam' ? '获取 Steam 信息失败' : 'DLsite 搜索失败'
+  if (match.state === 'stopped') return match.source === 'steam' ? '未获取（已停止）' : '未搜索（已停止）'
   if (match.state === 'empty') return match.message ? '已跳过' : '未找到匹配作品'
   return match.entry.name
 }
 
-/** 点「详情」：带上来源进 /works 核对（Steam 条目按 appid 读，不去 DLsite 搜） */
+/** 点「详情」：带上这一行的来源进 /works 核对（Steam 行按 appid 读，DLsite 行按编号读） */
 function openDetail(match: ScanMatch) {
-  emit('detail', match.workId, match.entry.source === 'steam' ? 'steam' : 'dlsite')
+  emit('detail', match.workId, match.source)
 }
 
 function toggleAll(event: Event) {
@@ -245,4 +253,45 @@ function toggleAll(event: Event) {
 function runScan() {
   void scan.scan()
 }
+
+/**
+ * 批量入库的收尾提示（游戏库「添加」的 toast，2026-11-23 用户要求）。
+ * 只在整批结束时弹一次汇总：每行成功都弹会把提示刷屏，行内本身已有「已入库」状态。
+ */
+function reportStoreResult(result: ScanStoreResult) {
+  if (result.stored > 0) {
+    toastSuccess(`已入库 ${result.stored} 款游戏`, { description: '已经收进游戏库，可以在网格里看到' })
+  }
+  if (result.failed > 0) {
+    toastError(`${result.failed} 款入库失败`, {
+      description: scan.storeError || '展开结果行可以看到具体原因',
+    })
+  }
+}
+
+async function storeAll() {
+  reportStoreResult(await scan.storeAll())
+}
+
+async function storeSelected() {
+  reportStoreResult(await scan.storeSelected())
+}
 </script>
+
+<style scoped>
+/* 来源徽标（Steam / DLsite）：10px 小字 + 1px 描边，和行内的编号一样是辅助信息，
+   不抢封面与作品名的视觉重心；但用 secondary 色 + 500 字重保证一眼能分清两行。
+   颜色只取全局 token（两套主题自动适配）。 */
+.src-tag {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 4px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 14px;
+  color: var(--color-text-secondary);
+  vertical-align: 1px;
+}
+</style>

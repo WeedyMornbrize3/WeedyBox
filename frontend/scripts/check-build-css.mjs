@@ -13,6 +13,7 @@ console.log(`CSS files: ${cssFiles.join(', ')}  (total ${css.length} chars)`)
 const must = [
   'icon-xs', 'icon-sm', 'icon-md', 'icon-lg', 'icon-xl',
   'todo-desc-block', 'card-flat', 'btn-row', 'btn-brand', 'btn-ghost',
+  'btn-brand-split', 'btn-brand-attach',
   'filter-bar', 'filter-group', 'filter-label', 'filter-chips', 'chip', 'chip-active',
   'nav-item', 'nav-icon', 'section-icon', 'settings-page', 'settings-section',
   'text-priority-low', 'text-priority-medium', 'text-priority-high',
@@ -91,6 +92,8 @@ const sideRules = [
   ['border-r-sidebar', 'border-right:2px solid var(--sidebar-border)', ['border-top:0', 'border-bottom:0', 'border-left:0']],
   // 描述块 hover：必须是单侧规则，否则会从「一条竖线」变成「一个方框」
   ['border-l-brand', 'border-left:2px solid var(--color-primary)', ['border-top:0', 'border-right:0', 'border-bottom:0']],
+  // 分体按钮（游戏启动 + 启动方式）的竖向分隔线：右段的左边框，其余三边归零
+  ['border-l-on-brand', 'border-left:1px solid var(--color-divider-on-brand)', ['border-top:0', 'border-right:0', 'border-bottom:0']],
 ]
 let sideBad = 0
 for (const [name, own, zeros] of sideRules) {
@@ -101,6 +104,24 @@ for (const [name, own, zeros] of sideRules) {
   }
 }
 console.log(sideBad === 0 ? `OK: 单侧边框 ${sideRules.length} 条均显式置零其余边` : `${sideBad} 项单侧边框断言失败`)
+
+// ===== 按钮聚焦光环 / 分体按钮分隔线（2026-11-23，按 shadcn-vue 的 button 默认样式）=====
+// 回归背景：焦点环是 `focus-visible:ring-[3px]` + 自定义 rule 提供 ring 颜色。
+// 颜色写错不会报错 —— 只会静默退化成 `currentColor`（按钮文字色），看起来像"没生效"。
+// 所以这里正向断言 ring 颜色真的接到了半透明的 `--color-ring-soft`。
+{
+  const needles = [
+    ['按钮聚焦光环 3px', 'calc(3px + var(--un-ring-offset-width))'],
+    ['ring 颜色接 --color-ring-soft', '--un-ring-color:var(--color-ring-soft)'],
+    ['半透明 ring token', '--color-ring-soft:color-mix(in srgb, var(--color-primary) 50%, transparent)'],
+    ['分体按钮分隔线 token', '--color-divider-on-brand:color-mix(in srgb, var(--color-text-inverse) 30%, transparent)'],
+  ]
+  let ringBad = 0
+  for (const [name, needle] of needles) {
+    if (!css.includes(needle)) { ringBad++; console.log(`  MISSING  ${name}  (${needle})`) }
+  }
+  console.log(ringBad === 0 ? 'OK: 按钮聚焦光环与分体按钮分隔线 token 均已生成' : `${ringBad} 项按钮光环断言失败`)
+}
 
 // ===== 搜索框 / 表单类专项断言 =====
 // 回归背景：

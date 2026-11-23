@@ -190,7 +190,7 @@ function save() {
   border: 1px solid var(--color-border);
   border-radius: 999px;
   background: var(--color-bg-card);
-  color: var(--color-danger);
+  color: var(--color-text-secondary);
   opacity: 0;
   pointer-events: none;
   transition:
@@ -209,9 +209,9 @@ function save() {
 /* 破坏性语义：hover / 聚焦时直接填红（与游戏库删除、TODO 删除同一套配色口径） */
 .tag-remove:hover,
 .tag-remove:focus-visible {
-  background: var(--color-danger);
-  border-color: var(--color-danger);
-  color: var(--color-text-on-danger);
+  background: color-mix(in srgb, var(--color-text-secondary) 50%, transparent);
+  border-color: color-mix(in srgb, var(--color-text-secondary) 50%, transparent);
+  color: color-mix(in srgb, var(--color-text-inverse) 50%, transparent);
 }
 
 /* 14px 的圆里放 10px 的 ×（icon-xs 是 14px，会顶满圆） */

@@ -115,10 +115,6 @@
                 <span class="i-lucide-check icon-lg" />
               </span>
 
-              <!-- 名称：平时藏在封面下沿之外，hover / 键盘聚焦时半透明面板向上淡入 -->
-              <span class="lib-name translate-y-full opacity-0 transition-[transform,opacity] duration-200 ease-out group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100" aria-hidden="true">
-                {{ item.name }}
-              </span>
             </button>
           </div>
         </div>
@@ -253,50 +249,44 @@
             <!-- 扫描添加：扫出来的名字点一下就进搜索（名字同时会写进手动搜索的输入框） -->
             <ScanPanel v-if="addMode === 'scan'" class="min-h-0" @detail="openScanResult" />
 
-            <!-- 手动搜索：原来的流程原样保留，只是改叫「手动」；
-                 来源可以在 DLsite 与 Steam 之间切换（Steam 走 storesearch，候选最多 10 条） -->
+            <!-- 手动搜索：**一次同时查 DLsite 与 Steam**（用户 2026-11-23 要求
+                 「手动搜索只显示 DLsite 数据源，应该也显示 steam 数据源」），
+                 两个来源的候选分组列出，不再需要先选来源。 -->
             <template v-else>
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="text-xs text-secondary">搜索来源</span>
-                <button
-                  v-for="option in SEARCH_SOURCE_OPTIONS"
-                  :key="option.value"
-                  type="button"
-                  class="chip"
-                  :class="{ 'chip-active': meta.searchSource === option.value }"
-                  :aria-pressed="meta.searchSource === option.value"
-                  @click="meta.setSearchSource(option.value)"
-                >
-                  {{ option.label }}
-                </button>
-              </div>
               <p class="m-0 text-xs text-tertiary">{{ searchHint }}</p>
               <MetaSearchBar v-model="meta.keyword" :loading="meta.loading" @submit="submitSearch" />
             </template>
 
             <MetaMessage v-if="addMode === 'manual' && meta.error" tone="error" :text="meta.error" />
+            <MetaMessage v-if="addMode === 'manual' && meta.searchNotice" tone="warning" :text="meta.searchNotice" />
             <MetaMessage v-if="addMode === 'manual' && meta.status" :text="meta.status" />
             <MetaMessage v-if="addMode === 'manual' && meta.pageLoading" :text="`正在加载第 ${meta.candidatePage} 页…`" />
 
-            <!-- Steam 候选：最多 10 条，没有分页；点「详情」按 appid 取商店详情 -->
-            <template v-if="addMode === 'manual' && meta.searchSource === 'steam' && meta.steamCandidates.length">
+            <!-- 候选：Steam 组（最多 10 条、无分页）+ DLsite 组（每页 10 条，可翻页） -->
+            <template v-if="addMode === 'manual' && (meta.steamCandidates.length || meta.candidateTotal > 0)">
               <div class="min-h-0 flex-1 overflow-y-auto scrollbar-theme -mx-5 border-t-theme-light">
-                <MetaCandidateList :candidates="meta.steamCandidates" @select="chooseSteamCandidate" />
-              </div>
-            </template>
+                <template v-if="meta.steamCandidates.length">
+                  <p class="m-0 px-5 pt-3 pb-1.5 text-xs text-tertiary border-b-theme-light">
+                    Steam 商店 · {{ meta.steamCandidates.length }} 个候选（最多 10 个，没有分页）
+                  </p>
+                  <MetaCandidateList :candidates="meta.steamCandidates" @select="chooseSteamCandidate" />
+                </template>
 
-            <!-- DLsite 模糊搜索的候选：每页 10 个，翻到哪页才取那一页的 30 条里的 10 条并下预览图 -->
-            <template v-else-if="addMode === 'manual' && meta.candidateTotal > 0">
-              <div class="min-h-0 flex-1 overflow-y-auto scrollbar-theme -mx-5 border-t-theme-light">
-                <MetaCandidateList
-                  :candidates="meta.pagedCandidates"
-                  :covers="meta.candidateCovers"
-                  @select="chooseCandidate"
-                />
+                <template v-if="meta.candidateTotal > 0">
+                  <p class="m-0 px-5 pt-3 pb-1.5 text-xs text-tertiary border-b-theme-light">
+                    DLsite · 共 {{ meta.candidateTotal }} 条
+                  </p>
+                  <MetaCandidateList
+                    :candidates="meta.pagedCandidates"
+                    :covers="meta.candidateCovers"
+                    @select="chooseCandidate"
+                  />
+                </template>
               </div>
 
-              <!-- 分页：前 3 页 / 当前页 / 后 3 页可点，右侧输入页码直接跳转 -->
+              <!-- 分页只作用于 DLsite（Steam 的 storesearch 没有分页参数） -->
               <MetaPager
+                v-if="meta.candidateTotal > 0"
                 class="-mt-1"
                 :page="meta.candidatePage"
                 :page-count="meta.candidatePageCount"
@@ -317,6 +307,8 @@ import { useRouter } from 'vue-router'
 import { useMetaStore } from '../stores/metaStore'
 import { useLibraryStore } from '../stores/libraryStore'
 import type { LibrarySource, LibraryWork } from '../services/libraryService'
+import { dismissToast, toastError, toastLoading, toastSuccess } from '../utils/toast'
+import type { ToastId } from '../utils/toast'
 import MetaCandidateList from '../components/meta/MetaCandidateList.vue'
 import MetaMessage from '../components/meta/MetaMessage.vue'
 import MetaPager from '../components/meta/MetaPager.vue'
@@ -327,21 +319,14 @@ import ScanPanel from '../components/library/ScanPanel.vue'
 /** 「添加游戏」弹窗的两种方式：扫描添加（默认）/ 手动搜索（原搜索流程） */
 type AddMode = 'scan' | 'manual'
 
-/** 手动搜索的两个来源（用户要求「手动搜索可以是 steam 也可以是 DLsite」） */
-const SEARCH_SOURCE_OPTIONS: { value: LibrarySource; label: string }[] = [
-  { value: 'dlsite', label: 'DLsite' },
-  { value: 'steam', label: 'Steam' },
-]
-
 const library = useLibraryStore()
 const meta = useMetaStore()
 const router = useRouter()
 
-/** 两种来源的输入提示：DLsite 支持 RJ 精确抓，Steam 只能按名字（候选最多 10 条） */
-const searchHint = computed(() =>
-  meta.searchSource === 'steam'
-    ? '输入游戏名搜索 Steam 商店（最多 10 个候选，没有分页）；点「详情」按 appid 取商店信息。搜到的作品不会自动入库，点开详情后再点「入库」。'
-    : '输入 RJ 编号精确抓取（如 RJ01721474），或输入作品名做模糊搜索；搜到的作品不会自动入库，点开详情后再点「入库」。',
+/** 两个来源的输入提示：DLsite 支持 RJ 精确抓，Steam 按名字搜（候选最多 10 条、无分页） */
+const searchHint = computed(
+  () =>
+    '一次同时搜索 DLsite 与 Steam：DLsite 支持 RJ 编号精确抓取（如 RJ01721474），Steam 按游戏名搜（最多 10 个候选）。两边结果分组列出，点「详情」核对后再入库。',
 )
 
 /** 一张卡片的唯一 key（编号在两个来源里可能重复，所以带上 source） */
@@ -415,7 +400,11 @@ function handleCardClick(item: LibraryWork) {
   void openWork(item)
 }
 
-/** 删除所选：连点两下确认（与 TODO 的删除同一套路，不弹确认框） */
+/** 删除所选：连点两下确认（与 TODO 的删除同一套路，不弹确认框）
+ *  2026-11-23：删除是游戏库的「移除」，耗时与条数相关（逐条删库记录 + 封面文件），
+ *  所以操作超过 300ms 时弹一条 loading 提示占位；结束时**先关掉它、再另弹一条结果**。
+ *  ⚠️ 不能把 loading 那条用同一个 id 原地改成结果：sonner 的 loading toast 不启动自动关闭计时器，
+ *  原地更新后计时器也不会重启，提示会永远停在屏幕上（用户报的 bug）。详见 utils/toast.ts。 */
 async function handleBatchDelete() {
   if (!selectedCount.value || library.removing) return
   if (!batchArmed.value) {
@@ -423,24 +412,52 @@ async function handleBatchDelete() {
     return
   }
   batchArmed.value = false
-  const removed = await library.removeMany(selectedWorks.value)
+
+  const count = selectedCount.value
+  // 「正在移除」占位提示：只有操作真的慢（>300ms）才弹，删一两款时不会闪一下再消失。
+  // 结束时必须 dismissToast 关掉它 —— loading toast 不会自动消失，也不能原地改成结果（见 utils/toast.ts）。
+  const slowNotice: { id: ToastId | null } = { id: null }
+  const loadingTimer = window.setTimeout(() => {
+    slowNotice.id = toastLoading(count > 1 ? `正在移除 ${count} 款游戏…` : '正在从游戏库移除…')
+  }, 300)
+  let removed = 0
+  try {
+    removed = await library.removeMany(selectedWorks.value)
+  } catch (e) {
+    // removeMany 自己会兜住逐条失败；走到这里说明是意外错误（此时选择集留着，方便重试）
+    window.clearTimeout(loadingTimer)
+    if (slowNotice.id !== null) dismissToast(slowNotice.id)
+    toastError('删除失败', { description: e instanceof Error ? e.message : '请稍后再试' })
+    return
+  }
+  window.clearTimeout(loadingTimer)
+  if (slowNotice.id !== null) dismissToast(slowNotice.id)
   selectedKeys.value = []
+
+  if (removed > 0) {
+    toastSuccess(removed > 1 ? `已移除 ${removed} 款游戏` : '已移除 1 款游戏', {
+      description: '封面文件也一并删除了',
+    })
+    // 部分失败时 store.error 里有逐条原因（页面上的提示条也会显示，这里补一条浮层提醒）
+    if (library.error) toastError('有游戏没能删除', { description: library.error })
+  } else if (library.error) {
+    toastError('删除失败', { description: library.error })
+  }
+
   // 全删光了就没有"选卡"的意义了，自动退回普通浏览
   if (removed > 0 && !library.works.length) exitBatch()
 }
 
 /**
- * 打开「添加游戏」弹窗：清掉上一次的错误/状态，并**清空输入框**，默认落在扫描添加。
+ * 打开「添加游戏」弹窗：清掉上一次的搜索结果/错误/状态，并**清空输入框**，默认落在扫描添加。
  * 搜索成功后 `runSearch` 会把关键词（往往是 RJ 编号）留在 store 里，弹窗一开就会
  * 在输入框里显示出来 —— 用户明确不要"上次搜过的编号"自动出现，所以每次开窗都从空白开始。
+ * 候选也一起清掉：现在是 DLsite + Steam 两组，留着上次的两组候选比只剩 DLsite 时更让人困惑。
  * 扫描结果保留（scanStore 独立于弹窗），重新打开还能接着点上次扫到的名字。
  */
 function openAddGame() {
-  meta.error = ''
-  meta.status = ''
+  meta.clearResult()
   meta.keyword = ''
-  // 来源回到默认的 DLsite：上次切到 Steam 不该成为下次开窗的"惊喜"
-  meta.setSearchSource('dlsite')
   addMode.value = 'scan'
   searchOpen.value = true
 }
@@ -450,16 +467,15 @@ function closeSearch() {
 }
 
 /**
- * 提交搜索：命中作品（按编号精准抓）就直接进作品库；
- * 只是候选列表（模糊搜索）就留在弹窗里让用户点「详情」。
+ * 提交搜索：**DLsite 与 Steam 一起搜**（metaStore.runMultiSearch）。
+ * 命中作品（按编号精准抓）就直接进作品库；只是候选列表就留在弹窗里让用户点「详情」。
  *
- * ⚠️ 必须用 `runSearch()` 的返回值把关，不能只看 `meta.work`：
+ * ⚠️ 必须用 `runMultiSearch()` 的返回值把关，不能只看 `meta.work`：
  * store 里可能还留着上一次搜索的作品，搜索栏为空时点「搜索」会拿它跳详情页
- * （用户报的 bug）。空关键词时 runSearch 只提示「搜索栏不能为空」并返回 false。
+ * （用户报的 bug）。空关键词时只提示「搜索栏不能为空」并返回 false。
  */
 async function submitSearch() {
-  // 来源由弹窗里的 chip 决定：DLsite 走原流程，Steam 走 storesearch
-  const searched = meta.searchSource === 'steam' ? await meta.runSteamSearch() : await meta.runSearch()
+  const searched = await meta.runMultiSearch()
   if (searched && meta.work) finishSearch()
 }
 

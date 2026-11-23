@@ -1,5 +1,7 @@
 import './styles/global.css'
 import 'uno.css'
+// vue-sonner 的基础样式（全局唯一一份 toast 容器，外观在 components/AppToaster.vue 里覆盖）
+import 'vue-sonner/style.css'
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'

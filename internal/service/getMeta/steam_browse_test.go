@@ -201,7 +201,7 @@ func TestNormalizeSteamName(t *testing.T) {
 	}
 }
 
-// TestSteamNameScore 完全一致 2 分、前缀按占比、太少不像就给 0。
+// TestSteamNameScore 完全一致 2 分、差一两个字母按编辑距离给分、太少不像就给 0。
 func TestSteamNameScore(t *testing.T) {
 	if score := steamNameScore("hades", "hades"); score != 2 {
 		t.Errorf("完全一致 = %v，期望 2", score)
@@ -213,15 +213,23 @@ func TestSteamNameScore(t *testing.T) {
 	if score := steamNameScore("黑神话悟空", "黑神话悟空"); score != 2 {
 		t.Errorf("归一化后一致 = %v，期望 2", score)
 	}
+	// 差一个字母也应是同一个游戏（用户 2026-11-23 用「demon root」测出来的场景：
+	// 文件夹没有 s，商店叫 Demons Roots）。旧的前缀占比法在这里给 0，猜不到 Steam 源。
+	if score := steamNameScore("demonroot", "demonsroots"); score < steamMatchThreshold {
+		t.Errorf("demon root vs Demons Roots = %v，期望 ≥ %v", score, steamMatchThreshold)
+	}
 	if score := steamNameScore("hades", "hadesii"); score <= 0 || score >= 2 {
-		t.Errorf("前缀命中 = %v，期望 (0,2)，因为 hades 不是 hadesii", score)
+		t.Errorf("差两个字母 = %v，期望 (0,2)，因为 hades 不是 hadesii", score)
 	}
 	if score := steamNameScore("ab", "abcdef"); score != 0 {
 		t.Errorf("前缀太短 = %v，期望 0", score)
 	}
+	if score := steamNameScore("demonroot", "hades"); score != 0 {
+		t.Errorf("完全不像 = %v，期望 0", score)
+	}
 }
 
-// TestPickSteamCandidate 优先完全一致、其次更长前缀；原声/试玩这类陪跑要排后面。
+// TestPickSteamCandidate 优先完全一致、其次更相似；原声/试玩这类陪跑要排后面。
 func TestPickSteamCandidate(t *testing.T) {
 	items := []steamSearchItem{
 		{ID: "1145350", Name: "Hades II"},

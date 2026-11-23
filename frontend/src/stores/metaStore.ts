@@ -89,8 +89,8 @@ export const useMetaStore = defineStore('meta', () => {
   const tagsSaving = ref(false)
   const tagError = ref('')
 
-  /** 手动搜索弹窗「搜哪个源」：dlsite / steam（与作品的 source 分开 —— 作品源由 loadById 决定） */
-  const searchSource = ref<LibrarySource>(LIBRARY_SOURCE_DLSITE)
+  /** 搜索/入库结果的附加提示（某个来源失败但整体还有结果、或需要用户注意的说明） */
+  const searchNotice = ref('')
   /** Steam 搜索候选（storesearch 最多 10 条，没有分页） */
   const steamCandidates = ref<SearchCandidate[]>([])
   const steamSearchTotal = ref(0)
@@ -250,6 +250,7 @@ export const useMetaStore = defineStore('meta', () => {
     tagsEdited.value = false
     tagsSaving.value = false
     tagError.value = ''
+    searchNotice.value = ''
     steamCandidates.value = []
     steamSearchTotal.value = 0
     steamStats.value = null
@@ -280,9 +281,8 @@ export const useMetaStore = defineStore('meta', () => {
       return false
     }
     keyword.value = q
-    // 手动搜索有两个来源：DLsite（RJ 编号 / 名字模糊搜）与 Steam（名字 → appid）。
-    // 这里只跑 DLsite 分支；Steam 分支见 runSteamSearch（由弹窗的来源 chip 决定调哪个）。
-    searchSource.value = LIBRARY_SOURCE_DLSITE
+    // 这里只跑 DLsite 分支（调试页 /testing 用它核对 DLsite 解析结果）；
+    // 游戏库「手动搜索」要两个来源一起看，走 runMultiSearch。
     source.value = LIBRARY_SOURCE_DLSITE
     searchToken += 1
     clearResult()
@@ -317,47 +317,86 @@ export const useMetaStore = defineStore('meta', () => {
   }
 
   /**
-   * 切换手动搜索的来源（弹窗里的「DLsite / Steam」chip）。
-   * 只改"这次搜哪儿"，不动当前作品：作品源由 loadById 的第三个参数决定。
-   */
-  function setSearchSource(next: LibrarySource) {
-    if (searchSource.value === next) return
-    searchSource.value = next
-    error.value = ''
-    status.value = ''
-  }
-
-  /**
-   * Steam 名字搜索（弹窗切到 Steam 来源时走这里）：
-   *   - 后端 storesearch 最多回 10 条候选，**没有分页**，所以不像 DLsite 那样按页懒加载；
-   *   - 候选不自动抓详情：由一个 appid 变成一个作品要再打一次 appdetails（见 loadById）。
+   * 手动搜索（游戏库「添加游戏 → 手动搜索」）：**一次同时查 DLsite 与 Steam**。
+   *
+   * 用户 2026-11-23 要求「手动搜索只显示 DLsite 数据源，应该也显示 steam 数据源」，
+   * 所以不再让用户先选来源再搜，而是把两边的候选并列出来：
+   *   - DLsite：名字模糊搜（每页 30 条，前端 10 条一页，可翻页）；
+   *   - Steam：storesearch（最多 10 条、没有分页）。
+   * 两路各取各的，一路失败不影响另一路（失败原因写进 searchNotice 显示为警告）。
+   * 编号输入（RJ/RE/VJ）仍然只走 DLsite 精确抓取 —— 它本来就不是"搜索"。
+   *
    * 返回值语义与 runSearch 一致：true = 这次真的发了请求（空关键词只提示、不搜索）。
    */
-  async function runSteamSearch(query?: string): Promise<boolean> {
+  async function runMultiSearch(query?: string): Promise<boolean> {
     const q = (query ?? keyword.value).trim()
     if (!q) {
       error.value = '搜索栏不能为空'
       return false
     }
     keyword.value = q
-    searchSource.value = LIBRARY_SOURCE_STEAM
-    searchToken += 1
+    source.value = LIBRARY_SOURCE_DLSITE
+    const token = ++searchToken
     clearResult()
     loading.value = true
+    const notices: string[] = []
     try {
-      const resp = await metaApi.searchSteam(q)
-      steamCandidates.value = resp.items ?? []
-      steamSearchTotal.value = resp.total ?? 0
-      raw.value = resp
-      status.value = steamCandidates.value.length
-        ? `Steam 商店搜到 ${steamCandidates.value.length} 个候选，点「详情」看作品（候选上限 10 条）`
-        : `Steam 商店没有搜到与「${q}」匹配的游戏`
+      // 编号：DLsite 精确抓详情（Steam 没有这种编号，不用搜）
+      if (looksLikeWorkId(q)) {
+        const data = await libraryApi.fetch(q, '', false)
+        applyWork(data)
+        status.value = cached.value
+          ? `按编号 ${data.id} 从本地库读取（缓存）`
+          : `按编号 ${data.id} 精确抓取成功（还没入库，点「入库」才收进游戏库）`
+        return true
+      }
+
+      const [dlsite, steam] = await Promise.allSettled([
+        metaApi.searchWorks(q, 1),
+        metaApi.searchSteam(q),
+      ])
+      // 期间又搜了一次：这次的结果整个作废（别把旧关键词的候选塞进新列表）
+      if (token !== searchToken) return false
+
+      const parts: string[] = []
+      if (dlsite.status === 'fulfilled') {
+        const resp = dlsite.value
+        raw.value = resp
+        sourcePages.value = { 1: resp.results ?? [] }
+        sourcePageCount.value = Math.max(1, resp.pageCount ?? 1)
+        searchTotal.value = resp.total ?? 0
+        candidatePage.value = 1
+        // 只给当前页（第一页）下预览图
+        void loadCandidateCovers(pagedCandidates.value)
+        // 模糊搜索命中单个作品时后端也会带上 work
+        if (resp.work) applyWork(resp.work)
+        parts.push(`DLsite ${candidateTotal.value} 条`)
+      } else {
+        notices.push(`DLsite 搜索失败：${toMessage(dlsite.reason)}`)
+      }
+
+      if (steam.status === 'fulfilled') {
+        steamCandidates.value = steam.value.items ?? []
+        steamSearchTotal.value = steam.value.total ?? 0
+        parts.push(`Steam ${steamCandidates.value.length} 个候选`)
+      } else {
+        notices.push(`Steam 搜索失败：${toMessage(steam.reason)}`)
+      }
+
+      // 两边都没成功：当成一次失败搜索（error 条会显示具体原因）
+      if (!parts.length) {
+        error.value = notices.join('；') || '没有搜索到结果'
+        return false
+      }
+      searchNotice.value = notices.join('；')
+      status.value = `同时搜索 DLsite 与 Steam：${parts.join(' · ')}；点「详情」核对后再入库`
       return true
     } catch (err) {
       error.value = toMessage(err)
       return false
     } finally {
-      loading.value = false
+      // 期间又搜了一次就别动 loading：新请求还在飞
+      if (token === searchToken) loading.value = false
     }
   }
 
@@ -871,7 +910,7 @@ export const useMetaStore = defineStore('meta', () => {
     tagsEdited,
     tagsSaving,
     tagError,
-    searchSource,
+    searchNotice,
     steamCandidates,
     steamSearchTotal,
     steamStats,
@@ -891,8 +930,7 @@ export const useMetaStore = defineStore('meta', () => {
     pagedCandidates,
     // Actions
     runSearch,
-    runSteamSearch,
-    setSearchSource,
+    runMultiSearch,
     loadSteamStats,
     loadById,
     searchBySample,

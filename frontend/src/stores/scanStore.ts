@@ -8,7 +8,8 @@
 //   批量搜索不能去覆盖 metaStore 的单次搜索结果（手动搜索还留着呢）。
 //
 // 流程（用户要求「全部直接搜索」「分为一键全部入库 / 选择部分入库」）：
-//   扫描 → 对每个名字并发（3 路）调 SearchWorks → 结果按扫描顺序排列 →
+//   扫描 → 对每个条目并发（3 路）**同时查 Steam 与 DLsite**（2026-11-23「多数据来源」），
+//   结果按扫描顺序排列（一条目最多两行：Steam 行 + DLsite 行）→
 //   用户勾选部分「入库所选」，或直接「全部入库」。入库仍走 LibraryService.Store
 //   （唯一写库入口：抓文本 + 下封面 + 写库）。
 
@@ -27,9 +28,21 @@ export type FolderScanMode = 'exe' | 'folder'
 /** 一行匹配的状态：待搜 / 搜索中 / 有匹配 / 无匹配 / 出错 / 被停止 */
 export type MatchState = 'pending' | 'searching' | 'matched' | 'empty' | 'error' | 'stopped'
 
-/** 一个扫描名 + 它的搜索结果（结果列表的一行） */
+/**
+ * 一个扫描名 + 它在**某一个来源**上的匹配结果（结果列表的一行）。
+ *
+ * 2026-11-23 起一个扫描条目最多产生两行（「多数据来源」用户要求）：
+ *   - Steam 行：按文件夹名猜出 appid，或 Steam 库里本来就有 appid；
+ *   - DLsite 行：拿同一个名字去 DLsite 模糊搜（取第一个候选）。
+ * 两行各自可勾选、各自入库 —— 同一款游戏在两个来源里是两条库记录（UNIQUE(source, work_id)），
+ * 用户自己决定要哪一份元数据。
+ */
 export interface ScanMatch {
   entry: ScannedGame
+  /** 这一行是哪一种来源的匹配（DLsite / Steam） */
+  source: LibrarySource
+  /** 属于第几个扫描条目（entries 的下标）：拆行后仍按扫描顺序分组，也是重试/替换的定位键 */
+  entryIndex: number
   state: MatchState
   workId: string
   workName: string
@@ -46,7 +59,13 @@ export interface ScanMatch {
   storeError: string
 }
 
-/** 并发搜索数：DLsite 没有批量接口，一个个搜，3 路足够快又不至于把对方打烦 */
+/** 批量入库的结果：成功几款、失败几款（成功/失败的提示交给调用方 toast） */
+export interface ScanStoreResult {
+  stored: number
+  failed: number
+}
+
+/** 并发数（按扫描条目）：3 路足够快又不至于把对方打烦；每个条目会打 Steam + DLsite 两个接口 */
 const SEARCH_CONCURRENCY = 3
 
 export const useScanStore = defineStore('scan', () => {
@@ -61,10 +80,13 @@ export const useScanStore = defineStore('scan', () => {
   const entries = ref<ScannedGame[]>([])
   const done = ref(false)
 
-  /** 批量搜索：是否还在跑、已完成几个、每一行的结果 */
+  /** 批量搜索：是否还在跑、已完成几个（按**扫描条目**算） */
   const searching = ref(false)
   const searched = ref(0)
-  const matches = ref<ScanMatch[]>([])
+  /** 每个扫描条目的结果行（1~2 行：Steam 行 + DLsite 行），下标与 entries 对齐 */
+  const entryResults = ref<ScanMatch[][]>([])
+  /** 摊平后的结果行（界面按扫描顺序渲染这一份） */
+  const matches = computed(() => entryResults.value.flat())
   /** 详情补全阶段（搜索完再逐条抓社团/形式/发售日） */
   const detailing = ref(false)
   const detailed = ref(0)
@@ -78,8 +100,14 @@ export const useScanStore = defineStore('scan', () => {
 
   // ===== Getters =====
   const count = computed(() => entries.value.length)
-  /** 匹配到作品的行数 */
-  const matchedCount = computed(() => matches.value.filter((m) => m.state === 'matched').length)
+  /** 匹配到作品的**条目数**（同一条目 Steam + DLsite 都有结果也只算一条） */
+  const matchedCount = computed(() => {
+    const hit = new Set<number>()
+    for (const match of matches.value) {
+      if (match.state === 'matched') hit.add(match.entryIndex)
+    }
+    return hit.size
+  })
   /** 还能入库的行（有匹配且未入库） */
   const storableCount = computed(
     () => matches.value.filter((m) => m.state === 'matched' && m.workId && !m.stored).length,
@@ -97,9 +125,11 @@ export const useScanStore = defineStore('scan', () => {
   /** 搜索代次：重新扫描/停止后，旧请求的响应不能再写回列表 */
   let searchToken = 0
 
-  function emptyMatch(entry: ScannedGame): ScanMatch {
+  function emptyMatch(entry: ScannedGame, entryIndex: number, source: LibrarySource): ScanMatch {
     return {
       entry,
+      source,
+      entryIndex,
       state: 'pending',
       workId: '',
       workName: '',
@@ -145,110 +175,135 @@ export const useScanStore = defineStore('scan', () => {
     return { entry, rich }
   }
 
-  /** 一行的元数据来源（Steam 条目带 appid，其余都是 DLsite 按名字搜） */
-  function matchSource(match: ScanMatch): LibrarySource {
-    return match.entry.source === 'steam' ? 'steam' : 'dlsite'
-  }
-
   /** 一行是否已是库里成员（本次刚入的，或库里已有且数据完整） */
   function isStored(match: ScanMatch): boolean {
     if (match.stored) return true
     if (!match.workId) return false
-    return Boolean(libraryEntryComplete(match.workId, matchSource(match))?.rich)
+    return Boolean(libraryEntryComplete(match.workId, match.source)?.rich)
   }
 
   /**
-   * 「按文件夹名」扫到的条目先问一次 Steam（2026-11-22）：
-   * 文件夹名 → storesearch → 归一化后比对完全一致/前缀重合，命中就把这行改成 Steam 条目
-   * （source='steam' + appId）。猜不到返回 false，调用方继续走原来的 DLsite 名字搜索。
+   * 拿扫描名去 Steam 商店猜 appid（2026-11-22 接入，2026-11-23 起对 exe 条目也生效）。
    *
-   * 为什么要有这一步：Steam 源原本只能靠 appmanifest 识别（= 必须装过），而文件夹里的
-   * 游戏经常是"拷过来的/重装没登记"。按名字猜 appid 能补上这个空档；猜错的代价也小 ——
-   * 详情页/入库前用户都能看到匹配到的是哪个游戏。
+   * 为什么要猜：Steam 源原本只能靠 appmanifest 识别（= 必须装过），而文件夹里的
+   * 游戏经常是"拷过来的/重装没登记"。猜不到返回空串 —— 调用方只是少一行 Steam 结果，
+   * 不会影响 DLsite 那一行（网络失败也静默，不让整行报错）。
    */
-  async function matchSteamEntry(match: ScanMatch): Promise<boolean> {
-    if (match.entry.source === 'steam' || match.entry.origin !== 'folder') return false
+  async function matchSteamAppId(name: string): Promise<string> {
     try {
-      const found = await metaApi.matchSteamApp(match.entry.name)
-      if (!found.matched || !found.appId) return false
-      match.entry.source = 'steam'
-      match.entry.appId = found.appId
-      match.entry.detail = `Steam · ${found.appId}`
-      return true
+      const found = await metaApi.matchSteamApp(name)
+      return found.matched && found.appId ? found.appId : ''
     } catch {
-      // 网络/接口失败就静默回退 DLsite：多一条 Steam 候选是加分项，不该让整行报错
-      return false
+      return ''
     }
   }
 
-  /** 搜一个名字：命中作品（名字里带 RJ）直接用详情，否则取模糊搜索的第一个候选 */
-  async function searchOne(match: ScanMatch, token: number) {
-    match.state = 'searching'
-    match.message = ''
-    match.storeError = ''
-    // 先试 Steam（只有"按文件夹名"且还不是 Steam 的条目才会真去问），再走原来的分支
-    await matchSteamEntry(match)
-    if (token !== searchToken) return
+  /** 造一行 Steam 结果：appid 已知，直接取商店详情（缓存优先） */
+  async function steamRow(entry: ScannedGame, appId: string, index: number, token: number): Promise<ScanMatch> {
+    const row = emptyMatch(entry, index, 'steam')
+    if (!appId) {
+      row.state = 'empty'
+      row.message = '该 Steam 条目没有 appid，已跳过'
+      return row
+    }
     try {
-      // Steam 条目：appid 已知，直接取商店详情（缓存优先），不走 DLsite 按名字搜
-      if (matchSource(match) === 'steam') {
-        const appID = match.entry.appId ?? ''
-        if (!appID) {
-          match.state = 'empty'
-          match.message = '该 Steam 条目没有 appid，已跳过'
-          return
-        }
-        const work = await libraryApi.fetch('', appID, false, 'steam')
-        if (token !== searchToken) return
-        match.workId = appID
-        match.workName = work.name || match.entry.name
-        match.cover = work.coverUrl ?? ''
-        match.info = describeWork(work)
-        // 非游戏条目（Steamworks 共享组件、工具、DLC…）：标成"跳过"，不给入库按钮
-        const steamType = String(work.steamType ?? '')
-        if (steamType && steamType !== 'game') {
-          match.state = 'empty'
-          match.message = `Steam 条目类型是 ${steamType}，不是游戏，已跳过`
-          return
-        }
-        match.state = 'matched'
-        const existing = libraryEntryComplete(appID, 'steam')
-        match.stored = Boolean(existing?.rich)
-        if (existing?.rich) match.info = describeWork(existing.entry)
-        return
+      const work = await libraryApi.fetch('', appId, false, 'steam')
+      if (token !== searchToken) return row
+      row.workId = appId
+      row.workName = work.name || entry.name
+      row.cover = work.coverUrl ?? ''
+      row.info = describeWork(work)
+      // 非游戏条目（Steamworks 共享组件、工具、DLC…）：标成"跳过"，不给入库按钮
+      const steamType = String(work.steamType ?? '')
+      if (steamType && steamType !== 'game') {
+        row.state = 'empty'
+        row.message = `Steam 条目类型是 ${steamType}，不是游戏，已跳过`
+        return row
       }
+      row.state = 'matched'
+      const existing = libraryEntryComplete(appId, 'steam')
+      row.stored = Boolean(existing?.rich)
+      if (existing?.rich) row.info = describeWork(existing.entry)
+    } catch (err) {
+      if (token !== searchToken) return row
+      row.state = 'error'
+      row.message = toMessage(err)
+    }
+    return row
+  }
 
-      const resp = await metaApi.searchWorks(match.entry.name, 1)
-      if (token !== searchToken) return
-
+  /** 造一行 DLsite 结果：取模糊搜索的第一个候选（名字里带 RJ 时后端会直接带回详情） */
+  async function dlsiteRow(entry: ScannedGame, index: number, token: number): Promise<ScanMatch> {
+    const row = emptyMatch(entry, index, 'dlsite')
+    try {
+      const resp = await metaApi.searchWorks(entry.name, 1)
+      if (token !== searchToken) return row
       if (resp.work) {
         // 名字里带 RJ：SearchWorks 已经带回完整详情，直接用
-        match.workId = resp.work.id
-        match.workName = resp.work.name
-        match.cover = resp.work.coverUrl ?? ''
-        match.info = describeWork(resp.work)
-        match.state = 'matched'
+        row.workId = resp.work.id
+        row.workName = resp.work.name
+        row.cover = resp.work.coverUrl ?? ''
+        row.info = describeWork(resp.work)
       } else {
         const first = resp.results?.[0]
         if (!first) {
-          match.state = 'empty'
-          return
+          row.state = 'empty'
+          return row
         }
-        match.workId = first.id
-        match.workName = first.name
-        match.cover = first.cover ?? ''
-        match.state = 'matched'
+        row.workId = first.id
+        row.workName = first.name
+        row.cover = first.cover ?? ''
       }
+      row.state = 'matched'
       // 库里已经有的直接标"已入库"，并把库里的作品信息带出来（社团/形式/发售日）；
       // 库里是空壳（没有这些字段）就不算，留给入库时重抓
-      const existing = libraryEntryComplete(match.workId, 'dlsite')
-      match.stored = Boolean(existing?.rich)
-      if (existing?.rich) match.info = describeWork(existing.entry)
+      const existing = libraryEntryComplete(row.workId, 'dlsite')
+      row.stored = Boolean(existing?.rich)
+      if (existing?.rich) row.info = describeWork(existing.entry)
     } catch (err) {
-      if (token !== searchToken) return
-      match.state = 'error'
-      match.message = toMessage(err)
+      if (token !== searchToken) return row
+      row.state = 'error'
+      row.message = toMessage(err)
     }
+    return row
+  }
+
+  /**
+   * 搜一个扫描条目（用户 2026-11-23 要求「自动搜索时应该显示多数据来源」）：
+   *   ① Steam：Steam 库条目直接用 appid；本地条目先拿名字猜 appid（猜不到就没有这一行）；
+   *   ② DLsite：拿同一个名字按作品名搜，取第一个候选。
+   * 两边都跑，各出一行（最多两行）—— 用户自己挑要哪份元数据。
+   * 一个来源都没有结果时，留一行 state='empty' 说明情况，方便点「重试」。
+   */
+  async function searchEntry(index: number, token: number) {
+    const entry = entries.value[index]
+    if (!entry) return
+    // 先把这一条的占位行标成"搜索中"（拆行前的进度提示）
+    const searchingRow = entryResults.value[index]?.[0]
+    if (searchingRow && searchingRow.state !== 'searching') {
+      searchingRow.state = 'searching'
+      searchingRow.message = ''
+    }
+
+    const rows: ScanMatch[] = []
+    if (entry.source === 'steam') {
+      // Steam 库条目：身份已经确定，只取商店详情，不再按名字去 DLsite 搜
+      rows.push(await steamRow(entry, entry.appId ?? '', index, token))
+      if (token !== searchToken) return
+    } else {
+      const appId = await matchSteamAppId(entry.name)
+      if (token !== searchToken) return
+      if (appId) {
+        rows.push(await steamRow(entry, appId, index, token))
+        if (token !== searchToken) return
+      }
+      const dl = await dlsiteRow(entry, index, token)
+      if (token !== searchToken) return
+      // 空结果的行也留着：用户能看到「DLsite 没搜到」，而不是整个文件夹消失
+      if (dl.state !== 'empty' || !rows.length) rows.push(dl)
+    }
+
+    entryResults.value = entryResults.value.map((group, i) => (i === index ? rows : group))
   }
 
   /**
@@ -258,7 +313,7 @@ export const useScanStore = defineStore('scan', () => {
    */
   async function loadDetail(match: ScanMatch, token: number) {
     try {
-      const work = await libraryApi.fetch('', match.workId, false, matchSource(match))
+      const work = await libraryApi.fetch('', match.workId, false, match.source)
       if (token !== searchToken) return
       match.workName = work.name || match.workName
       match.cover = work.coverUrl || match.cover
@@ -272,24 +327,27 @@ export const useScanStore = defineStore('scan', () => {
 
   /**
    * 全部直接搜索：两段式 ——
-   *   ① 逐个搜名字（3 路并发）拿到匹配的编号/名称/封面，列表先出来；
+   *   ① 逐个条目搜（3 路并发）**同时查 Steam 与 DLsite**，每条目最多出两行（按来源），列表先出来；
    *   ② 对没有详情的匹配行再逐条抓详情（缓存优先），把社团/形式/发售日填进行里。
-   * 结果始终按扫描顺序留在 matches 里。
+   * 结果始终按扫描顺序留在 matches 里（同一文件夹的两行相邻）。
    */
   async function searchAll() {
     if (searching.value || !entries.value.length) return
     const token = ++searchToken
     searching.value = true
     searched.value = 0
-    matches.value = entries.value.map(emptyMatch)
+    // 先给每个条目放一行占位（搜索中），搜完再替换成 1~2 行真实结果
+    entryResults.value = entries.value.map((entry, index) => [
+      emptyMatch(entry, index, entry.source === 'steam' ? 'steam' : 'dlsite'),
+    ])
 
-    const queue = [...matches.value]
+    const queue = entries.value.map((_, index) => index)
     const runWorker = async () => {
       for (;;) {
         if (token !== searchToken) return
-        const match = queue.shift()
-        if (!match) return
-        await searchOne(match, token)
+        const index = queue.shift()
+        if (index === undefined) return
+        await searchEntry(index, token)
         if (token === searchToken) searched.value += 1
       }
     }
@@ -333,14 +391,18 @@ export const useScanStore = defineStore('scan', () => {
     }
   }
 
-  /** 单行重试（出错或停止的行）：不发起整批；搜到之后顺手补详情 */
+  /**
+   * 单行重试（出错或停止的行）：重搜**这个扫描条目**（Steam + DLsite 一起），
+   * 用新的结果行替换该条目的旧行；搜到之后顺手补详情。
+   */
   async function retryMatch(match: ScanMatch) {
     if (match.state === 'searching') return
     const token = searchToken
-    await searchOne(match, token)
+    await searchEntry(match.entryIndex, token)
     if (token !== searchToken) return
-    if (match.state === 'matched' && !match.info) await loadDetail(match, token)
-    searched.value = matches.value.filter((m) => m.state !== 'pending' && m.state !== 'searching').length
+    for (const row of entryResults.value[match.entryIndex] ?? []) {
+      if (row.state === 'matched' && row.workId && !row.info) await loadDetail(row, token)
+    }
   }
 
   function toggleSelect(match: ScanMatch) {
@@ -363,17 +425,21 @@ export const useScanStore = defineStore('scan', () => {
    * 批量入库（串行）：一键全部入库 = storeMany(matches)，
    * 选择部分入库 = storeMany(勾选的行)。串行是为了别让几十个"抓文本+下图"
    * 同时压在网络与 SQLite 上；每行独立报错，不影响其他行。
+   *
+   * 返回本次成功/失败的条数 —— 页面据此弹一次汇总 toast（每行成功不单独弹，否则刷屏）。
    */
-  async function storeMany(targets: ScanMatch[]) {
-    if (storingAll.value) return
+  async function storeMany(targets: ScanMatch[]): Promise<ScanStoreResult> {
+    if (storingAll.value) return { stored: 0, failed: 0 }
     const list = targets.filter((m) => m.state === 'matched' && m.workId && !isStored(m) && !m.storing)
-    if (!list.length) return
+    if (!list.length) return { stored: 0, failed: 0 }
 
     storingAll.value = true
     storeError.value = ''
     storeProgress.value = 0
     storeTotal.value = list.length
     const library = useLibraryStore()
+    let stored = 0
+    let failed = 0
     try {
       for (const match of list) {
         match.storing = true
@@ -392,7 +458,7 @@ export const useScanStore = defineStore('scan', () => {
               gameFolder: match.entry.origin === 'folder' ? folder : '',
               gameFolderName: match.entry.origin === 'folder' ? folderBaseName(folder) || match.entry.name : '',
             },
-            matchSource(match),
+            match.source,
           )
           match.stored = true
           match.selected = false
@@ -400,7 +466,9 @@ export const useScanStore = defineStore('scan', () => {
           match.workName = saved.name || match.workName
           match.cover = saved.coverUrl || match.cover
           match.info = describeWork(saved)
+          stored += 1
         } catch (err) {
+          failed += 1
           match.storeError = `入库失败：${toMessage(err)}`
           storeError.value = match.storeError
         } finally {
@@ -413,13 +481,14 @@ export const useScanStore = defineStore('scan', () => {
     } finally {
       storingAll.value = false
     }
+    return { stored, failed }
   }
 
-  function storeAll() {
+  function storeAll(): Promise<ScanStoreResult> {
     return storeMany(matches.value)
   }
 
-  function storeSelected() {
+  function storeSelected(): Promise<ScanStoreResult> {
     return storeMany(matches.value.filter((m) => m.selected))
   }
 
@@ -432,7 +501,7 @@ export const useScanStore = defineStore('scan', () => {
     searched.value = 0
     detailed.value = 0
     detailTotal.value = 0
-    matches.value = []
+    entryResults.value = []
     entries.value = []
     error.value = ''
     status.value = ''

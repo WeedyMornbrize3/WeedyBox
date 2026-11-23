@@ -99,6 +99,10 @@ export default defineConfig({
     //    UnoCSS 对同一属性只保留一条规则，模板里同时写会丢掉其中一个。
     //    基础竖线因此定义在 TodoItem.vue 的 scoped 样式里，各管一件事。
     ['border-l-brand', { 'border-left': '2px solid var(--color-primary)', 'border-top': '0', 'border-right': '0', 'border-bottom': '0' }],
+    // 分体按钮的竖向分隔线（「游戏启动」+「启动方式」两个品牌色按钮之间）：
+    // 右段按钮的左边框，其余三边照例显式归零。
+    // 颜色是「品牌底上的 30% 反色」（--color-divider-on-brand），两套主题都看得见又不抢戏。
+    ['border-l-on-brand', { 'border-left': '1px solid var(--color-divider-on-brand)', 'border-top': '0', 'border-right': '0', 'border-bottom': '0' }],
 
     // 功能色
     ['text-success', { 'color': 'var(--color-success)' }],
@@ -118,6 +122,13 @@ export default defineConfig({
     // presetUno 的 will-change 规则是 /^will-change-(.+)/，捕获组拿到带方括号的字面量，
     // `will-change-[width]` 会 unmatched 静默丢弃，只能用无方括号写法。
     ['will-change-width', { 'will-change': 'width' }],
+
+    // 键盘聚焦光环（2026-11-23）：按 shadcn-vue 的 button 默认样式，聚焦是
+    // 「3px、50% 透明的 ring 色」。半透明色由 global.css 的 `--color-ring-soft`
+    // （color-mix 出来，两套主题各一份）提供，这里只把它接到 ring 的**颜色变量**上。
+    // ⚠️ 不能用 `ring-[var(--color-ring-soft)]` 那种任意值写法：`ring-(.+)` 会先按
+    //    「宽度」解析，var() 不是长度时才回落到颜色，行为依赖解析顺序；精确规则更稳。
+    ['ring-brand-soft', { '--un-ring-color': 'var(--color-ring-soft)' }],
   ],
 
   // ===== 快捷方式 =====
@@ -151,18 +162,42 @@ export default defineConfig({
     'card-hover': 'card hover:border-brand transition-colors duration-200',
 
     // ---------- 控件高度（输入框与按钮共用一个 token）----------
-    // 2.2rem = 35.2px —— 这是 btn-brand 的固有高度（icon-sm 19.2px 行盒 + py-2 16px），
+    // 2.2rem = 35.2px —— 输入框与主要按钮的固有高度（按钮的对齐基准）。
     // 输入框必须与它同高。不同高的后果实测过：输入框 41.6px、按钮 35.2px，
     // 一行 form 里（items-end）底部对齐、顶部错开 6.4px。
     // ⚠️ 用了固定高度后，控件内部不要再写纵向 padding：固定高度已经决定总高，
-    //    纵向 padding 只会把内容挤出盒子。垂直居中交给 <input> 自身
+    //    纵向 padding 只会把内容挤出盒子。垂直居中交给 `<input>` 自身
     //    或容器的 `items-center`。
     // ⚠️ 三处必须同源：btn-brand、input-theme、TodoInput.vue 的输入框外壳。
     'control-h': 'h-[2.2rem]',
 
     // ---------- 按钮 ----------
-    'btn-brand': 'control-h px-4 bg-brand text-inverse rounded-lg font-medium hover:bg-brand-hover transition-colors duration-200 cursor-pointer border-none',
-    'btn-ghost': 'px-4 py-2 text-secondary hover:text-primary hover:bg-hover rounded-lg transition-colors duration-200 cursor-pointer border-none bg-transparent',
+    // 外观基座按 shadcn-vue 的 Button 默认样式重做（2026-11-23 用户要求
+    // 「button 默认样式修改参考 shadcn-vue（unocss 级别）」）。照搬的是它的
+    // **形状与状态**，颜色仍全部走本项目 token：
+    //   inline-flex 居中 · rounded-md（6px，原来是 rounded-lg 8px）· text-sm font-medium
+    //   · 键盘聚焦 3px 光环（ring 色 50% 透明）· 禁用 50% 不透明且不接收指针
+    //   · transition-colors（动效时长沿用项目统一的 200ms，不引入 shadcn 的默认值）
+    // ⚠️ 基座里刻意不写高度与内边距：高度必须由 control-h 统一提供，
+    //    否则 btn-brand 会与 input-theme、TodoInput 外壳不同高（见上一条）。
+    // ⚠️ 基座里也不写阴影：shadcn 的 shadow-xs 只挂在 default（`btn-brand`）那一档上。
+    // ⚠️ 基座里也不写 cursor-pointer：本项目口径是「可点的控件才给 pointer」，放进各变体。
+    'btn': 'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors duration-200 outline-none focus-visible:ring-[3px] focus-visible:ring-brand-soft disabled:pointer-events-none disabled:opacity-50',
+    // default 变体：品牌色实心（对应 shadcn 的 bg-primary text-primary-foreground shadow-xs）
+    'btn-brand': 'btn control-h px-4 bg-brand text-inverse shadow-theme hover:bg-brand-hover border-none cursor-pointer',
+    // ghost 变体：无底色无边框，hover 才出现底色（对应 shadcn 的 ghost）
+    'btn-ghost': 'btn control-h px-4 bg-transparent text-secondary hover:bg-hover hover:text-primary border-none cursor-pointer',
+
+    // ---------- 分体按钮（shadcn ButtonGroup 的「主操作 + 下拉」）----------
+    // 2026-11-23 用户要求：「启动方式通过 group 连接到游戏启动右端」——
+    // 左段是主操作（游戏启动），右段是启动方式下拉，两段共用同一套 btn-brand 外观，
+    // 只在「哪一侧收圆角」和「中间那条分隔线」上不同。
+    // ⚠️ 圆角必须用 longhand + !important：btn-brand 里的 rounded-md 是**简写**，
+    //    同一元素上简写与 longhand 谁胜取决于规则/合并顺序，加 ! 才是确定的。
+    // ⚠️ 分隔线 border-l-on-brand 必须排在 border-none 之后（本 shortcut 里就是后面），
+    //    否则 border-style:none 会把左边界面的 width/style 一起清掉。
+    'btn-brand-split': 'btn-brand !rounded-r-none',
+    'btn-brand-attach': 'btn-brand !rounded-l-none !px-2.5 !gap-1 border-l-on-brand',
     // 行内图标按钮（完成 / 删除共用）：只定义尺寸与布局，
     // 颜色与状态一律由调用处的动态 class 决定——shortcut 里写颜色会压掉调用处
     // （UnoCSS 把 shortcuts 输出在 rules 之前），这个坑已经踩过。

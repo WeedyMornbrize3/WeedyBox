@@ -88,6 +88,15 @@ html, body, #app {
   --color-shadow: 0 1px 2px rgba(42, 36, 15, 0.06);
   --color-shadow-heavy: 0 8px 24px rgba(42, 38, 15, 0.12);
   --color-ring: var(--color-primary);
+  /* 键盘聚焦光环的「淡一层」版本（shadcn 的 ring/50）：按钮聚焦时画 3px 半透明环。
+     用 color-mix 从主色算出来，不另写一份色值；⚠️ 必须两套主题各写一份 ——
+     自定义属性的 var() 替换发生在**声明所在的元素**上，只写在 :root 里的话，
+     深色主题会继承到浅色的计算结果。 */
+  --color-ring-soft: color-mix(in srgb, var(--color-primary) 50%, transparent);
+  /* 品牌实心按钮上分隔「主操作 / 下拉」的 1px 细线（分体按钮右段的左边框）。
+     用反色算 30%：浅色主题下品牌底是深色、反色是米白 → 细白线；
+     深色主题下品牌底是亮青、反色是近黑 → 细暗线。两套主题都看得见又不抢戏。 */
+  --color-divider-on-brand: color-mix(in srgb, var(--color-text-inverse) 30%, transparent);
 
   /* 滚动条 */
   --color-scrollbar: rgba(114, 111, 89, 0.18);
@@ -157,6 +166,10 @@ html, body, #app {
   --color-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   --color-shadow-heavy: 0 8px 24px rgba(0, 0, 0, 0.55);
   --color-ring: var(--color-primary);
+  /* 深色主题的淡光环：主色是亮青，50% 透明压深色底刚好可见（见 :root 的说明） */
+  --color-ring-soft: color-mix(in srgb, var(--color-primary) 50%, transparent);
+  /* 分体按钮分隔线（见 :root 的说明）：深色下反色是近黑，压在亮青上 */
+  --color-divider-on-brand: color-mix(in srgb, var(--color-text-inverse) 30%, transparent);
 
   --color-scrollbar: rgba(149, 155, 171, 0.16);
   --color-scrollbar-hover: rgba(31, 35, 48, 0.3);

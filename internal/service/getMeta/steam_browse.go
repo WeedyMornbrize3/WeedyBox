@@ -41,8 +41,11 @@ const (
 	steamSearchLimit = 10
 	// steamNewsLimit /works 显示几条公告。
 	steamNewsLimit = 3
-	// steamMatchThreshold 文件夹名与商店名字的相似度下限（1 = 完全一致的前缀长度占比）。
+	// steamMatchThreshold 文件夹名与商店名字的相似度下限（1 = 完全一致；否则是编辑距离相似度）。
 	steamMatchThreshold = 0.75
+	// steamNameFloor 低于这个相似度就直接算"不像"，连候选都不考虑（避免「Game」这类
+	// 通用名把所有搜索结果都当成匹配）。
+	steamNameFloor = 0.6
 )
 
 // ===== GetItems =====
@@ -388,7 +391,7 @@ func formatSteamPrice(currency string, cents int64) string {
 // 为什么要猜：Steam 源原本只能靠 appmanifest（= 必须已安装）识别；用户拿来的
 // 游戏文件夹往往叫「黑神话悟空」「ULTRAKILL v1.0」，和商店名不完全一样。
 //
-// 做法：清洗文件夹名 → 商店搜索 → 按"归一化后完全一致 > 前缀重合度"打分。
+// 做法：清洗文件夹名 → 商店搜索 → 按"归一化后完全一致 > 编辑距离相似度"打分。
 // 搜索词太长时逐级截短重试（Steam 的搜索是按词的："黑神话悟空" 0 条、"黑神话" 9 条）。
 func (s *MetaService) MatchSteamApp(ctx context.Context, folderName string) (*steamSearchItem, error) {
 	cleaned := steamFolderQuery(folderName)
@@ -511,7 +514,7 @@ func normalizeSteamName(s string) string {
 }
 
 // pickSteamCandidate 在候选里挑最像文件夹名的那个，返回它与得分。
-// 分数：完全一致 = 2；否则 = 公共前缀长度 / 文件夹名长度（<1）。
+// 分数：完全一致 = 2；否则 = 编辑距离相似度（<1）。
 func pickSteamCandidate(folderNorm string, items []steamSearchItem) (*steamSearchItem, float64) {
 	var best *steamSearchItem
 	bestScore := 0.0
@@ -535,8 +538,12 @@ func pickSteamCandidate(folderNorm string, items []steamSearchItem) (*steamSearc
 	return best, bestScore
 }
 
-// steamNameScore 完全一致给 2 分；否则按公共前缀占比给 0~1。
-// 前缀不足 3 个字、或占比不到 60% 的算"不像"，返回 0。
+// steamNameScore 完全一致给 2 分；否则按**编辑距离相似度**给 0~1。
+// 相似度 = 1 - 编辑距离 / 较长串长度；低于 steamNameFloor 的算"不像"，返回 0。
+//
+// 为什么不只比公共前缀（2026-11-23 改）：文件夹名和商店名常常差一两个字母 ——
+// 「demon root」vs「Demons Roots」、「黑神话悟」vs「黑神话：悟空」这类明明就是同一个游戏，
+// 按前缀占比却会判成 0，于是扫描「按文件夹名」时永远猜不到 Steam 源。
 func steamNameScore(folderNorm, candidateNorm string) float64 {
 	if folderNorm == "" || candidateNorm == "" {
 		return 0
@@ -546,15 +553,34 @@ func steamNameScore(folderNorm, candidateNorm string) float64 {
 	}
 	folder := []rune(folderNorm)
 	candidate := []rune(candidateNorm)
-	common := 0
-	for common < len(folder) && common < len(candidate) && folder[common] == candidate[common] {
-		common++
-	}
-	ratio := float64(common) / float64(len(folder))
-	if common < 3 || ratio < 0.6 {
+	longest := max(len(folder), len(candidate))
+	score := 1 - float64(editDistance(folder, candidate))/float64(longest)
+	if score < steamNameFloor {
 		return 0
 	}
-	return ratio
+	return score
+}
+
+// editDistance 是两串的 Levenshtein 距离（按 rune 算：中文/日文名不能按字节切）。
+// 只用来比较短游戏名，O(n*m) 的滚动数组足够。Go 1.21+ 的 min 内建只支持有序类型。
+func editDistance(left, right []rune) int {
+	prev := make([]int, len(right)+1)
+	curr := make([]int, len(right)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(left); i++ {
+		curr[0] = i
+		for j := 1; j <= len(right); j++ {
+			cost := 1
+			if left[i-1] == right[j-1] {
+				cost = 0
+			}
+			curr[j] = min(prev[j]+1, min(curr[j-1]+1, prev[j-1]+cost))
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(right)]
 }
 
 // steamNoiseName 判断候选是不是"原声/试玩/工具/升级包"这类陪跑条目。

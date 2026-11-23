@@ -11,7 +11,8 @@
          · 游戏正在运行 → 按钮显示「运行中」并禁用（防止重复启动），状态由页面轮询刷新；
          · 没有记录位置 → 按钮可点，第一次点击弹系统文件框选一次 exe。
        启动方式（2026-11-23）：Steam 源的作品默认走 steam://rungameid/<appid>，
-       此时不需要本地 exe，也不显示「更换位置」；方式本身由 MetaWorkOverview 的 chip 切换。
+       此时不需要本地 exe，也不显示「更换位置」；方式本身由同目录的
+       MetaLaunchModeMenu 切换 —— 它就是「游戏启动」右端的分体按钮右段。
        已经设置过位置时旁边多一个很轻的「更换位置」文字按钮：选错程序或换了安装目录
        时需要能改，但不占视觉重量（运行中时禁用）。
      为什么已入库后不再给「入库」按钮：下载实现刻意不覆盖同名文件
@@ -20,16 +21,29 @@
   <div class="flex items-center gap-2 flex-wrap">
     <!-- 已入库：启动游戏（+ 更换位置） -->
     <template v-if="stored">
-      <button
-        type="button"
-        class="btn-brand flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-        :disabled="launching || running || launchBlocked"
-        :title="launchHint"
-        @click="emit('launch')"
-      >
-        <span :class="[launchIcon, { spin: launching }]" class="icon-sm" aria-hidden="true" />
-        {{ launchText }}
-      </button>
+      <!-- 分体按钮（2026-11-23 用户要求：「启动方式通过 group 连接到游戏启动右端」）：
+           左段 = 游戏启动主按钮，右段 = 启动方式下拉。两段之间不能有 gap，
+           靠 btn-brand-split / btn-brand-attach 各自的圆角与分隔线拼成一个整体。
+           右段只有 Steam 源才有（其它来源只有一种启动方式，没什么可选的）。 -->
+      <div class="flex items-stretch">
+        <button
+          type="button"
+          :class="steamSource ? 'btn-brand-split' : 'btn-brand'"
+          class="flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+          :disabled="launching || running || launchBlocked"
+          :title="launchHint"
+          @click="emit('launch')"
+        >
+          <span :class="[launchIcon, { spin: launching }]" class="icon-sm" aria-hidden="true" />
+          {{ launchText }}
+        </button>
+        <MetaLaunchModeMenu
+          v-if="steamSource"
+          :launch-mode="launchMode"
+          :disabled="launching || running"
+          @select="emit('setLaunchMode', $event)"
+        />
+      </div>
       <button
         v-if="gamePath && launchMode !== 'steam'"
         type="button"
@@ -59,6 +73,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import MetaLaunchModeMenu from './MetaLaunchModeMenu.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -78,6 +93,8 @@ const props = withDefaults(
     running?: boolean
     /** 正在启动游戏 */
     launching?: boolean
+    /** 是否 Steam 源：决定「游戏启动」右边挂不挂启动方式下拉段 */
+    steamSource?: boolean
   }>(),
   {
     label: '入库',
@@ -90,10 +107,17 @@ const props = withDefaults(
     launchMode: 'exe',
     running: false,
     launching: false,
+    steamSource: false,
   }
 )
 
-const emit = defineEmits<{ click: []; launch: []; changePath: [] }>()
+const emit = defineEmits<{
+  click: []
+  launch: []
+  changePath: []
+  /** 右段下拉里选了另一种启动方式（透传给页面 → metaStore.setGameLaunchMode） */
+  setLaunchMode: [mode: 'steam' | 'exe']
+}>()
 
 /** 未入库时的文案：加载中优先（入库成功那一轮 loading 已落回 false，不会说错话） */
 const text = computed(() => (props.loading ? props.loadingText : props.label))

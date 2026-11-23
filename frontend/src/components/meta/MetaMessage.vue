@@ -9,7 +9,7 @@
 </template>
 
 <script setup lang="ts">
-type Tone = 'info' | 'error' | 'success'
+type Tone = 'info' | 'error' | 'success' | 'warning'
 
 withDefaults(defineProps<{ text: string; tone?: Tone }>(), { tone: 'info' })
 
@@ -18,11 +18,13 @@ const TONE_CLASS: Record<Tone, string> = {
   info: 'text-secondary',
   error: 'text-danger',
   success: 'text-success',
+  warning: 'text-warning',
 }
 
 const TONE_ICON: Record<Tone, string> = {
   info: 'i-lucide-info',
   error: 'i-lucide-triangle-alert',
   success: 'i-lucide-circle-check-big',
+  warning: 'i-lucide-triangle-alert',
 }
 </script>

@@ -114,6 +114,7 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useMetaStore } from '../stores/metaStore'
 import { useLibraryStore } from '../stores/libraryStore'
+import { toastError, toastSuccess } from '../utils/toast'
 import MetaEmptyState from '../components/meta/MetaEmptyState.vue'
 import MetaMessage from '../components/meta/MetaMessage.vue'
 import MetaSteamStats from '../components/meta/MetaSteamStats.vue'
@@ -160,8 +161,15 @@ function pollGameStatus() {
  */
 async function handleStoreIn() {
   if (meta.stored) return
+  const name = meta.work?.name?.trim() ?? ''
   await meta.storeIn()
-  if (meta.stored && meta.work) await library.load(true)
+  if (meta.stored && meta.work) {
+    // 游戏库的「添加」反馈（2026-11-23 用户要求）：浮层提示 + 立刻刷新网格
+    toastSuccess('已入库', { description: name ? `「${name}」已收进游戏库` : '作品已收进游戏库' })
+    await library.load(true)
+  } else if (meta.error) {
+    toastError('入库失败', { description: meta.error })
+  }
 }
 
 onMounted(() => {

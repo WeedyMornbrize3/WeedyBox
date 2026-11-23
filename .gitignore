@@ -31,6 +31,7 @@ go.sum
 /node_modules
 
 /.tmp/
+/.dsh/
 
 # 前端构建
 /frontend/dist/

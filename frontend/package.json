@@ -14,7 +14,8 @@
   "dependencies": {
     "@wailsio/runtime": "latest",
     "pinia": "latest",
-    "vue-router": "latest"
+    "vue-router": "latest",
+    "vue-sonner": "latest"
   },
   "devDependencies": {
     "@iconify/json": "latest",

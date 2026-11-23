@@ -102,19 +102,8 @@
       </Transition>
     </div>
 
-    <!-- 操作反馈：短暂显示后自动消失，role=status 让读屏软件播报 -->
-    <Transition name="toast">
-      <div
-        v-if="toast"
-        class="flex items-center gap-2 px-3 py-2 rounded-lg text-xs border-theme-light bg-secondary-soft flex-shrink-0"
-        :class="toast.kind === 'error' ? 'text-danger' : 'text-success'"
-        role="status"
-        aria-live="polite"
-      >
-        <span :class="toast.kind === 'error' ? 'i-lucide-circle-alert icon-sm' : 'i-lucide-circle-check-big icon-sm'" aria-hidden="true" />
-        {{ toast.text }}
-      </div>
-    </Transition>
+    <!-- 操作反馈走全局浮层（components/AppToaster.vue）：不在本页占位，
+         出现/消失都不会把下面的列表卡片往下推。文案由 utils/toast.ts 统一管理。 -->
 
     <!-- 列表卡片：flex-1 吃掉剩余高度并内部滚动 -->
     <!-- 不要用 max-h-[calc(100vh-Npx)] 固定扣减：那个 N 算不准，且描述框一展开卡片又被下推，
@@ -172,10 +161,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useTodoStore } from '../../stores/todoStore'
 import { useAutoHeightStore } from '../../stores/autoHeightStore'
 import { copyText } from '../../utils/clipboard'
+import { toastError, toastSuccess } from '../../utils/toast'
 import TodoInput from './TodoInput.vue'
 import TodoItem from './TodoItem.vue'
 import TodoStats from './TodoStats.vue'
@@ -284,10 +274,12 @@ async function deleteSelected() {
   deleting.value = true
   try {
     const n = await todoStore.deleteMany(ids)
-    showToast('success', `已删除 ${n} 项`)
+    toastSuccess(`已删除 ${n} 项`)
     clearSelection()
   } catch (e) {
-    showToast('error', e instanceof Error ? e.message : '批量删除失败')
+    toastError('批量删除失败', {
+      description: e instanceof Error ? e.message : '请稍后再试',
+    })
   } finally {
     deleting.value = false
   }
@@ -304,33 +296,35 @@ function setBusy(id: number, busy: boolean) {
   busyIds.value = next
 }
 
-// ===== 轻量反馈条 =====
-// 只显示「已删除」这类一次性结果，长时间停留的错误统一由 store.error 渲染在列表区。
-const toast = ref<{ kind: 'error' | 'success'; text: string } | null>(null)
-let toastTimer: ReturnType<typeof setTimeout> | undefined
+// ===== 一次性反馈 =====
+// 只显示「已删除」「已复制」这类一次性结果，长时间停留的错误统一由 store.error 渲染在列表区。
+// 反馈条本身在 components/AppToaster.vue（fixed 浮层），这里只负责说什么。
 
-function showToast(kind: 'error' | 'success', text: string) {
-  toast.value = { kind, text }
-  clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => (toast.value = null), 2400)
-}
-
-async function runWithBusy(id: number, action: () => Promise<unknown>, okText: string) {
+/** 行内动作的通用壳：置忙 → 执行 → 成功/失败提示 → 解除置忙 */
+async function runWithBusy(
+  id: number,
+  action: () => Promise<unknown>,
+  ok: { message: string; description?: string },
+) {
   if (busyIds.value.has(id)) return
   setBusy(id, true)
   try {
     await action()
-    showToast('success', okText)
+    toastSuccess(ok.message, { description: ok.description })
   } catch (e) {
-    showToast('error', e instanceof Error ? e.message : '操作失败')
+    toastError('操作失败', {
+      description: e instanceof Error ? e.message : '请稍后再试',
+    })
   } finally {
     setBusy(id, false)
   }
 }
 
-// 单条删除：确认动作由 TodoItem 的「连点两下」承担，这里不弹确认框
+// 单条删除：确认动作由 TodoItem 的「连点两下」承担，这里不弹确认框。
+// 删除后条目就不在列表里了，所以要在删除前把标题取出来当提示的第二行。
 const handleDelete = (id: number) => {
-  runWithBusy(id, () => todoStore.deleteTodo(id), '已删除')
+  const title = todoStore.todos.find((todo) => todo.id === id)?.title?.trim() ?? ''
+  runWithBusy(id, () => todoStore.deleteTodo(id), { message: '已删除', description: title })
 }
 
 // 点击卡片复制「标题 + 描述」。
@@ -338,18 +332,14 @@ const handleDelete = (id: number) => {
 async function handleCopy(text: string) {
   try {
     await copyText(text)
-    showToast('success', '文本已复制到剪贴板')
+    toastSuccess('已复制到剪贴板', { description: text })
   } catch {
-    showToast('error', '复制失败：剪贴板不可用')
+    toastError('复制失败', { description: '剪贴板不可用' })
   }
 }
 
 onMounted(() => {
   todoStore.init()
-})
-
-onBeforeUnmount(() => {
-  clearTimeout(toastTimer)
 })
 </script>
 
@@ -410,18 +400,10 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-/* ===== 反馈条 ===== */
-.toast-enter-active,
-.toast-leave-active {
-  transition: opacity var(--motion-base) var(--ease-enter),
-              transform var(--motion-base) var(--ease-enter);
-}
-
-.toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
-}
+/* ===== 一次性反馈 =====
+   已改为全局浮层（components/AppToaster.vue → vue-sonner），本文件不再需要反馈条样式：
+   旧实现是列表容器里的一个 flex 子项，弹出/消失会把下面的列表卡片上下推动，
+   而且只有一种字号、没有图标层次。 */
 
 /* ===== 批量操作按钮（删除所选）=====
    现在只剩这一个按钮（完成相关的两个已随完成功能移除）：
