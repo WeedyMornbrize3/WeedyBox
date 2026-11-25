@@ -6,7 +6,7 @@
      刻意去掉每项前面的图标：标签文字已经表意，再配图标属于重复装饰。 -->
 <template>
   <section
-    class="flex flex-wrap items-center gap-x-4 gap-y-1.5 min-w-0 px-3.5 py-2 rounded-lg bg-secondary-soft border-theme-light"
+    class="flex flex-wrap items-center gap-x-4 gap-y-1.5 min-w-0 px-3.5 py-2 rounded-none bg-secondary-soft border-theme-light"
     aria-label="TODO 统计"
   >
     <span class="flex items-baseline gap-1.5 text-xs text-tertiary">

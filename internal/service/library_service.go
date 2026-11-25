@@ -161,6 +161,20 @@ type StoreRequest struct {
 	GameFolderName string `json:"gameFolderName"` // 文件夹名，用来在多个 exe 里挑主程序
 }
 
+// UpdateMetaRequest 是「编辑元数据」的入参（作品详情页「编辑」页的保存按钮）。
+//
+// Fields 里的键直接对应 raw_json 的键（name / maker / releaseDate / summary …），
+// 值传空串或空数组表示「清掉这一项」—— 前端把用户清空的输入框原样传空值，
+// 后端据此把 raw_json 里的键和对应的公共列一起清掉，界面上不会残留旧值。
+//
+// 刻意不做"一个字段一个参数"的结构体：编辑页要能改**所有**元数据字段，而字段集
+// 会随来源演进（DLsite 与 Steam 不一样），用 map 传补丁才不用每加一个字段就改绑定。
+type UpdateMetaRequest struct {
+	WorkID string         `json:"workId"`
+	Source string         `json:"source"` // 空 = dlsite
+	Fields map[string]any `json:"fields"`
+}
+
 // Store 把作品**真正收进游戏库**（只有用户点「入库」时才走这里）：
 //
 //   - 文本：联网抓一份元数据（库里已有**完整** raw_json 时直接复用，不重复下载），写进 library_works；
@@ -412,6 +426,8 @@ func (s *LibraryService) Remove(ctx context.Context, workID, source string) erro
 			return fmt.Errorf("删除封面图片 %s 失败: %w", path, err)
 		}
 	}
+	// 模糊 hero 缓存是纯派生文件，删不掉也不该阻止移除作品
+	s.removeHeroBlurCache(workID, source)
 	return s.DB.DeleteLibraryWork(ctx, source, workID)
 }
 
@@ -509,6 +525,101 @@ func (s *LibraryService) SetTags(ctx context.Context, workID, source string, tag
 		return model.TagSet{}, err
 	}
 	return model.TagSet{Tags: cleaned, Edited: true}, nil
+}
+
+// UpdateMeta 保存用户对作品元数据的修改（作品详情页「编辑」页的保存）。
+//
+// 语义是「打补丁」，不是整份替换：只有 Fields 里出现的键才改；值传空串/空数组
+// 表示删掉这一项（raw_json 删键 + 公共列跟着清空）。编号 id 不允许改 —— 它是
+// 库记录的定位键；名称不能清空（列表页与启动提示都要用它）。
+//
+// 只更新**已在游戏库里**的作品（与 SetGamePath / SetLaunchMode 同一条原则：
+// 不顺手造一条只有名字的空壳行）。写入复用 UpsertLibraryWork，与入库同一套列映射；
+// 它的 SET 里刻意不含 cover_* / game_path / launch_mode，所以改元数据不会把本地
+// 封面与游戏位置冲掉，updated_at 会刷新。
+//
+// 为什么直接写 raw_json 而不是单独搞一张"用户覆盖字段"表：详情页展示的就是 raw_json
+// 还原出来的 map，一份数据只有一个出处最不容易错；重新抓取（Fetch refresh=true）只读
+// 不写库，所以用户改过的内容不会因为点一下刷新就丢。
+func (s *LibraryService) UpdateMeta(ctx context.Context, req UpdateMetaRequest) (map[string]any, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	if s.DB == nil {
+		return nil, errors.New("数据库未就绪")
+	}
+	workID := strings.ToUpper(strings.TrimSpace(req.WorkID))
+	if workID == "" {
+		return nil, errors.New("作品编号为空，无法保存")
+	}
+	source := normalizeWorkSource(req.Source)
+
+	row, err := s.DB.FindLibraryWork(ctx, source, workID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, fmt.Errorf("作品 %s 不在游戏库中，请先入库再编辑", workID)
+	}
+
+	work, ok := workFromRawJSON(row)
+	if !ok {
+		// raw_json 坏了/为空：从库里那几列重建一份底稿，别让一次编辑把记录写丢
+		work = map[string]any{
+			"id": workID, "name": row.Name, "maker": row.Maker, "makerId": row.MakerID,
+			"series": row.Series, "seriesId": row.SeriesID, "workType": row.WorkType,
+			"ageRating": row.AgeRating, "releaseDate": row.ReleaseDate,
+			"coverUrl": row.CoverURL, "sourceUrl": row.SourceURL,
+		}
+	}
+	// 编号是定位键，库里已有记录的编号不允许被前端改掉
+	work["id"] = workID
+
+	for key, value := range req.Fields {
+		key = strings.TrimSpace(key)
+		if key == "" || key == "id" {
+			continue
+		}
+		if isEmptyFieldValue(value) {
+			delete(work, key)
+			continue
+		}
+		work[key] = value
+	}
+	if strings.TrimSpace(strOf(work["name"])) == "" {
+		return nil, errors.New("作品名称不能为空")
+	}
+	// 编辑不等于重新抓取：抓取时间保持不变（raw 里一般已有，缺了用库里的补回）
+	if _, has := work["fetchedAt"]; !has && row.FetchedAt != "" {
+		work["fetchedAt"] = row.FetchedAt
+	}
+
+	next := rowFromWork(source, work)
+	if err := s.DB.UpsertLibraryWork(ctx, &next); err != nil {
+		return nil, fmt.Errorf("保存作品元数据失败: %w", err)
+	}
+
+	// 重新读一行再挂缓存信息：updatedAt 是数据库写的，不能沿用编辑前的 row
+	if saved, ferr := s.DB.FindLibraryWork(ctx, source, workID); ferr == nil && saved != nil {
+		return decorate(work, saved, true), nil
+	}
+	return decorate(work, nil, true), nil
+}
+
+// isEmptyFieldValue 判断补丁里的值是否表示「清空这一项」：
+// 空串、空数组、null 都算（前端把清空的输入框/清空的标签列表传成这些值）。
+func isEmptyFieldValue(v any) bool {
+	switch value := v.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(value) == ""
+	case []any:
+		return len(value) == 0
+	case []string:
+		return len(value) == 0
+	}
+	return false
 }
 
 // CoverDataURL 把游戏库里记录的本地封面读成 data URL，给 <img> 直接显示。//

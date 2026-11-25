@@ -1,38 +1,52 @@
 // 走查构建产物 CSS：确认关键类真的生成了规则、布局链未被破坏、无非法声明。
 // 需先执行一次 `vite build`（产出 dist/）。
 // 用法（在 frontend/ 下）：node scripts/check-build-css.mjs
-import { readFileSync, readdirSync } from 'node:fs'
+//
+// 2026-11-24 引入 naive-ui 后口径变了：
+//   · 控件（按钮/输入框/下拉/标签/弹窗/分页…）的长相改由 naive 的 CSS-in-JS 在**运行时**注入，
+//     不会出现在 dist 的 CSS 文件里 —— 所以这里不再断言 btn-*/input-theme/chip 这些 shortcut，
+//     改为断言「项目的布局类 + 色值 token + 图标」以及 naive 主题桥接的源码存在。
+//   · 控件外观的唯一来源是 src/styles/naiveTheme.ts（token → themeOverrides）。
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 const assets = join(process.cwd(), 'dist', 'assets')
-const cssFiles = readdirSync(assets).filter(f => f.endsWith('.css'))
-const css = cssFiles.map(f => readFileSync(join(assets, f), 'utf8')).join('\n')
+const cssFiles = readdirSync(assets).filter((f) => f.endsWith('.css'))
+const css = cssFiles.map((f) => readFileSync(join(assets, f), 'utf8')).join('\n')
 
 console.log(`CSS files: ${cssFiles.join(', ')}  (total ${css.length} chars)`)
 
 const must = [
+  // 图标尺寸五档 + 项目常用图标（presetIcons 构建期内联，缺了说明没被扫到）
   'icon-xs', 'icon-sm', 'icon-md', 'icon-lg', 'icon-xl',
-  'todo-desc-block', 'card-flat', 'btn-row', 'btn-brand', 'btn-ghost',
-  'btn-brand-split', 'btn-brand-attach',
-  'filter-bar', 'filter-group', 'filter-label', 'filter-chips', 'chip', 'chip-active',
-  'nav-item', 'nav-icon', 'section-icon', 'settings-page', 'settings-section',
+  // 布局 / 结构类
+  'todo-desc-block', 'card', 'filter-bar', 'filter-group', 'filter-label',
+  'sidebar', 'sidebar-nav-top', 'sidebar-nav-bottom', 'logo-text', 'settings-page', 'settings-item',
   'text-priority-low', 'text-priority-medium', 'text-priority-high',
-  'border-theme-light', 'border-theme-dark', 'bg-brand', 'text-brand', 'text-danger', 'text-success',
+  'border-theme-light', 'bg-brand', 'text-brand', 'text-danger', 'text-success',
   'bg-secondary-soft', 'tabular-nums', 'flex-col-center',
-  'sr-only', 'scrollbar-theme', 'todo-checkbox', 'prefers-reduced-motion',
-  'checked\\:border-brand', 'focus-visible\\:ring-2', 'appearance-none', 'opacity-75', 'group-hover\\:border-l-brand',
+  'sr-only', 'scrollbar-theme', 'prefers-reduced-motion',
+  // toast 顶端的进度条（2026-11-25）
+  'app-toast__bar', 'app-toast-countdown',
+  // 滚动边缘渐隐（2026-11-25，参考 shadcn 的 scroll-fade）
+  'scroll-fade', '--scroll-fade-top', '--scroll-fade-bottom',
+  // 游戏库封面：点击水纹 / 名称浮层 / 批量模式样式（2026-11-25）
+  'lib-ripple', 'lib-card-caption', 'lib-batch-mode', 'lib-check',
+  // /works：页面背景/tab 区预模糊 hero 遮罩 + 页面背景 + 启动方式箭头旋转（2026-11-25）
+  'work-glass', 'work-page-ambient', 'work-tabs-wrap', 'launch-mode-chevron',
+  // 描述块 hover 只把左竖线换成品牌色（单侧规则，不能退化成方框）
+  'group-hover\\:border-l-brand',
+  // 动效 token
   '--motion-slow', '--ease-enter',
-  // 实心按钮上的文字色必须随主题翻转（深色下功能色是亮色，白字不达标）
-  '--color-text-on-success', '--color-text-on-danger', '--color-text-on-brand',
+  // 图标（抽查几个高频的）
   'i-lucide-trash-2', 'i-lucide-list-todo', 'i-lucide-signal-high',
-  'i-lucide-inbox', 'i-lucide-loader-circle', 'i-lucide-sun', 'i-lucide-palette',
-  'i-lucide-plus', 'i-lucide-rotate-ccw', 'i-lucide-search-x', 'i-lucide-sliders-horizontal',
+  'i-lucide-sun', 'i-lucide-palette', 'i-lucide-plus', 'i-lucide-refresh-cw',
+  'i-lucide-search', 'i-lucide-folder-open', 'i-lucide-braces',
 ]
 
 let bad = 0
 for (const token of must) {
-  const hit = css.includes(token)
-  if (!hit) { bad++; console.log(`  MISSING  ${token}`) }
+  if (!css.includes(token)) { bad++; console.log(`  MISSING  ${token}`) }
 }
 console.log(bad === 0 ? `\nOK: 所有 ${must.length} 个关键类都已生成规则` : `\n${bad} 个类缺失`)
 
@@ -40,7 +54,7 @@ console.log(bad === 0 ? `\nOK: 所有 ${must.length} 个关键类都已生成规
 const invalid = css.match(/border-color:1px solid/g)
 console.log(invalid ? `\n❌ 仍有非法 border-color 简写值: ${invalid.length} 处` : '\nOK: 无 border-color 简写值污染')
 
-// 布局链 / 无障碍关键声明（用精确子串，避免 minify 后的选择器分组影响正则）
+// ===== 布局链 / 无障碍关键声明 =====
 const layout = [
   ['box-sizing reset', 'box-sizing:border-box'],
   ['html/body/#app 定高', 'height:100%'],
@@ -48,17 +62,20 @@ const layout = [
   ['scrollbar-theme 恢复', '.scrollbar-theme::-webkit-scrollbar{background:0 0!important;width:8px!important'],
   ['scrollbar-theme Firefox', 'scrollbar-width:thin'],
   ['h-screen', 'height:100vh'],
-  ['min-h-0', 'min-height:0'],
+  // presetWind4 下 `min-h-0` 的输出是 calc(var(--spacing) * 0)，不是字面量 0
+  ['min-h-0', 'min-height:calc(var(--spacing) * 0)'],
   ['flex-1', 'flex:1'],
   ['flex-col', 'flex-direction:column'],
   ['overflow-hidden', 'overflow:hidden'],
   ['overflow-y-auto', 'overflow-y:auto'],
   ['min-h-[120px]', 'min-height:120px'],
-  ['浅色主题变量', '--color-text-primary:#0f172a'],
-  ['深色主题变量', '--color-text-primary:#e6edf3'],
+  // 主题色已从 global.css 移到 styles/theme.ts（四色运行时推导），这里只断言
+  // 与主题无关的登录底色兜底与 toast 进度条动画仍然存在
+  ['启动底色兜底', 'background:var(--color-bg-primary,#101418)'],
+  ['toast 倒计时动画', 'animation-name:app-toast-countdown'],
   ['prefers-reduced-motion', 'prefers-reduced-motion:reduce'],
-  ['焦点环兜底', ':focus-visible{outline:2px solid var(--color-ring)'],
-  ['勾号 mask', '.todo-checkbox:checked:after'],
+  ['焦点环兜底', ':focus-visible{outline:2px solid var(--color-ring'],
+  ['提示条两行样式', '.app-toast__title'],
 ]
 let layoutBad = 0
 for (const [name, needle] of layout) {
@@ -74,14 +91,12 @@ console.log(layoutBad === 0 ? `OK: 布局链与无障碍 ${layout.length} 项断
 const borderRules = [
   ['border-theme', 'border:1px solid var(--color-border)'],
   ['border-theme-light', 'border:1px solid var(--color-border-light)'],
-  ['border-theme-dark', 'border:1px solid var(--color-border-dark)'],
   ['border-brand', 'border:1px solid var(--color-primary)'],
 ]
 let borderBad = 0
 for (const [name, needle] of borderRules) {
   if (!css.includes(needle)) { borderBad++; console.log(`  MISSING  ${name}  -> 期望 ${needle}`) }
 }
-// 反向断言：任何 CSS 变量色值都不应被塞进 border-color 的简写位置
 const shorthandInColor = css.match(/border-color:1px\s+solid/g)
 if (shorthandInColor) { borderBad++; console.log(`  ❌ 有 ${shorthandInColor.length} 处 border-color 收到简写值（非法 CSS）`) }
 console.log(borderBad === 0 ? `OK: 边框规则 ${borderRules.length} 项均自带 width+style+color` : `${borderBad} 项边框断言失败`)
@@ -92,98 +107,51 @@ const sideRules = [
   ['border-r-sidebar', 'border-right:2px solid var(--sidebar-border)', ['border-top:0', 'border-bottom:0', 'border-left:0']],
   // 描述块 hover：必须是单侧规则，否则会从「一条竖线」变成「一个方框」
   ['border-l-brand', 'border-left:2px solid var(--color-primary)', ['border-top:0', 'border-right:0', 'border-bottom:0']],
-  // 分体按钮（游戏启动 + 启动方式）的竖向分隔线：右段的左边框，其余三边归零
-  ['border-l-on-brand', 'border-left:1px solid var(--color-divider-on-brand)', ['border-top:0', 'border-right:0', 'border-bottom:0']],
 ]
 let sideBad = 0
 for (const [name, own, zeros] of sideRules) {
   if (!css.includes(own)) { sideBad++; console.log(`  MISSING  ${name} -> 期望含 ${own}`) }
   for (const z of zeros) {
-    // 同一规则块内应出现归零声明（minify 后形如 border-right:0）
     if (!css.includes(z)) { sideBad++; console.log(`  MISSING  ${name} 缺少 ${z}（会退化成四边框）`) }
   }
 }
 console.log(sideBad === 0 ? `OK: 单侧边框 ${sideRules.length} 条均显式置零其余边` : `${sideBad} 项单侧边框断言失败`)
 
-// ===== 按钮聚焦光环 / 分体按钮分隔线（2026-11-23，按 shadcn-vue 的 button 默认样式）=====
-// 回归背景：焦点环是 `focus-visible:ring-[3px]` + 自定义 rule 提供 ring 颜色。
-// 颜色写错不会报错 —— 只会静默退化成 `currentColor`（按钮文字色），看起来像"没生效"。
-// 所以这里正向断言 ring 颜色真的接到了半透明的 `--color-ring-soft`。
+// ===== naive-ui 主题桥接（源码级断言）=====
+// 回归背景：themeOverrides 里如果给 `var(--color-primary)` 这类未解析值，seemly 解析会失败，
+// hover/pressed 退化成 naive 默认色且**不会有任何报错**。所以必须存在「运行时读 CSS 变量」
+// 的桥接层，并且 App 用 n-config-provider 把同一份配置注入整棵树。
 {
-  const needles = [
-    ['按钮聚焦光环 3px', 'calc(3px + var(--un-ring-offset-width))'],
-    ['ring 颜色接 --color-ring-soft', '--un-ring-color:var(--color-ring-soft)'],
-    ['半透明 ring token', '--color-ring-soft:color-mix(in srgb, var(--color-primary) 50%, transparent)'],
-    ['分体按钮分隔线 token', '--color-divider-on-brand:color-mix(in srgb, var(--color-text-inverse) 30%, transparent)'],
+  const root = process.cwd()
+  const themeFile = join(root, 'src', 'styles', 'naiveTheme.ts')
+  const naiveFile = join(root, 'src', 'styles', 'naive.ts')
+  const appFile = join(root, 'src', 'App.vue')
+  const presetsFile = join(root, 'src', 'styles', 'themePresets.ts')
+  const engineFile = join(root, 'src', 'styles', 'theme.ts')
+  const presetsSource = existsSync(presetsFile) ? readFileSync(presetsFile, 'utf8') : ''
+  const engineSource = existsSync(engineFile) ? readFileSync(engineFile, 'utf8') : ''
+  const checks = [
+    ['naiveTheme.ts 存在', existsSync(themeFile)],
+    ['naive.ts（discrete message）存在', existsSync(naiveFile)],
+    ['App.vue 使用 n-config-provider', existsSync(appFile) && readFileSync(appFile, 'utf8').includes('n-config-provider')],
+    ['主题从 CSS 变量读取', existsSync(themeFile) && readFileSync(themeFile, 'utf8').includes('getComputedStyle')],
+    ['toast 已走 naive message', readFileSync(join(root, 'src', 'utils', 'toast.ts'), 'utf8').includes("from '../styles/naive'")],
+    // 2026-11-25 四色主题：主题清单只写 4 个颜色，其余由 theme.ts 推导
+    ['四色主题清单存在', presetsSource.toLowerCase().includes('#404258') && presetsSource.toLowerCase().includes('#6b728e')],
+    ['主题引擎按对比度推导', engineSource.includes('ensureContrast') && engineSource.includes('buildThemeVars')],
+    ['主题写入 CSS 变量', engineSource.includes('style.setProperty')],
+    // 2026-11-25 侧边栏改用 naive 的 n-menu：菜单外观必须只在 naiveTheme 的 Menu 段里改
+    ['侧边栏走 n-menu', readFileSync(join(root, 'src', 'components', 'Sidebar.vue'), 'utf8').includes('n-menu')],
+    ['Menu 主题已接桥', existsSync(themeFile) && readFileSync(themeFile, 'utf8').includes('Menu:')],
   ]
-  let ringBad = 0
-  for (const [name, needle] of needles) {
-    if (!css.includes(needle)) { ringBad++; console.log(`  MISSING  ${name}  (${needle})`) }
+  let naiveBad = 0
+  for (const [name, ok] of checks) {
+    if (!ok) { naiveBad++; console.log(`  MISSING  ${name}`) }
   }
-  console.log(ringBad === 0 ? 'OK: 按钮聚焦光环与分体按钮分隔线 token 均已生成' : `${ringBad} 项按钮光环断言失败`)
+  console.log(naiveBad === 0 ? 'OK: naive-ui 主题桥接与 provider 接线完整' : `${naiveBad} 项 naive 桥接断言失败`)
 }
 
-// ===== 搜索框 / 表单类专项断言 =====
-// 回归背景：
-//  1. `placeholder-<color>` 不是 UnoCSS 的合法工具类，写了会被静默丢弃
-//     （只在构建时留一行 unmatched 警告），占位符颜色必须写 `placeholder:text-<color>`。
-//     曾出现在 `input-theme` shortcut 与 TodoInput.vue 的两个输入框上。
-//  2. 输入框的边框必须由**一条**自带三件套的规则提供（`border-theme`），
-//     聚焦态只覆盖同一属性；若再加一条改 `border` 的类，UnoCSS 只会保留其一。
-// 注意 minify 后选择器会被分组写成 `.input-theme,[input-theme=""]{…}`，
-// 所以不能拿 `.input-theme:focus{…}` 这种整串去 includes（会假失败）。
-const formRules = [
-  ['input-theme 底座边框', 'border:1px solid var(--color-border)'],
-  ['input-theme 聚焦态', 'border:1px solid var(--color-primary)'],
-  ['占位符颜色变体（不是 placeholder-<color>）', '::placeholder{color:var(--color-text-tertiary)}'],
-]
-let formBad = 0
-for (const [name, needle] of formRules) {
-  if (!css.includes(needle)) { formBad++; console.log(`  MISSING  ${name}  (${needle})`) }
-}
-// 反向断言：不允许出现 `placeholder-<color>` 这种无效工具类
-const badPlaceholder = css.match(/\.placeholder-[a-z]+\b/g)
-if (badPlaceholder) { formBad++; console.log(`  ❌ 出现无效工具类 ${[...new Set(badPlaceholder)].join(', ')}（应为 placeholder:text-*）`) }
-// 反向断言：`.input-theme` 的 border 只能出现在「底座」与「聚焦」两条规则上
-// （多于两条 = 同一元素上有重复的 border 来源，会出现 hover/focus 显示异常）
-{
-  const blocks = css.match(/[^{}]*\.input-theme[^{}]*\{[^}]*\}/g) ?? []
-  const withBorder = blocks.filter((b) => /\bborder\b/.test(b))
-  if (withBorder.length !== 2) {
-    formBad++
-    console.log(`  ⚠️ .input-theme 含 border 的规则有 ${withBorder.length} 条（应为 2：底座 + 聚焦）`)
-    for (const b of withBorder) console.log('      ' + b.slice(0, 140))
-  }
-  const baseBlocks = blocks.filter((b) => /\.input-theme[,\s{]/.test(b) && /border:1px solid var\(--color-border\)/.test(b))
-  if (baseBlocks.length !== 1) {
-    formBad++
-    console.log(`  ⚠️ .input-theme 底座边框规则有 ${baseBlocks.length} 条（应为 1）`)
-  }
-}
-// ===== 控件高度一致性 =====
-// 回归背景：输入框曾用 `py-2.5`、按钮用 `py-2`，高度由「内容高 + 纵向 padding」撑出，
-// 实测同一行 form（items-end）里 41.6px vs 35.2px，底部对齐时顶部错开 6.4px。
-// 现在三处统一走 `control-h`（h-[2.2rem] = 35.2px），因此**控件内部不能再有纵向 padding**：
-// 固定高度下它不再影响盒高（border-box），只会把内容挤出盒子。
-{
-  const ruleOf = (sel) => (css.match(new RegExp(`[^{}]*\\.${sel}[^{}]*\\{[^}]*\\}`)) ?? [''])[0]
-  for (const sel of ['control-h', 'input-theme', 'btn-brand']) {
-    const body = ruleOf(sel)
-    if (!body) { formBad++; console.log(`  ❌ 缺少 .${sel} 规则`); continue }
-    if (!body.includes('height:2.2rem')) { formBad++; console.log(`  ❌ .${sel} 未使用统一高度 2.2rem（control-h）`) }
-    if (/(^|;)padding-(top|bottom):/.test(body)) { formBad++; console.log(`  ❌ .${sel} 带纵向 padding，会挤坏统一高度`) }
-  }
-  const todoSrc = readFileSync(join(process.cwd(), 'src', 'components', 'todo', 'TodoInput.vue'), 'utf8')
-  if (!/<div[^>]*class="control-h[^"]*"/.test(todoSrc)) {
-    formBad++
-    console.log('  ❌ TodoInput.vue 输入框外壳未挂 control-h（会与 input-theme 不同高）')
-  }
-  const innerCls = (todoSrc.match(/<input\b[\s\S]*?class="([^"]*)"/) ?? [])[1] ?? ''
-  if (/\bpy-\d/.test(innerCls)) { formBad++; console.log(`  ❌ TodoInput.vue 内层 input 仍带纵向 padding：${innerCls}`) }
-}
-console.log(formBad === 0 ? `OK: 搜索框/表单 ${formRules.length} 项断言通过（无重复 border、无无效 placeholder 类）` : `${formBad} 项表单断言失败`)
-
-// ===== 模板静态扫描的公共部分 =====
+// ===== 模板静态扫描 =====
 const SRC = join(process.cwd(), 'src')
 function walk(dir) {
   const out = []
@@ -195,11 +163,9 @@ function walk(dir) {
   return out
 }
 
-// ===== 「border 缺少 border-style」自查（仅告警）=====
+// 「border 缺少 border-style」自查（仅告警）
 // 背景：UnoCSS 的 `border` 工具类只输出 border-width，不输出 border-style。
-// <button> 的 UA 默认 border-style 是 `outset`，于是计算值变成 `1px outset`,
-// 渲染成 3D 立体边而不是扁平描边（实测「未完成 item 的完成按钮」正是如此）。
-// 因此凡是写了 `border`（或 border-t/r/b/l 等）的地方，都必须同时写 `border-solid`。
+// <button> 的 UA 默认 border-style 是 `outset`，于是计算值变成 `1px outset`。
 {
   const BORDER_RE = /(^|[\s"'])border(-[trbl])?(?![-\w])/
   const offenders = []
@@ -208,7 +174,6 @@ function walk(dir) {
     for (const m of text.matchAll(/class="([^"]*)"/g)) {
       const attr = m[1]
       if (!BORDER_RE.test(attr)) continue
-      // 已显式声明样式，或明确不要边框，则跳过
       if (/\bborder-(solid|dashed|dotted|double|none)\b/.test(attr)) continue
       offenders.push(`${file.replace(process.cwd(), '.')} :: ${attr.slice(0, 90)}`)
     }
@@ -221,11 +186,7 @@ function walk(dir) {
   }
 }
 
-// ===== 同一元素上「两条规则都改 border-left / border-top …」的自查（仅告警）=====
-// 背景：UnoCSS 对同一属性只保留一条规则，且 shortcut 输出在 rules 之前、
-// rules 之间按字母序，因此同一元素上叠加两条改同一侧边框的类时，
-// 后写的那条可能被静默丢弃（曾导致 hover 时描述块从「一条竖线」变成「一个方框」）。
-// 这里扫描模板，把同一 class 属性里出现两次同侧边框类的地方列出来，供人工确认。
+// 同一元素上「两条规则都改 border-left / border-top …」的自查（仅告警）
 const sidePattern = /(?:^|[\s"'])!?(?:group-hover:|hover:|focus:)?border-(l|t|r|b)(?:-[a-z-]+)?(?=[\s"'])/g
 const conflicts = []
 for (const file of walk(SRC)) {
@@ -234,9 +195,7 @@ for (const file of walk(SRC)) {
     const attr = m[1]
     const sides = {}
     for (const sm of attr.matchAll(sidePattern)) {
-      const side = sm[1]
-      // 同一侧出现两次（且不是同类不同尺寸）时记一笔
-      sides[side] = (sides[side] ?? 0) + 1
+      sides[sm[1]] = (sides[sm[1]] ?? 0) + 1
     }
     const dup = Object.entries(sides).filter(([, n]) => n > 1)
     if (dup.length) {
@@ -245,15 +204,14 @@ for (const file of walk(SRC)) {
   }
 }
 if (conflicts.length) {
-  console.log(`\n⚠️  疑似同侧边框类叠加 ${conflicts.length} 处（请确认是否真的需要，UnoCSS 可能只保留其一）：`)
+  console.log(`\n⚠️  疑似同侧边框类叠加 ${conflicts.length} 处：`)
   for (const c of conflicts) console.log('    - ' + c)
 } else {
   console.log('OK: 模板中无同侧边框类叠加')
 }
 
-
 // emoji 是否还残留在产物 JS 里（结构性图标应为 0）
-const jsFiles = readdirSync(assets).filter(f => f.endsWith('.js'))
-const js = jsFiles.map(f => readFileSync(join(assets, f), 'utf8')).join('\n')
+const jsFiles = readdirSync(assets).filter((f) => f.endsWith('.js'))
+const js = jsFiles.map((f) => readFileSync(join(assets, f), 'utf8')).join('\n')
 const emoji = js.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu)
 console.log(emoji ? `\n⚠️ 产物 JS 中仍有 emoji: ${[...new Set(emoji)].join(' ')}` : '\nOK: 产物 JS 中无 emoji')

@@ -16,12 +16,15 @@
         <p class="m-0 text-sm text-primary truncate" :title="item.name">{{ item.name }}</p>
         <p class="m-0 text-xs text-tertiary font-mono">{{ item.id }}</p>
       </div>
-      <button type="button" class="btn-ghost shrink-0 text-xs" @click="emit('select', item.id)">详情</button>
+      <n-button size="tiny" quaternary type="primary" class="shrink-0" @click="emit('select', item.id)">
+        详情
+      </n-button>
     </li>
   </ul>
 </template>
 
 <script setup lang="ts">
+import { NButton } from 'naive-ui'
 import type { SearchCandidate } from '../../services/metaService'
 import MetaCover from './MetaCover.vue'
 

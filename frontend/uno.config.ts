@@ -2,6 +2,12 @@
 // 设计系统：Flat Design（2D / 无装饰阴影 / 排版驱动 / 图标语义化）
 // 配色：Teal 主色（浅色 #0F766E / 深色 #2DD4BF）+ 状态色，全部按 WCAG AA 4.5:1 核验。
 // 所有颜色只以 CSS 变量形式引用（见 src/styles/global.css），此处不出现硬编码色值。
+//
+// 2026-11-24 引入 naive-ui 后分工变了：
+//   · 控件（按钮 / 输入框 / 选择器 / 标签 / 弹窗 / 分页 / 下拉…）的长相与状态
+//     全部由 naive 的主题覆盖提供 —— 见 src/styles/naiveTheme.ts（token → themeOverrides）。
+//   · 本文件只剩下**布局类**与**色值 token → 类名**的映射，以及项目自己的导航/筛选/卡片布局。
+//   所以不要再在这里新增 btn-* / input-* 这类控件 shortcut：控件只有一个来源（naive 主题）。
 import { defineConfig, presetWind4, presetAttributify, presetIcons } from 'unocss'
 
 export default defineConfig({
@@ -45,8 +51,9 @@ export default defineConfig({
     ['text-muted', { 'color': 'var(--color-text-muted)' }],
     ['text-inverse', { 'color': 'var(--color-text-inverse)' }],
 
-    // 品牌色
-    ['text-brand', { 'color': 'var(--color-primary)' }],
+    // 品牌色：填充用 --color-primary（四色原值），文字/图标用 --color-brand-text
+    // （theme.ts 会按当前底色把它调到 4.5:1，保证深色主题下的导航/链接也看得清）
+    ['text-brand', { 'color': 'var(--color-brand-text)' }],
     ['bg-brand', { 'background-color': 'var(--color-primary)' }],
     ['bg-brand-hover', { 'background-color': 'var(--color-primary-hover)' }],
     ['bg-brand-light', { 'background-color': 'var(--color-primary-light)' }],
@@ -63,17 +70,14 @@ export default defineConfig({
     //      *,::before,::after { border-width: 0; border-style: solid }
     //    于是「只设颜色」的规则拿不到任何宽度 → 计算值 border-width: 0px、样式 none，
     //    边框完全不显示；更糟的是，当同一元素另有非零 `border-width` 时，
-    //    border-style 会退回浏览器初始值 `outset`，渲染出 1.6px 的 3D 伪立体边框
-    //    （实测 chip-active: `1.6px outset rgb(45,212,191)`）。
+    //    border-style 会退回浏览器初始值 `outset`，渲染出 1.6px 的 3D 伪立体边框。
     //
     // 结论：**每条边框规则都必须自带 width + style + color 三件套**，
     // 即一律用 `border` 简写，绝不单独用 `border-color`。
-    // 需要「底色/主题色 + 指定线宽」时，把本规则写在后面覆盖简写（CSS 按出现顺序取胜）。
     ['border-theme', { 'border': '1px solid var(--color-border)' }],
     ['border-theme-light', { 'border': '1px solid var(--color-border-light)' }],
     ['border-theme-dark', { 'border': '1px solid var(--color-border-dark)' }],
     ['border-brand', { 'border': '1px solid var(--color-primary)' }],
-    ['border-brand-l', { 'border-left': '2px solid var(--color-primary)' }],
 
     // 优先级语义色（0 低 / 1 中 / 2 高）
     ['text-priority-low', { 'color': 'var(--color-text-tertiary)' }],
@@ -82,8 +86,6 @@ export default defineConfig({
     ['bg-priority-low', { 'background-color': 'var(--color-text-tertiary)' }],
     ['bg-priority-medium', { 'background-color': 'var(--color-warning)' }],
     ['bg-priority-high', { 'background-color': 'var(--color-danger)' }],
-    ['border-priority-medium', { 'border': '1px solid var(--color-warning)' }],
-    ['border-priority-high', { 'border': '1px solid var(--color-danger)' }],
 
     // ===== 单侧边框（显式设定四边，避免被整框简写重置）=====
     // 为什么必须显式写全四边：一条 `border: 1px solid X` 的整框规则会把四边宽度都重置，
@@ -93,16 +95,10 @@ export default defineConfig({
     ['border-b-theme-light', { 'border-bottom': '1px solid var(--color-border-light)', 'border-top': '0', 'border-right': '0', 'border-left': '0' }],
     ['border-r-sidebar', { 'border-right': '2px solid var(--sidebar-border)', 'border-top': '0', 'border-bottom': '0', 'border-left': '0' }],
     // 描述块 hover 时只把左竖线换成品牌色。
-    // ⚠️ 这里必须是单侧规则，不能用整框的 border-brand：
-    //    整框简写会给四边都加上 1px，描述块就会从「一条左竖线」变成「一个方框」。
+    // ⚠️ 这里必须是单侧规则，不能用整框的 border-brand。
     // ⚠️ 也不要再造一条 border-l-theme-light 与之共存：两者都改 border-left，
-    //    UnoCSS 对同一属性只保留一条规则，模板里同时写会丢掉其中一个。
-    //    基础竖线因此定义在 TodoItem.vue 的 scoped 样式里，各管一件事。
+    //    UnoCSS 对同一属性只保留一条规则。基础竖线因此定义在 TodoItem.vue 的 scoped 样式里。
     ['border-l-brand', { 'border-left': '2px solid var(--color-primary)', 'border-top': '0', 'border-right': '0', 'border-bottom': '0' }],
-    // 分体按钮的竖向分隔线（「游戏启动」+「启动方式」两个品牌色按钮之间）：
-    // 右段按钮的左边框，其余三边照例显式归零。
-    // 颜色是「品牌底上的 30% 反色」（--color-divider-on-brand），两套主题都看得见又不抢戏。
-    ['border-l-on-brand', { 'border-left': '1px solid var(--color-divider-on-brand)', 'border-top': '0', 'border-right': '0', 'border-bottom': '0' }],
 
     // 功能色
     ['text-success', { 'color': 'var(--color-success)' }],
@@ -122,22 +118,13 @@ export default defineConfig({
     // presetUno 的 will-change 规则是 /^will-change-(.+)/，捕获组拿到带方括号的字面量，
     // `will-change-[width]` 会 unmatched 静默丢弃，只能用无方括号写法。
     ['will-change-width', { 'will-change': 'width' }],
-
-    // 键盘聚焦光环（2026-11-23）：按 shadcn-vue 的 button 默认样式，聚焦是
-    // 「3px、50% 透明的 ring 色」。半透明色由 global.css 的 `--color-ring-soft`
-    // （color-mix 出来，两套主题各一份）提供，这里只把它接到 ring 的**颜色变量**上。
-    // ⚠️ 不能用 `ring-[var(--color-ring-soft)]` 那种任意值写法：`ring-(.+)` 会先按
-    //    「宽度」解析，var() 不是长度时才回落到颜色，行为依赖解析顺序；精确规则更稳。
-    ['ring-brand-soft', { '--un-ring-color': 'var(--color-ring-soft)' }],
   ],
 
-  // ===== 快捷方式 =====
+  // ===== 快捷方式（只剩布局/组合；控件外观在 naive 主题里）=====
   shortcuts: {
     // ---------- 通用布局 ----------
     'flex-center': 'flex items-center justify-center',
-    'flex-between': 'flex items-center justify-between',
     'flex-col-center': 'flex flex-col items-center justify-center',
-    'absolute-center': 'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2',
 
     // ---------- 图标尺寸（统一 token，禁止在模板里混用任意字号）----------
     // 图标颜色跟随 currentColor，字号/颜色由使用处决定。
@@ -147,152 +134,47 @@ export default defineConfig({
     'icon-lg': 'w-6 h-6 text-[24px] leading-none',
     'icon-xl': 'w-8 h-8 text-[32px] leading-none',
 
-    // ---------- 标题与文本 ----------
-    'title-lg': 'text-2xl font-semibold text-primary',
-    'title-md': 'text-lg font-semibold text-primary',
-    'title-sm': 'text-base font-medium text-primary',
-    'subtitle': 'text-sm text-tertiary',
-
-    // ---------- 卡片 ----------
-    // Flat：用 1px 边框 + 圆角区分层级，不用投影。
-    // 边框一律由 `border-theme` 这类「自带 width+style+color」的规则提供，
-    // 不再依赖通用 `border` 类去补宽度（那正是边框消失的成因）。
-    'card': 'bg-card rounded-xl border-theme p-5',
-    'card-flat': 'bg-card rounded-xl border-theme',
-    'card-hover': 'card hover:border-brand transition-colors duration-200',
-
-    // ---------- 控件高度（输入框与按钮共用一个 token）----------
-    // 2.2rem = 35.2px —— 输入框与主要按钮的固有高度（按钮的对齐基准）。
-    // 输入框必须与它同高。不同高的后果实测过：输入框 41.6px、按钮 35.2px，
-    // 一行 form 里（items-end）底部对齐、顶部错开 6.4px。
-    // ⚠️ 用了固定高度后，控件内部不要再写纵向 padding：固定高度已经决定总高，
-    //    纵向 padding 只会把内容挤出盒子。垂直居中交给 `<input>` 自身
-    //    或容器的 `items-center`。
-    // ⚠️ 三处必须同源：btn-brand、input-theme、TodoInput.vue 的输入框外壳。
-    'control-h': 'h-[2.2rem]',
-
-    // ---------- 按钮 ----------
-    // 外观基座按 shadcn-vue 的 Button 默认样式重做（2026-11-23 用户要求
-    // 「button 默认样式修改参考 shadcn-vue（unocss 级别）」）。照搬的是它的
-    // **形状与状态**，颜色仍全部走本项目 token：
-    //   inline-flex 居中 · rounded-md（6px，原来是 rounded-lg 8px）· text-sm font-medium
-    //   · 键盘聚焦 3px 光环（ring 色 50% 透明）· 禁用 50% 不透明且不接收指针
-    //   · transition-colors（动效时长沿用项目统一的 200ms，不引入 shadcn 的默认值）
-    // ⚠️ 基座里刻意不写高度与内边距：高度必须由 control-h 统一提供，
-    //    否则 btn-brand 会与 input-theme、TodoInput 外壳不同高（见上一条）。
-    // ⚠️ 基座里也不写阴影：shadcn 的 shadow-xs 只挂在 default（`btn-brand`）那一档上。
-    // ⚠️ 基座里也不写 cursor-pointer：本项目口径是「可点的控件才给 pointer」，放进各变体。
-    'btn': 'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors duration-200 outline-none focus-visible:ring-[3px] focus-visible:ring-brand-soft disabled:pointer-events-none disabled:opacity-50',
-    // default 变体：品牌色实心（对应 shadcn 的 bg-primary text-primary-foreground shadow-xs）
-    'btn-brand': 'btn control-h px-4 bg-brand text-inverse shadow-theme hover:bg-brand-hover border-none cursor-pointer',
-    // ghost 变体：无底色无边框，hover 才出现底色（对应 shadcn 的 ghost）
-    'btn-ghost': 'btn control-h px-4 bg-transparent text-secondary hover:bg-hover hover:text-primary border-none cursor-pointer',
-
-    // ---------- 分体按钮（shadcn ButtonGroup 的「主操作 + 下拉」）----------
-    // 2026-11-23 用户要求：「启动方式通过 group 连接到游戏启动右端」——
-    // 左段是主操作（游戏启动），右段是启动方式下拉，两段共用同一套 btn-brand 外观，
-    // 只在「哪一侧收圆角」和「中间那条分隔线」上不同。
-    // ⚠️ 圆角必须用 longhand + !important：btn-brand 里的 rounded-md 是**简写**，
-    //    同一元素上简写与 longhand 谁胜取决于规则/合并顺序，加 ! 才是确定的。
-    // ⚠️ 分隔线 border-l-on-brand 必须排在 border-none 之后（本 shortcut 里就是后面），
-    //    否则 border-style:none 会把左边界面的 width/style 一起清掉。
-    'btn-brand-split': 'btn-brand !rounded-r-none',
-    'btn-brand-attach': 'btn-brand !rounded-l-none !px-2.5 !gap-1 border-l-on-brand',
-    // 行内图标按钮（完成 / 删除共用）：只定义尺寸与布局，
-    // 颜色与状态一律由调用处的动态 class 决定——shortcut 里写颜色会压掉调用处
-    // （UnoCSS 把 shortcuts 输出在 rules 之前），这个坑已经踩过。
-    // ⚠️ 必须写 `border border-solid`，不能只写 `border`：
-    //    `border` 只设 border-width，不设 border-style。而 <button> 的 UA 默认
-    //    border-style 是 `outset`，于是计算值变成 `1px outset` —— 渲染成 3D 立体边，
-    //    而不是我们要的扁平描边（实测“未完成 item 的完成按钮”正是如此）。
-    'btn-row': '!w-7 !h-7 !rounded-lg !p-0 flex-center border border-solid transition-colors duration-200 cursor-pointer flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-40',
-    // 注意：UnoCSS 没有 `placeholder-<color>` 工具类，写了会被静默丢弃
-    // （构建时只留一行 unmatched 警告，元素上看不出任何异常）。
-    // 占位符颜色必须写成 `placeholder:text-<color>` 变体。
-    // 普通输入框（单元素）。视觉量必须与 TODO 输入框「外壳 + 内层 input」组合件一致：
-    //   TODO 外壳：control-h rounded-[10px] bg-secondary border-theme
-    //              transition-colors duration-200 focus-within:border-brand
-    //   TODO 内层：text-sm text-primary placeholder:text-tertiary（无纵向 padding）
-    // 所以这里是 control-h + rounded-[10px] + px-3 + text-sm + focus:border-brand。
-    // 改这条要同步改 TodoInput.vue，反之亦然（两处外观必须一样）。
-    // ⚠️ 底座 border-theme 与 focus:border-brand 会产出**两条** border 规则，
-    //    这是预期的（底座 + 聚焦态各一条），check-build-css.mjs 正是断言「恰好 2 条」。
-    // ⚠️ 必须带 `outline-none`：global.css:188 有一条全局
-    //    `:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px }`（键盘可达性兜底）。
-    //    本输入框已经用 focus:border-brand 表达焦点，不禁用全局 focus ring 就会
-    //    「边框 + 外圈 outline」同色叠成**两层框**（实测聚焦态 border 0.8px + outline 1.6px，都是 brand 色）。
-    //    TodoInput.vue 的内层 input 同样写了 outline-none，两边必须一致。
-    'input-theme': 'control-h bg-secondary rounded-[10px] px-3 text-sm text-primary placeholder:text-tertiary border-theme outline-none transition-colors duration-200 focus:border-brand',
+    // ---------- 卡片（留给没有换成 n-card 的容器，如 TODO 列表滚动区）----------
+    // Flat：用 1px 边框 + 直角区分层级，不用投影（2026-11-25 用户要求全站卡片方形）。
+    'card': 'bg-card rounded-none border-theme p-5',
 
     // ---------- 顶部栏 ----------
     'titlebar': 'fixed top-0 left-0 right-0 h-[30px] flex items-center justify-between px-3 bg-base text-secondary z-[1100] select-none border-b-theme-light',
-    'titlebar-btn': 'flex-center bg-transparent border-none text-tertiary w-7 h-7 rounded cursor-pointer transition-colors duration-200 leading-none p-0 hover:bg-hover hover:text-primary',
-    'titlebar-btn-close': 'flex-center bg-transparent border-none text-tertiary w-7 h-7 rounded cursor-pointer transition-colors duration-200 leading-none p-0 hover:bg-danger hover:text-white',
 
     // ---------- 侧边栏 ----------
+    // 2026-11-25 起导航项本身是 naive 的 n-menu（用户要求「改用 naive ui 样式和逻辑」）：
+    // 原来的 nav-item / nav-item-active / nav-icon / nav-text / nav-badge 已删除，
+    // 菜单项的高度/圆角/选中色/折叠 tooltip 全部由 styles/naiveTheme.ts 的 Menu 段驱动。
+    // 这里只剩侧栏外壳（宽度过渡、底色、右侧分隔线）与上下两个菜单容器。
     'sidebar': 'fixed left-0 top-0 h-screen bg-sidebar text-primary transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] flex flex-col z-[1000] overflow-hidden select-none border-r-sidebar will-change-width',
     'sidebar-header': 'flex items-center px-5 gap-3 cursor-pointer min-h-[72px] flex-shrink-0 transition-colors duration-150 hover:bg-hover',
     'logo-icon': 'flex-shrink-0 text-brand flex-center',
     'logo-text': 'text-lg font-semibold text-primary whitespace-nowrap transition-opacity duration-250 ease-in overflow-hidden tracking-[0.5px]',
     'sidebar-nav-top': 'flex-1 flex flex-col overflow-y-auto overflow-x-hidden p-2 mt-2.5',
-    'sidebar-nav-bottom': 'flex-shrink-0 flex flex-col-reverse overflow-y-auto overflow-x-hidden p-2 pt-2',
-    'nav-item': 'flex items-center px-4 py-2.5 rounded-lg cursor-pointer transition-colors duration-200 ease-in relative gap-3 text-secondary flex-shrink-0 mb-2.5 hover:bg-hover hover:text-primary',
-    'nav-item-active': '!bg-brand-light !text-brand before:content-[\'\'] before:absolute before:left-0 before:top-1/2 before:-translate-y-1/2 before:w-0.5 before:h-5 before:bg-brand before:rounded-r',
-    'nav-icon': 'flex-shrink-0',
-    'nav-text': 'text-sm font-[450] whitespace-nowrap transition-opacity duration-250 ease-in text-secondary overflow-hidden',
-    'nav-text-active': 'text-brand',
-    'nav-badge': 'ml-auto bg-brand text-inverse text-[10px] px-[7px] py-[1px] rounded-[10px] font-medium min-w-[18px] text-center',
+    'sidebar-nav-bottom': 'flex-shrink-0 p-2 pt-0',
 
     // ---------- 筛选栏 ----------
     // 横向排列 + 横向滚动（不换行）。各分组必须 flex-shrink-0，否则会被压扁而不是产生滚动条。
     // scrollbar-theme 是 global.css 里的普通类（非 UnoCSS utility），必须在模板 class 里单独写。
-    // ⚠️ 不要把 `scrollbar-theme` 写进 shortcut：它不是 UnoCSS utility（定义在 global.css），
-    //    写进来会判 unmatched。同理 `group` 也不要在 shortcut 里引用，必须在模板 class 中直接写。
-    'filter-bar': 'flex flex-nowrap items-center gap-x-4 px-3 py-2 rounded-lg bg-secondary-soft border-theme-light overflow-x-auto overflow-y-hidden',
+    'filter-bar': 'flex flex-nowrap items-center gap-x-4 px-3 py-2 rounded-none bg-secondary-soft border-theme-light overflow-x-auto overflow-y-hidden',
     'filter-group': 'flex items-center gap-2 flex-shrink-0',
     'filter-label': 'text-xs text-tertiary whitespace-nowrap',
-    'filter-chips': 'flex flex-nowrap gap-1',
-    'chip': 'px-2.5 py-1 rounded-md cursor-pointer text-xs whitespace-nowrap bg-transparent text-secondary border-theme-light hover:bg-hover hover:text-primary transition-colors duration-200 flex items-center gap-1',
-    // 选中态：品牌色文字 + 边框 + 卡片底色（不靠颜色单独表意，同时有边框与字重变化）
-    // ⚠️ 必须用 !border-brand（自带 1px solid）而不是 !border-color-brand：
-    //    只改颜色会让 border-style 退回 outset，渲染成 1.6px 的 3D 立体边框。
-    'chip-active': '!bg-brand-light !text-brand !border-brand font-medium',
 
     // ---------- TODO 列表 ----------
-    // ⚠️ 这里刻意只保留「单一职责」的 shortcut。
-    // 实测教训：把十几条 utility（含 flex-center、appearance-none、focus-visible:ring-*）
-    // 串成一条 shortcut 时，UnoCSS 会丢弃链条中后段的部分声明——产物 CSS 里
-    // .todo-check 只剩 :checked/:hover 两条，width/appearance/焦点环全部静默消失。
-    // 因此列表行的样式直接写在组件模板的 class 里（见 TodoItem.vue），便于逐一核对产物。
-    // 注意：这里刻意不含边框颜色类。基础色（border-l-theme-light）与悬停色
-    // （group-hover:border-l-brand）都写在模板上——两者的选择器权重相同（0,1,0），
-    // 若基础色留在 shortcut 内，它会按出现顺序压掉模板上的 border-l-brand，
-    // 导致「单侧变品牌色」失效（曾实测到）。谁的颜色谁负责，避免权重巧合。
+    // 刻意只保留「单一职责」的 shortcut：过长的 shortcut 链会被 UnoCSS 静默截断。
+    // 注意：这里不含边框颜色类。基础色（border-l-theme-light）与悬停色
+    // （group-hover:border-l-brand）都写在模板上。
     'todo-desc-block': 'mt-1 text-xs leading-relaxed text-tertiary whitespace-pre-wrap break-words pl-3 transition-colors duration-200',
 
     // ---------- 设置页 ----------
     'settings-page': 'max-w-[700px] mx-auto w-full',
     'settings-title': 'text-2xl font-semibold text-primary mb-5 tracking-[0.5px]',
-    'settings-container': 'flex flex-col gap-5',
-    'settings-section': 'bg-card rounded-xl border-theme p-4',
-    'section-header': 'flex items-center gap-2.5',
-    'section-icon': 'text-brand flex-center',
-    'section-title': 'text-[15px] font-semibold text-primary m-0',
+    'settings-container': 'flex flex-col',
     'settings-item': 'flex items-center justify-between py-2.5 border-b-theme-light last:border-none last:pb-0',
     'item-info': 'flex-1 flex flex-col gap-0.5 min-w-0',
     'item-label': 'text-sm font-medium text-primary',
     'item-description': 'text-xs text-tertiary',
     'item-control': 'flex items-center gap-3 flex-shrink-0 ml-4',
-
-    // ---------- 主题控件 ----------
-    'theme-toggle': 'flex-center bg-transparent border-none text-secondary w-8 h-8 rounded-md cursor-pointer transition-colors duration-200 ease-in p-1 hover:bg-hover hover:text-primary',
-    'theme-options': 'flex gap-1 bg-secondary p-[3px] rounded-[10px] border-theme',
-    'theme-option': 'flex items-center gap-1 px-3 py-1.5 border-none rounded-lg cursor-pointer bg-transparent text-secondary text-xs transition-colors duration-200 whitespace-nowrap hover:text-primary hover:bg-hover',
-    'theme-option-active': '!bg-card !text-primary font-medium',
-    'version-text': 'text-xs text-tertiary bg-secondary px-3 py-1 rounded-md border-theme-light',
-
-    // 主内容区
-    'main-content': 'flex-1 p-6 overflow-y-auto bg-primary',
   },
 
   // ===== 主题映射 =====

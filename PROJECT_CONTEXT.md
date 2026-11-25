@@ -4,6 +4,129 @@
 > 本文件是「现状 + 决策 + 坑」的单一入口；`doc/*.md` 是逐函数行号速查（部分已过期，见 §9）。
 > 记录时点：2026-11-23（工作区有较多未提交改动：游戏库批量操作 UI、`/works` Steam 式排版、DLsite 预览图解析、Steam hero 背景图）。所有数字均为**实测**，不是估计。
 
+> ⚠️ **2026-11-24 起全站控件改用 naive-ui**：`vue-sonner` 已移除、`btn-*` / `input-theme` / `chip-*` / `control-h` 等控件 shortcut 已从 `uno.config.ts` 删除、`MetaLaunchModeMenu.vue` 已删除。
+> §1.1 的「轻提示」行、§4.7（vue-sonner）、§6.5（按钮体系 shortcut）、§7.2 里「两套输入框必须成对改」等描述**已过时**，以本节 §0 为准。
+
+---
+
+## 0. 2026-11-24：naive-ui 迁移（最新口径）
+
+### 0.1 依赖与文件
+
+- 新增 **`naive-ui@^2.45.3`**（`frontend/package.json` 的 dependencies）；**移除 `vue-sonner`**。
+- 新增 `frontend/src/styles/naiveTheme.ts`：**token → naive themeOverrides 的唯一桥接层**。
+  在主题切换时用 `getComputedStyle(documentElement)` 读 `--color-*` 的真实色值再推算（naive 要用可解析色值；写 `var(--x)` 会让 seemly 解析失败、hover 静默退化成 naive 默认色）。
+- 新增 `frontend/src/styles/naive.ts`：`naiveConfig`（响应式 theme / themeOverrides）+ `syncNaiveTheme(isDark)` + `createDiscreteApi(['message','notification'])`。树内的 `<n-config-provider>` 与 toast 用的 discrete message **共用同一个 `naiveConfig`**。
+- `App.vue`：`<n-config-provider :theme :theme-overrides :locale="zhCN" :date-locale>` 包住 `MainLayout`；`watch(() => \`${themeStore.effectiveTheme}:${themeStore.themeId}\`, …, { flush:'post' })` 负责换肤（2026-11-25 起四色主题变化也会触发）。
+- `stores/Theme.ts`：新增 `systemDark` ref（原来 computed 直接读 `matchMedia`，系统换肤不会触发重算）；2026-11-25 再加 `themeId / activePreset / setThemeId`（四色主题，见 §0.6）。
+- `utils/toast.ts`：**对外 API 不变**（toastSuccess / toastWarning / toastError / toastInfo / toastLoading / dismissToast），底层是 naive message（标题 + 描述两行渲染函数，样式在 `global.css` 的 `.app-toast__*`）；2026-11-25 每条消息顶端加了 n-progress 进度条。`components/AppToaster.vue` 已删除。
+- 控件外观集中点：`Button / Input / InputNumber / Select / Tag / Checkbox / Radio / Switch / Card / Modal / Drawer / Popover / Tooltip / Dropdown / Menu / Message / Alert / Empty / Spin / Pagination / Descriptions / Tabs / Badge / Divider / Statistic / Progress / Popconfirm` 都有一份 override；统一口径 **控件高 35.2px（2.2rem）、按钮圆角 6px、容器 10–12px、面=bg-card / 输入=bg-secondary / 悬停=bg-hover**。
+
+### 0.2 哪些换成了 naive、哪些仍自绘
+
+| 区域 | 现状 |
+| --- | --- |
+| 标题栏 | 外壳、拖动区、关闭浮层结构保留；最小化/最大化/关闭三颗按钮 = `n-button`，关闭浮层 = `n-popover`（点外部关闭由 popover 负责）+ `n-checkbox` |
+| 侧边栏 | **2026-11-25 起改为 naive 的 `n-menu`**（用户要求「改用 naive ui 样式和逻辑」）：`Sidebar.vue` 只保留外壳（宽度过渡 / 底色 / 右侧 2px 分隔线 / logo 折叠开关），菜单项的高度、圆角、选中态、折叠态 tooltip、键盘语义全交给 naive；外观在 `naiveTheme.ts` 的 `Menu` 段，见 §0.7 |
+| TODO | 输入区 `n-input-group`（标题 + 描述 textarea + 添加按钮）、优先级/筛选 `n-radio-group` / checkable `n-tag`、行选择 `n-checkbox`、行删除 `n-popconfirm`、批量删除 `n-popconfirm`、空态/错误 `n-empty` / `n-alert`、加载 `n-spin` |
+| 游戏库 | 顶栏动作 `n-button`、添加游戏弹窗 `n-modal preset=card`（点遮罩不关、Esc 关）、扫描面板 `n-radio-group` / `n-input` / `n-button` / `n-checkbox` / `n-tag` / `n-spin`、卡片删除 `n-popconfirm`、空态 `n-empty` |
+| 作品详情 | 动作条/标签/简介容器 `n-card`、启动按钮与启动方式下拉 = `n-button` + `n-dropdown`、标签编辑 `n-dynamic-tags`、键值表 `n-descriptions`、Steam 动态 `n-statistic`、缓存徽标 `n-tag`；2026-11-24（第二次重排）起还有 `MetaWorkTopBar`（动作栏）、`n-tabs` 下划线 tab、`MetaWorkEditorForm`（`n-date-picker` / `n-dynamic-tags` / `n-input` 编辑全部元数据），见 §0.5 |
+| 设置 | 卡片 `n-card`、主题模式/关闭行为 `n-radio-group`、语言 `n-select`、标签数量 `n-input-number`、清理缓存 `n-button`、版本 `n-tag` |
+| 调试页 | `MetaApiTestCard` 的卡片/搜索/提示/分页/原始 JSON 都随共享积木一起换；`pre` 仍自绘 |
+| 保留自绘 | hero 大图区（`MetaWorkHero`，图片+渐变遮罩+图上白字）、游戏库封面网格卡（2:3 裁切 + 选中遮罩）、右侧 56px 批量浮条（位置/尺寸/不参与布局的约束不变，内部改成 n-button + n-tooltip）、封面缩略图 `MetaCover`、来源徽标 `.src-tag`、行内破坏性按钮的描边色语言（`--color-danger` 描边 → hover 填红），确认动作交给 `n-popconfirm` |
+
+### 0.3 交互变更（用户 2026-11-24 批准「可以改用 naive 的交互组件」）
+
+- 删除确认从「连点两下 + 移开撤销」统一改成 **`n-popconfirm` 气泡确认**：TODO 单条、TODO 批量、游戏库批量移除。**不额外加外描边强调**（用户明确要求，勿改）。
+- 启动方式菜单：原自绘 `MetaLaunchModeMenu.vue`（role=menu / 键盘导航 / fixed 摆位）**已删除**，改成「游戏启动」右侧的 `n-dropdown`（`trigger="click"`、当前方式前打勾）；分体按钮的两段圆角用内联 style 拼接，分隔线仍用 `--color-divider-on-brand`。
+- `n-message` 的 loading 仍是「不能原地改成结果」：先 `dismissToast(id)` 再另弹结果（`utils/toast.ts` 里有说明）。
+
+### 0.4 校验口径
+
+- `npm run check:build` 已按新体系重写：不再断言 `btn-*` / `input-theme` / `chip-*` / `todo-checkbox`（这些类已不存在），改为断言布局类、色值 token、图标、单侧边框、**naive 主题桥接的源码存在性**（`naiveTheme.ts` 用 `getComputedStyle`、`App.vue` 用 `n-config-provider`、toast 走 `../styles/naive`）。产物 JS 里的 `⚠️` 仍是 `@wailsio/runtime` 的控制台提示，属已知噪音。
+- 尚未做（按用户要求由用户手动测）：浏览器/实机视觉走查、深浅主题下的 naive 控件观感、Wails webview 里的弹层层级。
+
+### 0.5 2026-11-24（第二次重排）：/works 动作栏 + 下划线 tab + 元数据可编辑
+
+> §3.3 / §3.7 / §4 里关于 `/works` 排版的描述（左信息栏 + 右主区）**已被本节取代**，以本节为准。
+
+- **动作栏**（用户给的第一张 Steam 截图）：hero 下方新增 `components/meta/MetaWorkTopBar.vue` —— 左「入库 / 游戏启动 + 启动方式下拉」、中三组「小图标 + 灰标签 + 亮值」（库状态 / 入库时间 / 启动方式）、右两颗方形图标按钮（重新抓取 / 打开原始页面）。状态值仍来自 `metaStore`，组件只转发事件。
+- **下划线 tab**（第二张截图）：`n-tabs type="line"`，五个页面 —— 作品信息（简介 / Outline / 元数据表 + 编号 + 入库时间 + 原始页面）· 游戏统计（评分/评价数/发售日/入库 + `MetaSteamStats`；DLsite 没有在线人数与公告）· 启动配置（启动方式/启动地址或程序位置/文件状态/运行状态 + Steam 源切换方式 + 更换游戏程序）· 编辑（元数据表单 + 标签）· 评价（评分/评价数 + 商店页与 Steam 社区评价入口）。tab 外观只改 `naiveTheme.ts` 的 Tabs 段（未选中 tertiary、选中 textPrimary、2px 品牌色下划线），整条底线写在 `WorksPage.vue` 的 scoped 样式。
+- **hero 小字**（`MetaWorkHero` 的 `kickerParts`）= 源 · 社团/开发商 · 发售日 · 作品形式 · 评分（哪项没有就少一个分隔点）。
+- **左信息栏 `MetaWorkSidebar.vue` 已删除**（用户要求「删去 work 界面的左侧信息」）：作品信息进 hero 与「作品信息」tab，入库状态进动作栏，「游戏」进「启动配置」，原始链接进动作栏图标与各 tab 的按钮。
+- **元数据可编辑**（用户：「编辑界面中 所有数据库数据都可以改变」「日期选择等信息可以用组件中的日历等组件修改」）：`components/meta/MetaWorkEditorForm.vue` 覆盖 name / maker / makerId / series / seriesId / workType / ageRating / fileFormats / fileSize / releaseDate / price / currency / priceUntil / rating / ratingCount / summary / sourceUrl / coverUrl / outline。日期用 `n-date-picker`（`value-format="yyyy-MM-dd"`；原值不是标准日期时只要不动它就不提交该字段）；文件格式用 `n-dynamic-tags`；Outline 用「每行 `标签 | 值`」的 textarea。表单是草稿 + 「保存 / 还原」，保存只提交改过的字段。
+- ⚠️ **踩坑（2026-11-24 实机复现）**：`n-date-picker` 的 `v-model:formatted-value` 传**空串 `''`** 时，naive 在 setup 里 `format(new Date(NaN))` 抛 `RangeError: Invalid time value`，编辑 pane 直接白屏且后续 update 反复报错，表现为「点编辑 tab 后下面空白、路由也点不动」（用户报的「卡死」）。修法：**日期字段空值用 `null`**；`toDateValue()` 还必须校验成真实日期（`2020年99月99日` 这种脏值同样会抛）。同一次踩坑：`MetaTagEditor.vue` 漏 `import { NButton }`，标签「保存」按钮渲染成未知元素（`Failed to resolve component: n-button`）。
+- 校验：`go build ./...` / `go test ./internal/service/...` / `npm run build` / `npm run check:build` 全部通过；**2026-11-24 已用 `WAILS_MCP=1 wails3 dev`（MCP http://127.0.0.1:9099/mcp）在真实应用里实测**：编辑 tab 渲染、日期日历、改名→保存→落库（series 列与 raw_json 同步）、清空→保存（raw_json 删键）、还原、标签保存按钮、tab 来回切与侧栏路由均正常。
+- 注意：`wails3 dev` 的文件监听覆盖整个项目目录 —— 往项目里写任何文件（包括 `.task/*.mjs` 这种测试脚本）都会触发一次「重新生成 bindings + go build + 重启应用」。写临时脚本请放 `%TEMP%` 下，否则测试过程中应用会被反复重启。
+- **后端 `LibraryService.UpdateMeta(UpdateMetaRequest{workId, source, fields map[string]any})`**：打补丁语义 —— 只改传来的键，空串/空数组 = 删掉这一项（raw_json 删键 + 公共列一起清空）；编号不可改、名称不可清空、只对**已入库**作品生效。写入复用 `UpsertLibraryWork`（其 SET 不含 cover_* / game_path / launch_mode），所以改元数据不会冲掉本地封面与游戏位置。Fetch 只读不写库 ⇒ 动作栏的「重新抓取」不会覆盖用户改过的元数据。
+
+### 0.6 2026-11-25：四色主题 + toast 顶栏 + 测试页方形卡片
+
+- **四色主题（用户口径：「以后主题包括现在，通过四色决定主题，其他次要颜色通过全局计算得出」）**：
+  - `styles/themePresets.ts` = **主题清单 + 唯一色值来源**。每套主题 `{ light: 四色, dark: 四色 }`：`bgPrimary` 主背景 / `bgSecondary` 次一级 / `bgTertiary` 再次一级 / `brand` 品牌色（最次一级）。默认 `nightfall` 夜岚 = `#404258 / #474E68 / #50577A / #6B728E`；`ember` 暖砂保留迁移前的暖米色 + 青绿，作为回退选项。加主题只需往数组里追加一项。
+  - `styles/theme.ts` = 四色 → 全站 `--color-*` 的推导引擎。文字按对比度目标自动调亮/调暗（深色：主 9:1 / 次级 6.5:1 / 三级 4.8:1 / muted 4.5:1；浅色：12 / 8 / 5.2 / 4.5），控件描边按 3:1，品牌作文字时用 `--color-brand-text` 调到 4.5:1 —— **`--color-primary` 仍是四色原值（填充），`--color-brand-text` 是对比安全版（文字/图标/焦点）**。`applyThemeVars()` 把所有变量写到 `<html>` 的 inline style，naive 再从 `getComputedStyle` 读走。
+  - `global.css` 不再手写主题色（只保留动效/排版/滚动条/启动兜底 + 图片上的白字/遮罩）；`[data-theme]` 只负责 `color-scheme`。
+  - `stores/Theme.ts`：新增 `themeId / activePreset / setThemeId`，`theme-id` 存 localStorage；`App.vue` 的 watch 同时盯 `effectiveTheme + themeId`，再 `syncNaiveTheme`。
+  - 设置页「外观 → 主题配色」= `ThemePresetSelector`，选项直接来自主题清单（未来主题的扩展口）。`ThemeModeSelector`（浅色/深色/系统）保留。
+  - `naiveTheme.ts` 的 token 增加 `brandText`：文字按钮、下拉选中项、分页当前页、tab 下划线、输入框聚焦描边、Spin 等改用 `--color-brand-text`；实心按钮/勾选/进度条仍用 `--color-primary`。
+- **toast 顶端进度条**（用户要求）：`utils/toast.ts` 每条消息顶端渲染 naive `NProgress`（line、3px）—— 结果类按停留时长倒计时消退（CSS `@keyframes app-toast-countdown` + 内联 `--toast-duration`），loading 类走 `processing` 条纹且不消失；新增 `toastWarning`（3.2s）。进度条用负外边距贴到提示条最左端（`.n-message` 的 `overflow:hidden` 负责裁圆角）。
+- **MetaMessage 全部改 toast**（用户要求）：`components/meta/MetaMessage.vue` **已删除**；`metaStore` 在赋值处直接弹（`fail/note/done` 辅助函数，错误标题带上下文）覆盖 `error/status/tagError/gameWarning/searchNotice`，`scanStore.error/status`、`libraryStore.error` 同样处理；页面里的提示条与重复的显式 toast 一并移除。翻页的「正在加载第 N 页…」改成 `LibraryPage` 里的常驻 loading toast（开始时弹、`pageLoading` 变 false 时 dismiss）。
+- **全站方形卡片 + 边框间隔（2026-11-25 用户要求）**：用户先要求「卡片容器都改为方形 且紧凑排布 卡片容器之间只使用border间隔」，再补充「游戏库的cover之间改为方形 但间隔不改变」「todo item之间有间隔」「无间隔的卡片之间border大小相对大」。落地：
+  - `naiveTheme.ts` 的 `Card.borderRadius` = `0`（所有 n-card 直角）；`card` shortcut / `filter-bar` / `TodoStats` / `TodoItem` / `lib-card` / 候选面板 / `MetaWorkTopBar` / `MetaWorkHero` 与 hero 封面全部直角；批量浮条也改成方形；弹窗/浮层（modal/popover/dropdown/toast）仍保留圆角，和内容卡片区分。
+  - `global.css` 新增 `.card-stack`：`gap: 0` + 后卡 `border-top-width: 0 !important`（只留前卡下边框一条线）+ 内部共享线 **2px + `--color-border`**（比 1px 外框更重，满足用户「加粗紧凑卡片之间的 border」）。**不用负 margin 叠边框**（DPR 1.25 的 WebView 会叠成粗线）。已用于设置页、`/works` 各 tab 的卡片堆栈、`/testing` 左栏。
+  - TODO 行恢复 `gap-2`（8px 间隔，不做贴边堆叠）；游戏库 cover 网格保留 `gap-3`（用户明确「间隔不改变」）。
+  - 测试页仍用 n-split 左右分栏（默认 62%，可拖 40%–78%）：左栏请求/命中/候选，右栏原始 JSON；`MetaSection` 的 `square` prop 已删除（全局直角），卡片之间的分隔由 `.card-stack` 统一。
+- 校验：`npm run build` / `npm run check:build` 全绿；用 vite dev（9245）核对深/浅两套主题、设置页主题配色、全站方形卡片与 `.card-stack` 单线分隔、toast 顶部进度条、n-split 左右分栏。
+
+### 0.8 2026-11-25（第四轮）：toast 收敛 / scroll-fade / 封面动效 / hero 模糊遮罩
+
+> §0.6 的「MetaMessage 全部改 toast」仍然成立，但**弹出频率**在 2026-11-25 又被用户收紧了，以本节为准。
+>
+> §0.7 的「tab 条遮罩」只罩了 tab 条、pane 保持干净；本节按用户后续要求把 tab 内容卡片也纳入遮罩，并给 tab 条加 12px 内边距；随后又收敛为**全页唯一一张遮罩**，**该 bullet 以本节为准**。
+
+- **toast 只在四种情况弹**（用户原话：「只有在删除成功后 编辑保存后 出现错误后 刷新完成后 才弹出土司提醒」）：
+  - 删除成功：TODO 单条/批量、游戏库批量移除（`LibraryPage` / `TodoList`）。
+  - 编辑保存：`metaStore.saveMeta`（元数据）与 `saveTags`（标签整份保存）。
+  - 出错：各 store 的 `fail` / `toastError`（搜索、扫描、入库、启动、删除部分失败等）保持弹。
+  - 刷新完成：`libraryStore.refresh()`（游戏库顶栏刷新）与 `/works` 的「重新抓取元数据」。
+  - **不再弹**：`metaStore.note/done`（按编号命中、从缓存读取、入库成功、启动成功、换程序、切启动方式）、搜索信息、扫描跳过提示、入库汇总成功、编辑页「没有改动」（保存按钮本来就是禁用态、直接 return）。
+  - **唯一例外**：TODO 复制成功（用户 2026-11-25 明确要求「TODO复制成功后添加的土司提醒」）—— `TodoList.handleCopy` 里弹「已复制到剪贴板」，失败仍弹错误。
+  - 加载态也回到页面内：游戏库翻页的常驻 loading toast 改成翻页条上方 2px 的 `n-progress`；游戏库删除的 loading toast 去掉（删除按钮自己转圈）。`utils/toast.ts` 接口不变，只是调用点变少。
+- **scroll-fade（参考 shadcn 的 scroll-fade）**：新增 `utils/scrollFade.ts` 的 `vScrollFade` 指令（`main.ts` 注册为 `v-scroll-fade`）+ `global.css` 的 `.scroll-fade`。指令在 mount / scroll / ResizeObserver / MutationObserver / 图片 load 时按真实滚动位置写 `--scroll-fade-top` / `--scroll-fade-bottom`，CSS 用 `mask-image` 拼渐变 —— **到顶/到底的那一侧不淡**，不是静态遮罩。已接入：游戏库网格、添加游戏弹窗候选列表、`/works` 页面、TODO 列表卡片、设置页、`/testing` 左右两栏、原始 JSON 的 `pre`（`/works` 曾在「遮罩压内容」方案里移除过，遮罩改回内容下方后已恢复）。注意 mask 会让元素成为 fixed 后代的包含块，所以不要把 fixed 浮层（批量操作条）放进滚动容器。
+- **启动方式箭头旋转**：`MetaDownloadButton` 的分体按钮右段用 `v-model:show` 接住 `n-dropdown` 的展开态，`launch-mode-chevron--open` 时 `rotate(180deg)`（并补 `aria-expanded`）。
+- **`/works` 模糊遮罩（2026-11-25 最终版：全页只有一张）**：
+  - 用户明确「**不模糊 hero 画面**」「**不做玻璃反光效果**」，后来进一步要求「**只使用一张模糊遮罩 … 不使用多张遮罩**」。
+  - **最终层序（用户 2026-11-25：「tab 和启动所在卡片没能成功遮罩」）**：hero（不透明图）> 动作栏（65% 底，80% 时那 12% 透光几乎看不出来）与 tab 条 / tab 内容卡片（75% 底）> 遮罩 `.work-page-ambient`（`z-index:-1`、`opacity .6`）> 页面背景。按钮、输入等 UI 控件自身保持不透明；只有这一层遮罩，不再有 `.work-ambient` / `.work-tabs-ambient` / `::before` / `::after` 局部遮罩。
+  - 遮罩回到内容下方后，`/works` 的滚动容器重新挂 `v-scroll-fade`（层叠上下文不再妨碍层序）。
+  - **遮罩盒子 = hero 下方、同宽同高**（2026-11-25 用户要求「只在 hero 图下方」「等宽度」「等大小」「和 hero 图大小一致」）：`WorksPage` 用 `ResizeObserver` 量 hero 的 bottom / left / right / height，写成 `--mask-top/left/right/height`。滚动时只写 `transform: translate3d(0, -scrollTop, 0)` —— **滚轮向下 N，模糊图向上 N；向上同理，绝对位置不变**（用户原话「遮罩随滚轮平移 …（绝对位置不变）」）。不做倍率视差，`--work-scroll` 已删除。
+  - 布局：`.work-glass` gap 8px、滚动容器 gap-2、`.n-tab-pane` 上内边距 4px（**紧凑排布**）；tab 条左右各 12px（**第一个 tab 标签有左间隔**）。
+- **游戏库封面动效（仿 Steam 库卡片）**：
+  - 点击：从指针落点扩散水纹（`.lib-ripple`，直径 = 卡片对角线 × 2，`animationend` + 800ms 兜底移除；命令式 `document.createElement`，不进出响应式状态）。
+  - hover：卡片上浮 2px + 阴影、封面 `scale(1.045)`、底部名称浮层 `.lib-card-caption` 淡入（图片专用白字 token + 黑色渐变，不用页面底色）。
+  - 批量模式（**「进入批量操作 卡片样式变化 提示」**）：网格加 `.lib-batch-mode` → 未选中的卡片 `opacity .6 + saturate(.55)`、hover 恢复、不显示名称浮层；每张卡左上角出现方形勾选框（选中填品牌色）；顶栏「已入库 N 款」换成「点击封面选择 · 已选 N 款」（同一行替换，不挤压布局）。
+- **横向滚动条（2026-11-25 用户反馈）**：`/works` 的滚动容器加 `overflow-x-hidden` —— ambient 的负 inset + `scale` 把它撑出 27px 横向溢出，`.scrollbar-theme` 就会显示 8px 横条，显式裁掉。
+- **滚动性能（同日用户反馈「上下滑动有一定卡顿」，确认是渲染原因）**：rAF 帧间隔 A/B 实测定位到两类开销 —— ① 每个 n-card / tab 条 / 动作栏的 `backdrop-filter`（滚动时逐帧重采样背景）；② 大面积高半径 `filter: blur()`（64/42/34px）。先去掉全部 backdrop-filter、把 blur 压到 22/18/18px，掉帧从 10/138 降到 0–1/160；随后按用户要求改成**后端预模糊**（见下一条），CSS 里已无任何 `filter: blur`，实测 0/173 帧超 16.7ms、p90 7ms。
+- **预模糊 hero（2026-11-25 用户要求「只用一张模糊hero图片对所有内容进行遮罩 … 缓存到 cover 文件夹后直接使用模糊后的图片 避免渲染算力浪费」）**：新增 `LibraryService.HeroBlur(workID, source, rawURL)`（[internal/service/hero_blur.go](internal/service/hero_blur.go)）—— 取原图（data URL 或 http）→ 缩到 480px 宽 → 两遍可分离盒式模糊（不引第三方库）→ **上下镜像**（用户 2026-11-25：「模糊后的图片要作上下镜像处理」）→ JPEG 80 写入 `covers/hero_blur_v3_<source>_<id>_<urlhash>.jpg`，返回 data URL；写新文件后 `pruneHeroBlurCache` 会清掉同作品旧版本，**盘上始终只留一张**。缩图按图像真实类型取样（JPEG→YCbCr、RGBA/NRGBA/Gray 直读），避开每像素 `color.NRGBAModel.Convert` —— 1920→480 的缩图从几百 ms 降到几 ms（冷启动实测 540ms → 227ms）。前端 `metaStore.heroBlurred` 在 backgroundUrl 变化时**去抖 30ms** 再取；Steam 会先远程预览、后本地 hero，所以 `heroImageLoading` 期间先跳过、等本机 hero 落定再请求（避免先算一张远程图）。只给唯一遮罩层用（`--work-hero-image`），CSS 里不做 `filter: blur`；作品被移除时 `Remove` 清 v3/v2/旧版缓存。webp 源解码失败 → 返回错误、前端退化为不做遮罩（不崩页面）。
+- 校验：`npm run build` / `npm run check:build` 全绿（断言新增 `.scroll-fade`、`.lib-ripple`、`.lib-card-caption`、`.work-page-ambient` 等）；`WAILS_MCP=1 wails3 dev -port 9245` 实机用 MCP 核对：滚动渐隐变量、批量卡片样式与提示、点击水纹、刷新完成 toast、`/works` 各层遮罩的 computed filter/mask、箭头 `rotate(180deg)`。
+
+
+
+### 0.7 2026-11-25（第三次）：侧栏改 `n-menu` + `/works` 遮罩（tab / 视差）+ 修掉两份 MainLayout
+
+- **侧边栏改用 naive 的 `n-menu`**（用户原话：「sideBar改用naive ui样式和逻辑 menu」）：
+  - `components/Sidebar.vue` 只剩外壳：`aside.sidebar`（固定宽度过渡 72 ↔ 250）+ `sidebar-header`（logo + 点击折叠）+ 上下两个 `<nav>` 容器；导航项全部由 `n-menu` 渲染。
+  - **菜单项 = 路由路径当 key**：`:value="route.path"`，`@update:value` → `router.push`（同路径不重复 push）；选中态由 naive 画（`::before` 圆角块），不再手写 `nav-item-active` / 左侧 2px 竖条。
+  - **折叠态交给 naive**：`:collapsed` + `collapsed-width`（= 侧栏 72 − 容器 16 = **56**，naive 用 `width/2 − iconSize/2` 居中图标）+ `icon-size = collapsed-icon-size = 20`；折叠时 naive 自动把 label `opacity: 0` 并在 hover 弹 `n-tooltip`（实测 tooltip 文案 = 菜单名）。
+  - 图标仍是 UnoCSS 的 `i-lucide-*`，用 option 的 `icon: () => h('span', { class: item.icon })` 传渲染函数；图标盒子（宽高/字号/右外边距）由 naive 的 `.n-menu-item-content__icon` 负责。
+  - 键盘可达性：naive 的菜单项只有 `role="menuitem"`、默认不可聚焦，用官方扩展点 `nodeProps` 补 `tabindex: 0` + 回车/空格切页。⚠️ naive 把 `nodeProps` 返回类型写成 `HTMLAttributes & Record<string, string | number | undefined>`，函数类型的 `onKeydown` 与那个 Record 互斥（库的类型缺口），所以源码里有一次 `as unknown as MenuNodeProps` 的显式转换。
+  - 外观只在 `naiveTheme.ts` 的 **`Menu`** 段：`itemHeight 40px` / `borderRadius 8px` / 选中 `itemColorActive = accentSoft` + `itemTextColorActive = brandText` / 悬停 `bg-hover` / `color: 'transparent'`（底仍由 aside 的 `--sidebar-bg` 提供）。`uno.config.ts` 里 `nav-item / nav-item-active / nav-icon / nav-text / nav-text-active / nav-badge` **已删除**，只留 `sidebar / sidebar-header / logo-icon / logo-text / sidebar-nav-top / sidebar-nav-bottom`。
+  - `stores/Sidebar.ts` 的常量改名（`COLLAPSED_WIDTH = 72` / `EXPANDED_WIDTH = 250`，原来 72 那个叫 `barWidth`、250 叫 `barWidthCollapsed`，名字是反的）。
+  - `check-build-css.mjs`：`nav-item/nav-icon` 的断言换成 `sidebar/sidebar-nav-top/sidebar-nav-bottom/logo-text`，并新增「侧栏走 n-menu」「Menu 主题已接桥」两条源码级断言。
+- **`/works` tab 区遮罩**（用户原话：「tab也做遮罩」，随后用户自己把这一块细化过）：现在由 `WorksPage.vue` 的 `.work-tabs-wrap` + `.work-tabs-ambient`（同图模糊拷贝、向下淡出）垫在整块 tab 区后面，tab 条 `.n-tabs-nav` 半透明 `bg-card 88%` + `backdrop-filter blur(14px)`、左右 12px 内边距（第一个标签不贴边），pane 里的 `.n-card` 也是 88% 半透明 + `blur(12px)` —— 模糊 hero 从卡片下面透上来。⚠️ 我最初那版给 `.n-tabs-nav` 加 `::after` 的做法已被这一版取代，改这块前先读当前源码。
+- **遮罩视差（已取消）**（用户原话：「模糊后的hero遮罩跟随滚轮相对移动」；2026-11-25 后来要求「取消视差」「固定模糊图片位置」，`handleScroll` / `--work-scroll` 已删除）：`WorksPage` 的滚动容器 `@scroll.passive` → `handleScroll()`（rAF 合并）每帧只把 `scrollTop` 写成一个 CSS 变量 `--work-scroll` 到 `.works-page` 上，**不触发 Vue 重渲染、不动布局**；三层遮罩在样式末尾的 `@media (prefers-reduced-motion: no-preference)` 里按不同倍率平移：`.work-page-ambient` **−0.22**（远景，往上）、`.work-ambient` **+0.15 封顶 24px**（净 0.85，比内容慢）、`.work-tabs-ambient` **+0.12 封顶 18px**。`.work-page-ambient` 的 `inset` 底部多留 260px，往上位移时不露硬边。⚠️ 视差块必须放在样式最后：这几层前面各有自己的 `transform` 基础值，同优先级靠顺序覆盖（踩过：`.work-ambient` 的视差被后面的 `scale(1.04)` 盖掉，位移恒为 0）。
+- **修掉「两份 MainLayout」**（用户原话：「顺便修改重合mainLayout问题」）：`App.vue` 原来直接 `<MainLayout />`，而 router 的 `/` 也 `component: MainLayout`，于是 DOM 里两份 MainLayout + 两套 Sidebar/TitleBar（完全重合看不出来），页面还被套了两层 `padding-left`。现在 `App.vue` 只放 `<router-view />`；`MainLayout` 的 `router-view` 内边距从 `mainPaddingLeft`（展开时 178 = 250−72，会让内容钻到 250px 侧栏底下）改成 **`sidebarWidth`**（72 ↔ 250 + `p-6` 的 24px 间距），`stores/Sidebar.ts` 的 `mainPaddingLeft` 已删。实测：`aside.sidebar` / `header.titlebar` 各 1 个，展开时内容从侧栏右边 24px 开始。
+- 校验：`npm run build` / `npm run check:build` 全绿；`WAILS_MCP=1 wails3 dev`（MCP 9099）实机验证 —— 折叠 72 ↔ 展开 250、折叠 tooltip 文案、点菜单切路由（`#/todo`）、选中态颜色（`accentSoft` 底 + `brandText` 字）、单实例布局（aside/titlebar 各 1）、视差（滚动 400px 时 `.work-page-ambient` 的 `matrix(... 0,-88)`、`.work-ambient` 封顶 24px），以及 `PrintWindow` 抓图看像素效果。
+
 ---
 
 ## 1. 项目一句话 + 当前状态
@@ -20,7 +143,8 @@ Wails v3 (Go) + Vue 3 + Pinia + UnoCSS 的无边框 Windows 桌面应用。功�
 | 前端 | Vue / Pinia / vue-router | 3.5.41 / 2.3.1 / 4.6.4 |
 | 构建 | Vite / vue-tsc | vite **`~8.2.2`（必须锁死，见 §7.1）** / typescript `~5.4.0` |
 | 样式 | UnoCSS | `^66.8.1`（`presetUno` + `presetAttributify`(prefix `un-`) + `presetIcons`） |
-| 轻提示 | vue-sonner | **2.0.9**（2026-11-23 按用户要求引入；全站唯一的 toast 容器，外观映射到设计 token，见 §4.7） |
+| 组件库 | naive-ui | **2.45.3**（2026-11-24 引入，全站控件；主题桥接见 §0.1） |
+| 轻提示 | naive-ui `n-message` | 2026-11-24 起（vue-sonner 已移除；入口仍是 `utils/toast.ts`，见 §0.1） |
 | 图标 | lucide via `@iconify/json` | 构建期内联 data URI，**运行时零请求 / 离线可用** |
 | 运行时 | Node / npm | v24.15.0 / 11.12.1 |
 
@@ -74,14 +198,18 @@ frontend/src/services/scanService.ts  Wails 绑定封装：scanApi（steamFolder
 frontend/src/services/gameService.ts  Wails 绑定封装：gameApi（setPath / launch / pickExecutable，游戏启动）
 frontend/src/utils/metaFormat.ts 元数据展示纯函数：toMessage / formatBytes / fileUrl / buildSummaryRows（+ MetaRow 类型）
 frontend/src/utils/clipboard.ts 复制统一入口 copyText()：Clipboard API → execCommand 兜底，失败抛错（调用方提示）
-frontend/src/utils/toast.ts     **全站一次性反馈的唯一入口**（toastSuccess / toastError / toastInfo / toastLoading / dismissToast，底层 vue-sonner）：文案策略、停留时长、描述截断都在这里，业务代码不直接 import vue-sonner
-frontend/src/components/AppToaster.vue **全局 toast 容器**（唯一一份，挂在 App.vue；top-center、不参与布局），把 vue-sonner 的 CSS 变量与图标颜色映射到 global.css 的 token
-frontend/src/components/meta/    作品库与调试页共用的高粒度积木（MetaSection/搜索行/封面/键值表/明细/标签…，见 §4.6）· MetaTagEditor.vue（作品详情「标签」：抓取标签与自定义标签合并编辑，hover 出 × 删除 + 末尾「+」原地输入 + 「保存」整份写库）
+frontend/src/utils/toast.ts     **全站一次性反馈的唯一入口**（toastSuccess / toastWarning / toastError / toastInfo / toastLoading / dismissToast；底层 naive message，顶端带 n-progress 进度条）：文案策略、停留时长、描述截断都在这里，业务代码不直接 import naive 的 message
+frontend/src/components/AppToaster.vue **已删除**（2026-11-24 由 naive 的 n-message 取代，见 §0.1）
+frontend/src/styles/themePresets.ts **四色主题清单（唯一色值来源）**：每套主题 = 主背景 / 次一级 / 再次一级 / 品牌色，浅色+深色各一组；加主题只改这里
+frontend/src/styles/theme.ts        四色 → 全站 `--color-*` 的推导引擎（对比度目标 + `applyThemeVars` 写入 `<html>`）
+frontend/src/styles/naiveTheme.ts    **token → naive themeOverrides** 的唯一桥接（控件外观只改这里）
+frontend/src/styles/naive.ts        naiveConfig（主题/中文文案）+ createDiscreteApi 的 message
+frontend/src/components/meta/    作品库与调试页共用的高粒度积木（MetaSection/搜索行/封面/键值表/明细/标签…，见 §4.6）· MetaTagEditor.vue（作品详情「标签」：抓取标签与自定义标签合并编辑，hover 出 × 删除 + 末尾「+」原地输入 + 「保存」整份写库）· MetaWorkTopBar.vue（/works 动作栏，见 §0.5）· MetaWorkEditorForm.vue（/works「编辑」页的元数据表单：日期用 n-date-picker，格式用 n-dynamic-tags；**MetaWorkSidebar.vue 已于 2026-11-24 删除**）
 frontend/src/components/library/ ScanPanel.vue（游戏库「扫描添加」面板：来源/扫描方式/自动搜索进度/结果行勾选/全部入库·入库所选）
 frontend/src/components/todo/    TodoList · TodoItem · TodoInput · TodoStats · FilterBar · FilterChipGroup · TodoPrioritySelector
 frontend/src/components/settings/ CloseActionSelect · ThemeModeSelector · ThemeToggle · LanguageSelect(占位) · SettingsSection/Item/Page · VersionInfo · CacheCleanup（设置页「清理缓存」：进页面扫 cache/ 占用 + 一键清空） · TagLimitInput（标签显示数量 4–64）
 frontend/src/components/         Sidebar.vue · TitleBar.vue
-frontend/src/styles/global.css   三层 token 的**唯一色值来源**（浅色 :root / 深色 [data-theme="dark"]）
+frontend/src/styles/global.css    **非颜色 token**（动效/排版/滚动条/启动兜底）+ toast 两行与进度条样式；主题色已移到 themePresets.ts / theme.ts
 frontend/uno.config.ts           变量→类名映射 rules + shortcuts + theme.colors
 frontend/scripts/                check-unocss-tokens.mjs · check-build-css.mjs（两个回归闸门）
 frontend/bindings/               ⚠️ 自动生成、被 gitignore、勿手改
@@ -149,7 +277,7 @@ doc/                             README/backend/frontend/styles/conventions + ne
 | 路由 | 视图 | 定位与排布 |
 | --- | --- | --- |
 | `/testing`（name `Testing`；旧路径 `/test` 重定向） | `views/test.vue`（薄壳，只渲染 `MetaApiTestCard`） | **调试页**：单列四卡 —— 请求 / 精确命中（含封面预览与「入库」）/ 模糊搜索候选 / **原始 JSON（可复制，只在这里出现）**。抓取入口在这一页；按钮与作品库同语义（`meta.storeIn()`，会写库） |
-| `/works`（name `Works`；**侧栏无入口**） | `views/WorksPage.vue` | **作品库**：2026-11-23 按 Steam 商店页排版重做 —— 顶部 `MetaWorkHero`（大背景图 + 来源/发售日/类型 + 作品名 + 标签 chips + 右侧 2:3 竖版封面，封面优先用游戏库卡片那张 cover），下面左右两栏：左 `MetaWorkSidebar`（作品信息 / 游戏 / 快速链接，228px）、右主区（`MetaWorkActions` 动作条 + 缓存 badge + 重新抓取 → `MetaSteamStats`【Steam 源】→ `MetaTagEditor` → `MetaWorkDetails`）。**背景图规则**：Steam 源优先本机 `librarycache` 里文件名含 hero 的图（`scan.SteamHeroImage`，排除 blur/logo），没有才用商店接口的 `screenshots[0].path_full（真正的预览图，比 page_bg_raw 更亮更明显）/background_raw/background`；DLsite 源用画廊**第二张**预览图（第一张 `_img_main` 是游戏库卡片封面）。没有搜索卡/候选栏/封面保存位置卡/游戏库卡。**Steam 源作品入库后，「游戏启动」按钮右端接一个分体按钮右段 =「启动方式」下拉菜单（DropdownMenu 样式）**：通过 Steam 启动（默认，`steam://rungameid/<appid>`）/ 本地程序启动（跑 `game_path`；没有路径时先弹选 exe 框）；当前方式在右段上以简称显示（`Steam` / `本地`），点开菜单用 `menuitemradio` + 勾选标记表达。只能从游戏库点封面进入 || `/library`（name `Library`） | `views/LibraryPage.vue` | **游戏库**：顶栏是 `MetaSection`（标题 + 右侧「已入库 N 款」+ 刷新 +「添加游戏」+「批量操作」；**原「搜索」按钮已移除**）。**卡片上没有任何操作按钮**（用户 2026-11-23 要求）：平时点封面 → `openWork()` 跳 `/works` 并 `loadById`（缓存优先）；点「批量操作」后界面右边缘滑出**窄竖条**（`.lib-batch-panel`，`position: fixed`，`top:30px→bottom:0`、**宽 56px**、`border-left`，从右整条滑入；**不参与布局、不给内容让位**，网格/卡片/滚动都不变、不挤压现有 UI；条内只放图标：标题图标 + 已选 N/总数 + 全选 / 删除 / 退出三个 36×36 图标按钮，文字走 `title`/`aria-label`；删除按钮红描边 → armed 填红 + 勾），此时点封面 = 选中 / 取消选中（**选中态 = 品牌色 2px 边框 + 品牌色半透明遮罩 + 居中勾选**），删除后自动退出；封面网格 `grid-cols-[repeat(auto-fill,minmax(150px,1fr))]`，hover 时半透明名称面板从下方淡入；**添加游戏入口在顶栏「游戏库」卡片里**（2026-11-23 起网格末尾的透明圆形加号 `.lib-add` 已删除）。点「添加游戏」弹居中「添加游戏」窗（`Teleport` 到 body，遮罩 `color-mix` + `backdrop-blur(8px)`，**只有 ✕ 与 Esc 能关，点遮罩不关**），窗内两种方式（`chip` 切换，默认「扫描添加」）：**扫描添加** = `components/library/ScanPanel.vue`（来源 Steam 库 / 选择文件夹，文件夹可选「按 exe 识别」或「按文件夹名」）扫出一批名字后**自动逐个搜索**（3 路并发，可「停止」/单行「重试」）；结果按扫描顺序一行一个（封面 + 匹配作品名 + RJ + 扫描名 + 社团·形式·发售日·容量，详情在搜索完后再补抓），行可勾选，工具条提供「全部入库」与「入库所选」（**串行**写库；已入库的行显示「已入库」且不再参与），点「详情」进 `/works` 核对；**手动搜索** = 原搜索行 + **「搜索来源」chip（DLsite / Steam）**：DLsite 支持 RJ 编号精确 / 作品名模糊（候选**每页 10 个**、分页条在候选下方、**只给当前页下 `cache/` 预览图**）；Steam 走 `storesearch`（候选 ≤10、无分页，缩略图用 `tiny_image` 直链），点「详情」按 appid 取商店详情；命中作品即关窗跳 `/works`； |
+| `/works`（name `Works`；**侧栏无入口**） | `views/WorksPage.vue` | **作品库**：2026-11-23 按 Steam 商店页排版重做 —— 顶部 `MetaWorkHero`（大背景图 + 来源/发售日/类型 + 作品名 + 标签 chips + 右侧 2:3 竖版封面，封面优先用游戏库卡片那张 cover），下面左右两栏：左 `MetaWorkSidebar`（作品信息 / 游戏 / 快速链接，228px）、右主区（`MetaWorkActions` 动作条 + 缓存 badge + 重新抓取 → `MetaSteamStats`【Steam 源】→ `MetaTagEditor` → `MetaWorkDetails`）。**背景图规则**：Steam 源优先本机 `librarycache` 里文件名含 hero 的图（`scan.SteamHeroImage`，排除 blur/logo），没有才用商店接口的 `screenshots[0].path_full（真正的预览图，比 page_bg_raw 更亮更明显）/background_raw/background`；DLsite 源用画廊**第二张**预览图（第一张 `_img_main` 是游戏库卡片封面）。没有搜索卡/候选栏/封面保存位置卡/游戏库卡。**Steam 源作品入库后，「游戏启动」按钮右端接一个分体按钮右段 =「启动方式」下拉菜单（DropdownMenu 样式）**：通过 Steam 启动（默认，`steam://rungameid/<appid>`）/ 本地程序启动（跑 `game_path`；没有路径时先弹选 exe 框）；右段只显示一个下拉箭头（2026-11-24 用户要求「去除游戏启动旁启动方式简称」；当前方式在 `title`/`aria-label` 与下拉选项的勾选里表达），点开菜单用 `menuitemradio` + 勾选标记表达。只能从游戏库点封面进入 || `/library`（name `Library`） | `views/LibraryPage.vue` | **游戏库**：顶栏是 `MetaSection`（标题 + 右侧「已入库 N 款」+ 刷新 +「添加游戏」+「批量操作」；**原「搜索」按钮已移除**）。**卡片上没有任何操作按钮**（用户 2026-11-23 要求）：平时点封面 → `openWork()` 跳 `/works` 并 `loadById`（缓存优先）；点「批量操作」后界面右边缘滑出**窄竖条**（`.lib-batch-panel`，`position: fixed`，`top:30px→bottom:0`、**宽 56px**、`border-left`，从右整条滑入；**不参与布局、不给内容让位**，网格/卡片/滚动都不变、不挤压现有 UI；条内只放图标：标题图标 + 已选 N/总数 + 全选 / 删除 / 退出三个 36×36 图标按钮，文字走 `title`/`aria-label`；删除按钮红描边 → armed 填红 + 勾），此时点封面 = 选中 / 取消选中（**选中态 = 品牌色 2px 边框 + 品牌色半透明遮罩 + 居中勾选**），删除后自动退出；封面网格 `grid-cols-[repeat(auto-fill,minmax(150px,1fr))]`，hover 时半透明名称面板从下方淡入；**添加游戏入口在顶栏「游戏库」卡片里**（2026-11-23 起网格末尾的透明圆形加号 `.lib-add` 已删除）。点「添加游戏」弹居中「添加游戏」窗（`Teleport` 到 body，遮罩 `color-mix` + `backdrop-blur(8px)`，**只有 ✕ 与 Esc 能关，点遮罩不关**），窗内两种方式（`chip` 切换，默认「扫描添加」）：**扫描添加** = `components/library/ScanPanel.vue`（来源 Steam 库 / 选择文件夹，文件夹可选「按 exe 识别」或「按文件夹名」）扫出一批名字后**自动逐个搜索**（3 路并发，可「停止」/单行「重试」）；结果按扫描顺序一行一个（封面 + 匹配作品名 + RJ + 扫描名 + 社团·形式·发售日·容量，详情在搜索完后再补抓），行可勾选，工具条提供「全部入库」与「入库所选」（**串行**写库；已入库的行显示「已入库」且不再参与），点「详情」进 `/works` 核对；**手动搜索** = 原搜索行 + **「搜索来源」chip（DLsite / Steam）**：DLsite 支持 RJ 编号精确 / 作品名模糊（候选**每页 10 个**、分页条在候选下方、**只给当前页下 `cache/` 预览图**）；Steam 走 `storesearch`（候选 ≤10、无分页，缩略图用 `tiny_image` 直链），点「详情」按 appid 取商店详情；命中作品即关窗跳 `/works`； |
 
 三页都**自带滚动容器**：`MainLayout.vue:6` 的 router-view 是 `overflow-hidden`，页面必须自己提供滚动；而 `global.css:207-213` 用 `!important` 全局隐藏了滚动条，只有 `.scrollbar-theme` 能恢复（`scrollbar-width: thin` + 带 `!important` 的 `::-webkit-scrollbar`）。`pr-2` 给 8px 滚动条留位。
 
@@ -171,6 +299,7 @@ doc/                             README/backend/frontend/styles/conventions + ne
 | `SteamHeroImage` | `(ctx, appID string) string` | **2026-11-23**：详情页 hero 背景图。先 `scan.SteamHeroImage` 在 `appcache\librarycache\<appid>\` 递归找文件名含 hero 的图（排除 `*_blur*`/`*logo*`，`library_hero*` 优先、中文版优先），命中就读文件转 `data:<mime>;base64,…`；**找不到返回空串 + nil**，前端回落到商店接口的预览图 |
 | `GetTags` | `(ctx, workID, source string) (model.TagSet, error)` | 读作品的标签集合 `{tags, edited}`。`edited=true` = 用户保存过整份列表（`work_tags` 里就是他定的那份，重抓不丢）；`false` = 只有旧版逐条加过的标签，前端还要与抓来的 `tags` 合并 |
 | `SetTags` | `(ctx, workID, source string, tags []string) (model.TagSet, error)` | **唯一写标签的入口**：整份覆盖（清空 → 按顺序插入 → 记 `work_tag_edits` 标记，同一事务）。逐条清洗、丢空、去重；单条 ≤32 字符、最多 128 条，超了报错不截断；传空列表 = 用户删光（合法） |
+| `UpdateMeta` | `(ctx, req UpdateMetaRequest) (map[string]any, error)` | **2026-11-24**：编辑页保存元数据。`UpdateMetaRequest{workId, source, fields map[string]any}` 打补丁：只改传来的键，空串/空数组/null = 删掉这一项；编号不可改、名称不可清空、只更新已入库作品；复用 `UpsertLibraryWork` 写库（cover_* / game_path / launch_mode 不受影响）。前端入口 `libraryApi.updateMeta()` → `metaStore.saveMeta()` |
 
 **为什么封面用 base64 data URL 而不是 `file://`**：Wails webview 对本地文件协议的支持没实机验证过，data URL 一定可用；封面就几十~几百 KB，一次列表请求可接受。
 
@@ -236,7 +365,7 @@ doc/                             README/backend/frontend/styles/conventions + ne
 - **封面比例**：`LibraryPage.vue` 网格封面 `aspect-[4/3]` → **`aspect-[2/3]`**（`object-cover`），Steam / DLsite / 以后所有来源统一。`/works` 作品信息界面本次**未改**（用户明确以后单独改）。
 - **实测**（本机 `E:\steam`）：19 份 appmanifest → 19 条；17 条在 librarycache 找到封面（`Beat Banger` 与本机 `Steamworks Common Redistributables` 没有对应图），嵌套 hash 目录里的 `library_capsule.jpg` 也能递归命中。测试：`scan/steam_apps_test.go`（manifest 解析/位判断/多库去重/封面递归与打分）、`getMeta/getFromSteam_test.go`（字段映射/失败分支/封面导入记账）。
 - **标签改走 GetItems（2026-11-22，用户要求「tag 的获取尝试使用别的接口」）**：`getFromSteam.go` 抓到 appdetails 后调 `enrichSteamWork`（`steam_browse.go`）——① 用 `IStoreBrowseService/GetItems/v1`（`include_tag_count:20` + `include_reviews`）拿**玩家标签**（tagid + 权重），经 `IStoreService/GetMostPopularTags`（进程内缓存 24h）换成中文名，**按权重降序排在前面**，原来 appdetails 的「类型/分类/开发商/发行商」接在后面去重（`mergeSteamTags`，上限 `steamTagLimit=64`）；② 评价汇总写进 `work["steamReviews"]` 并补一行 outline「Steam 评价：好评如潮 97%（N 篇）」；③ GetItems 原始数据留在 `work["steamBrowse"]`。**这一步任何失败都只是"少一点信息"**，不报错、不影响入库。
-- **手动搜索一次同时查 DLsite 与 Steam（2026-11-23，取代原来的「搜索来源」chip）**：用户原话「手动搜索只显示DLsite数据源 应该也显示steam数据源」。`metaStore.runMultiSearch()` 用 `Promise.allSettled` 并发调 `SearchWorks`（DLsite，30 条/页、前端 10 条一页）与 `SearchSteamWorks`（storesearch，10 条、无分页），弹窗里**两组候选按来源分组列出**（组标题带条数），分页只作用于 DLsite；一路失败只写 `searchNotice`（`MetaMessage tone="warning"`），另一路的结果照常展示。编号输入（RJ/RE/VJ）仍只走 DLsite 精确抓取。Steam 候选缩略图用 `tiny_image` 直链（公网 CDN，不需要 `cache/`；`CacheCover` 只认 DLsite 编号）。
+- **手动搜索一次同时查 DLsite 与 Steam（2026-11-23，取代原来的「搜索来源」chip）**：用户原话「手动搜索只显示DLsite数据源 应该也显示steam数据源」。`metaStore.runMultiSearch()` 用 `Promise.allSettled` 并发调 `SearchWorks`（DLsite，30 条/页、前端 10 条一页）与 `SearchSteamWorks`（storesearch，10 条、无分页），弹窗里用**源切换器**分开显示（2026-11-24 起不再把两源归并到同一列表：按钮带条数，默认 DLsite、无 DLsite 结果时自动落到 Steam），分页只属于 DLsite（Steam ≤10 无分页，切到 Steam 时整条分页不出现）；一路失败只写 `searchNotice`（`MetaMessage tone="warning"`），另一路的结果照常展示。编号输入（RJ/RE/VJ）仍只走 DLsite 精确抓取。Steam 候选缩略图用 `tiny_image` 直链（公网 CDN，不需要 `cache/`；`CacheCover` 只认 DLsite 编号）。
 - **扫描结果的「多数据来源」（2026-11-23，用户原话「自动扫描游戏功能 自动搜索时应该显示多数据来源」）**：`scanStore.searchEntry` 对**每个本地条目（exe / 文件夹）同时搜两个来源** —— Steam 先 `MatchSteamAppByFolder`（清洗 → storesearch → 逐级截短 → 相似度打分），猜得到 appid 就出一行 Steam；然后拿同一个名字 `SearchWorks`，取第一个候选出一行 DLsite。一个条目因此最多两行（Steam 行 + DLsite 行），**各自勾选、各自入库**（同一游戏在两个来源里是两条库记录），行内用 `.src-tag` 徽标标出来源。**Steam 库来源的扫描仍只出 Steam 行**（appid 已确定，再按英文名去 DLsite 搜只会引入误配；要对照用「手动搜索」）。**打分口径同日改为编辑距离相似度**（`steamNameScore` = 1 − Levenshtein/较长串长度，<0.6 算不像）：旧的前缀占比法对「demon root」vs「Demons Roots」这种差一个字母的名字给 0，导致扫描永远猜不到 Steam 源。联网烟测（2026-11-23，`demon root`）：Steam `Demons Roots` / appid `1933660`、DLsite `Demons Roots` / `RJ349517`，两边详情都能取到；此前的匹配样例（`黑神话悟空→2358720`、`艾尔登法环黄金树幽影→2778580`、`ULTRAKILL v1.0→1229490`、`Hades→1145360`、`Stardew_Valley→413150`）仍成立，`hades`→`hadesii`（0.714 < 0.75 阈值）仍判不匹配。
 - **/works「Steam 动态」（2026-11-22）**：`components/meta/MetaSteamStats.vue`，只在 `meta.source === 'steam'` 时渲染：评价（label + 好评率 + 篇数）、当前在线、最近 3 条公告（标题外链 + 日期）。数据 `MetaApiService.FetchSteamStats`，`applyWork` 时自动取一次，头部有「刷新」。
 - **启动方式可选 Steam URL / 本地 exe（2026-11-23，用户要求「通过 steam 源添加的游戏 游戏启动可选通过 steam 启动（通过运行 steam://rungameid/<AppID> URL 运行 steam 游戏）也可选通过本地 exe 直接启动 默认使用 URL 启动」）**：`library_works.launch_mode` 存用户选择（空 = 默认），`Fetch`/`Store` 经 `decorate` 带回 `launchMode`；`GameService.SetLaunchMode` 切换、`Launch` 按生效方式分流（steam → `ShellExecute` 打开 `steam://rungameid/<appid>`；exe → 原有 `startDetached`）。Steam 源**默认 `steam`**，入库时不再追问本机 exe；切到「本地程序启动」且没有 `game_path` 时先弹系统文件框选一次 exe。
@@ -422,9 +551,9 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 | `MetaKeyValueList` / `MetaTags` / `MetaSubsection` / `MetaTextBlock` | 两列键值表（`dense`/`scrollable`）/ 不可点标签云（`limit` 控制显示个数，超出折 `+N`）/ 小标题块 / 长文本块（`whitespace-pre-wrap` + 限高） |
 | `MetaTagEditor` | 作品详情「标签」：**抓取标签与自定义标签合并成一份** `chip` 列表 —— hover 标签右上角浮出 14px 圆形 ×（`title`/`aria-label` 提示删除，hover 填红），末尾固定一颗同款「+」（点开原地变输入框：先保持原宽、随输入变宽；回车/失焦提交、空输入无视、Esc 取消）；删除/新增**只改 store 的编辑稿**，`tagsDirty` 时标题右侧出现「保存」，点它才整份写库。数据 `metaStore.tagList / tagsDirty / addTag / removeTag / saveTags`（后端 `work_tags` + `work_tag_edits`） |
 | `MetaWorkOverview` / `MetaWorkDetails` | 详情上半（封面+名称+关键字段+标签+入库/启动按钮（含**启动方式下拉**，见 `MetaLaunchModeMenu`）+回执，`props` 含 `stored/gamePath/gamePathExists/launchMode('steam'\|'exe')/steamSource/running/launching/showTags`，`emits: download/launch/changePath/setLaunchMode`；`showTags=false` 时不出标签云 —— 作品库把标签统一交给 `MetaTagEditor`）/ 下半（summary + outline） |
-| `MetaLaunchModeMenu` | 「启动方式」下拉菜单（2026-11-23 用户要求，取代原来的 chip 组）：是**分体按钮的右段**，紧贴 `游戏启动` 右边（左段 `btn-brand-split`、右段 `btn-brand-attach`，中间 `border-l-on-brand` 分隔线）。按钮上显示当前方式简称（`Steam`/`本地`）+ chevron，点开是 `role="menu"` 浮层（`fixed` + `Teleport to=body`，按触发按钮 rect 摆位、下方放不下就翻到上方、宽度不小于按钮），选项 `menuitemradio` + `aria-checked` + 勾选标记。键盘：↓ 展开、↑↓ 移动、Esc 关闭且焦点回按钮、Tab 离开关闭；点组件外/页面滚动也关闭。启动中/运行中禁用（与「更换位置」一致），只 emit `select`，写库仍走 `metaStore.setGameLaunchMode` |
+| ~~`MetaLaunchModeMenu`~~（已删除，见 §0） | 原「启动方式」下拉菜单（2026-11-23 用户要求，取代原来的 chip 组）：是**分体按钮的右段**，紧贴 `游戏启动` 右边（左段 `btn-brand-split`、右段 `btn-brand-attach`，中间 `border-l-on-brand` 分隔线）。按钮上显示当前方式简称（`Steam`/`本地`）+ chevron，点开是 `role="menu"` 浮层（`fixed` + `Teleport to=body`，按触发按钮 rect 摆位、下方放不下就翻到上方、宽度不小于按钮），选项 `menuitemradio` + `aria-checked` + 勾选标记。键盘：↓ 展开、↑↓ 移动、Esc 关闭且焦点回按钮、Tab 离开关闭；点组件外/页面滚动也关闭。启动中/运行中禁用（与「更换位置」一致），只 emit `select`，写库仍走 `metaStore.setGameLaunchMode` |
 | `MetaDownloadButton` / `MetaSavedNotice` / `MetaCoversPath` | **入库 / 游戏启动按钮**：未入库 = `入库`（无封面禁用）/ `入库中`；已入库 = `游戏启动`（play 图标；`running` 时「运行中」+ activity 图标并禁用；`launching` 时「启动中」）+ **Steam 源时右端接 `MetaLaunchModeMenu` 组成分体按钮**（`props` 新增 `steamSource`，`emits` 新增 `setLaunchMode`，向上转发给 `MetaWorkActions` → 页面）+ **exe 方式**下有位置时旁边一个轻量「更换位置」文字按钮（`i-lucide-folder-search`，运行中/启动中禁用）。**exe 方式记了位置但 exe 不存在时启动按钮禁用**（页面同时给提示）；**Steam 方式（`launchMode='steam'`）不需要本地 exe、不禁用也不显示「更换位置」**；路径选择沿用原系统文件框 / 成功回执 + `file://` 打开 / 封面落地目录（失败静默留空） |
-| `MetaCandidateList` / `MetaPager` / `MetaRawJson` / `MetaEmptyState` | 候选行（`@select` 出编号）/ 分页条（`page · pageCount · total` → `@change`，页码显示前 3 + 当前 + 后 3 并带省略号，另有输入页码跳转，复用 `chip`/`chip-active`）/ 原始 JSON + 复制 / 空态 |
+| `MetaCandidateList` / `MetaPager` / `MetaRawJson` / `MetaEmptyState` | 候选行（`@select` 出编号）/ 分页条（2026-11-24 按 shadcn-vue 的 Pagination 重做，并**忽略旧逻辑**：上一页 / 页码组（当前页 outline、其余 ghost、MoreHorizontal 省略号，首尾固定 + 当前页左右各 1 页）/ 下一页，用 `n-button` 实现；不再有「共 N 个结果」与跳页输入，接口为 `page · pageCount` → `@change`；搜索结果列表与分页合并成一张卡片；添加游戏弹窗用 flex + `max-height:86vh` 撑满内容区，只有候选列表滚动、分页固定在卡片底部，弹窗整体垂直居中，不需要滚动窗口）/ 原始 JSON + 复制 / 空态 |
 
 拆分层级：**store = 拿数据 → 积木 = 长什么样 → views = 放哪**。加新页面只需组合积木，不用再写请求。
 
@@ -438,7 +567,7 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 - 筛选面板 `isFilterOpen`，localStorage 键 `todo-tool-panel`（值是 `'filter'` 或 `''`）；`activeFilterCount`（优先级 + 时间）
 - 两个关键 `watch`：`watch(selectedIds, disarm)`；**切换任一筛选 → `clearSelection() + disarm()`**（防止「看不见的选中项被批量操作带上」）
 
-### 4.7 一次性反馈（vue-sonner，2026-11-23）
+### 4.7 一次性反馈（2026-11-24 起改为 naive message；以下 sonner 细节仅作历史参考）
 
 ```
 业务代码（组件）→ utils/toast.ts（toastSuccess / toastError / toastInfo / toastLoading / dismissToast）
@@ -506,7 +635,7 @@ DB 文件 `WeedyBoxDB.db` 建在**可执行文件同目录**（`sqlite.Config{DB
 
 rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-full-16px`、`will-change-[width]` 全部 **unmatched 且静默丢弃**。需要半透明请用 `bg-secondary-soft` 这类已定义类。
 
-### 6.5 按钮体系（2026-11-23 按 shadcn-vue 的 button 默认样式重做）
+### 6.5 按钮体系（2026-11-23 按 shadcn-vue 重做 → 2026-11-24 已迁到 naive-ui，见 §0）
 
 用户要求「button 默认样式修改参考 shadcn-vue（unocss 级别）」，落地方式是把 shadcn 的**形状与状态**照搬，颜色仍全部走本项目 token：
 
@@ -528,7 +657,7 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 
 - **`frontend/package-lock.json` 必须入库**（`vite` 锁 `~8.2.2`）。忽略它会让 clone 重新解析到 vite **8.3.0**，触发 UnoCSS HMR 回归（上游 [unocss#5331](https://github.com/unocss/unocss/issues/5331)）：**动态导入的路由页（设置/TODO）样式不生效，首页正常**。症状判定：`node -e "console.log(require('./frontend/node_modules/vite/package.json').version)"`。
 - **`go.sum` 被 `.gitignore:18` 忽略且不在版本控制内** —— 首次构建需联网由 `go mod tidy` 重新生成。
-- **依赖变更只有 vue-sonner**（2026-11-23，用户点名要引入）：`frontend/package.json` 新增 `vue-sonner@2.0.9`（样式 `vue-sonner/style.css` 在 `main.ts` 引入）。除此之外 `frontend/package.json`、根 `package.json` 自设计系统重构以来未变，**不要顺手加别的前端依赖**。`go.mod` 的模块集合也没变，但 `golang.org/x/sys` 因 Steam 扫描要用 `windows/registry`，从 indirect 提升为 **direct require**（仍是 v0.47.0，本地早已存在，无新下载；`go mod tidy -diff` 为空）。
+- **依赖变更（2026-11-24）**：新增 `naive-ui@^2.45.3`（用户点名引入，全站控件换它），**移除 `vue-sonner`**；除此之外没有任何新的前端依赖。控件外观的唯一来源是 `src/styles/naiveTheme.ts`（不再有 btn-*/input-theme 这类 shortcut 要三处同步）。`go.mod` 的模块集合也没变，但 `golang.org/x/sys` 因 Steam 扫描要用 `windows/registry`，从 indirect 提升为 **direct require**（仍是 v0.47.0，本地早已存在，无新下载；`go mod tidy -diff` 为空）。
 - **桌面端离线优先**：不引联网字体（Plus Jakarta Sans 只在 font-family 里作为可选首选项，实际回退到系统栈），图标走 `presetIcons` 构建期内联。
 
 ### 7.2 UnoCSS 七类静默失效（本项目的核心坑，改样式前必读）
@@ -623,7 +752,7 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 | `frontend/src/components/settings/LanguageSelect.vue` | 仅占位，i18n 未实现 |
 | `frontend/src/components/todo/TodoItem.vue` | 描述**只读展示，尚不能编辑**（后端 `Update` 已支持 `description`） |
 | `frontend/src/views/test.vue` | 薄壳（只渲染 `MetaApiTestCard`），DLsite **调试页**（路由 `/testing`，见 §3.3） |
-| `frontend/src/views/WorksPage.vue` | 作品库：2026-11-23 已按 Steam 商店页排版重做（`MetaWorkHero` 大背景图 + `MetaWorkSidebar` 左信息栏 + 右主区 `MetaWorkActions`/`MetaSteamStats`/`MetaTagEditor`/`MetaWorkDetails`，见 §3.3 的 `/works` 行）+ **「标签」**（`MetaTagEditor`：抓取标签与自定义标签合并成一份，hover 右上角 × 删除、末尾「+」原地添加，改完点「保存」整份写进 `work_tags`），缓存优先。**侧栏无入口**，只从游戏库点封面进入（用户要求）。搜索入口在游戏库网格末尾的加号圆钮（「添加游戏」窗里的「手动搜索」）。**尚未做**收藏、列表分页、批量入库、历史记录；从游戏库进来后没有显式「返回游戏库」按钮（靠侧栏点游戏库） |
+| `frontend/src/views/WorksPage.vue` | 作品库：**2026-11-24 第二次重排（见 §0.5）**——`MetaWorkHero` 大背景图 → `MetaWorkTopBar` 动作栏 → 下划线 tab（作品信息 / 游戏统计 / 启动配置 / 编辑 / 评价）；`MetaWorkSidebar` 已删除；「编辑」页用 `MetaWorkEditorForm` 改全部元数据 + `MetaTagEditor` 改标签，都点保存才写库。缓存优先。**侧栏无入口**，只从游戏库点封面进入（用户要求）。搜索入口在游戏库顶栏「添加游戏」（弹窗里的「手动搜索」）。**尚未做**收藏、列表分页、批量入库、历史记录；从游戏库进来后没有显式「返回游戏库」按钮（靠侧栏点游戏库） |
 | `frontend/src/views/LibraryPage.vue` | 游戏库（路由 `/library`）：网格 + 点封面跳详情 + 顶栏「添加游戏」按钮（打开「添加游戏」窗：扫描添加 / 手动搜索，候选每页 10 个）。**卡片上没有任何操作按钮**：顶栏「批量操作」进入选卡模式后，操作栏（全选 / 删除所选，连点两下确认）展开在刷新按钮所在的卡片里，删除走 `libraryStore.removeMany`。点封面进 `/works` 后可「游戏启动」（Steam 源默认 `steam://rungameid/<appid>`，也可切本地 exe）。**尚未做**游戏库列表排序/分页、在网格卡片上直接启动/打开所在文件夹、封面缺失时自动补下 |
 | `internal/service/library_service.go` | 游戏库只跑了离线单元测试（`internal/database/library_repo_test.go`），**Wails 端的真实接线未实机验证** |
 | `internal/service/getMeta/*_test.go` + `testdata/` | 本工作区当前是**已从磁盘删除（未提交）**状态（属用户「裁剪」清理），恢复：`git checkout -- internal/service/getMeta` |
@@ -733,7 +862,7 @@ rules 是**精确字符串匹配**：`bg-secondary/50`、`text-primary/70`、`w-
 
 | **游戏库批量操作 / TODO 去掉完成 / Steam 启动方式**（2026-11-23，用户三条要求） | ①游戏库：用户要求「只有批量操作游戏库时才弹出操作栏 按钮删除等操作 对游戏卡片的操作不显示在游戏卡片上 批量操作按钮改在刷新按钮所在卡片上」——卡片上的删除按钮与 `.lib-del` 整体删除，顶栏加「批量操作」，进入后操作栏（`MetaSection` 的默认插槽，就在刷新按钮那张卡里）提供全选/删除所选；选卡态 = 封面内侧 2px 品牌色内描边（`inset box-shadow`，不改尺寸），`libraryStore.removeMany` 逐条删、失败汇总。②TODO：用户要求「完成按钮 完成等 TODO 功能删除」——移除行内完成按钮、批量完成、完成状态筛选、完成率统计与 `todoStore` 的 completion 相关状态；`TodoStats` 改为按优先级计数（前端算，不再调 `GetStats`）。后端 `todos.completed` 与 `ToggleComplete/GetStats` 保留（删列需迁移）。③Steam 启动方式：用户要求「通过 steam 源添加的游戏 游戏启动可选通过 steam 启动（通过运行 steam://rungameid/<AppID> URL 运行）也可选通过本地 exe 直接启动 默认使用 URL 启动」——`library_works.launch_mode` + `GameService.SetLaunchMode`；`Launch` 按生效方式分流，Steam 默认 `steam`（`ShellExecute` 打开 URL，不要求本机 exe），exe 方式保持原逻辑；`/works` 概览加 chip，Steam 源入库不再追问 exe。 |
 
-| **手动搜索与扫描添加改成「多数据来源」**（2026-11-23） | 用户原话：「自动扫描游戏功能 自动搜索时应该显示多数据来源 手动搜索只显示DLsite数据源 应该也显示steam数据源 以demon root这个名称进行测试」。①手动搜索去掉「搜索来源」chip，`metaStore.runMultiSearch` 用 `Promise.allSettled` 同时打 DLsite 与 Steam，弹窗按来源分组展示（Steam 组在上、DLsite 组在下，分页只归 DLsite）；②扫描结果从「一条目一行」改成「一条目 × 来源」最多两行：`ScanMatch` 增加 `source` + `entryIndex`，勾选与入库都按行（同一游戏收两份也不冲突 —— `UNIQUE(source, work_id)`）；③`steamNameScore` 从前缀占比换成**编辑距离相似度**：`demon root` vs `Demons Roots` 只差一个字母，旧算法给 0，导致扫描永远只出 DLsite 一行（实测烟测见 §3.11）。Steam 库来源的扫描仍只出 Steam 行（元数据来源固定）。 |
+| **手动搜索与扫描添加改成「多数据来源」**（2026-11-23） | 用户原话：「自动扫描游戏功能 自动搜索时应该显示多数据来源 手动搜索只显示DLsite数据源 应该也显示steam数据源 以demon root这个名称进行测试」。①手动搜索去掉「搜索来源」chip，`metaStore.runMultiSearch` 用 `Promise.allSettled` 同时打 DLsite 与 Steam，弹窗按来源分开显示（2026-11-24 起改为源切换器，默认 DLsite，无 DLsite 结果时落到 Steam；分页只归 DLsite）；②扫描结果从「一条目一行」改成「一条目 × 来源」最多两行：`ScanMatch` 增加 `source` + `entryIndex`，勾选与入库都按行（同一游戏收两份也不冲突 —— `UNIQUE(source, work_id)`）；③`steamNameScore` 从前缀占比换成**编辑距离相似度**：`demon root` vs `Demons Roots` 只差一个字母，旧算法给 0，导致扫描永远只出 DLsite 一行（实测烟测见 §3.11）。Steam 库来源的扫描仍只出 Steam 行（元数据来源固定）。 |
 
 ---
 

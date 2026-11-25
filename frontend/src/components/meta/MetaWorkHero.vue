@@ -1,7 +1,10 @@
 <!-- frontend/src/components/meta/MetaWorkHero.vue
      作品详情页顶部的大图区（/works 新排版，用户 2026-11-23 按 Steam 商店页布局定稿）：
-     背景大图铺满 → 压一层到页面底色的渐变遮罩 → 左下是来源/发售日/类型的小字 + 作品名 +
-     标签 chips，右下是竖版封面（**用游戏库卡片那张 cover 图**，未入库时才退回远程封面）。
+     背景大图铺满 → 压一层到页面底色的渐变遮罩 → 左下是来源/社团/发售日/形式/评分的小字 +
+     作品名 + 标签 chips，右下是竖版封面（**用游戏库卡片那张 cover 图**，未入库时才退回远程封面）。
+     2026-11-24 用户要求：原来左信息栏里的「社团（开发商）」「评分」并进这行小字，
+     左信息栏整块删除 —— 所以这里用 kickerParts 统一拼「源 · 社团 · 发售日 · 形式 · 评分」，
+     不再各自写死分隔符（少一项就少一个点）。
      背景图的优先级在 stores/metaStore.ts 的 backgroundUrl 里算好了：
        Steam 源 = 本机 librarycache 的 library_hero*，没有才用商店接口的预览图；
        DLsite 源 = 画廊第二张预览图（第一张是游戏库卡片封面）。
@@ -21,19 +24,10 @@
 
     <div class="work-hero-body">
       <div class="flex-1 min-w-0 flex flex-col gap-2.5">
-        <p class="work-hero-kicker">
-          <span v-if="sourceLabel">{{ sourceLabel }}</span>
-          <template v-if="work.releaseDate">
-            <span v-if="sourceLabel" class="work-hero-dot" aria-hidden="true">·</span>
-            <span>{{ work.releaseDate }}</span>
-          </template>
-          <template v-if="work.workType">
-            <span class="work-hero-dot" aria-hidden="true">·</span>
-            <span>{{ work.workType }}</span>
-          </template>
-          <template v-if="work.ageRating">
-            <span class="work-hero-dot" aria-hidden="true">·</span>
-            <span>{{ work.ageRating }}</span>
+        <p v-if="kickerParts.length" class="work-hero-kicker">
+          <template v-for="(part, index) in kickerParts" :key="part">
+            <span v-if="index > 0" class="work-hero-dot" aria-hidden="true">·</span>
+            <span>{{ part }}</span>
           </template>
         </p>
 
@@ -67,7 +61,7 @@ import { computed, ref, watch } from 'vue'
 import type { WorkMeta } from '../../services/metaService'
 
 /** hero 里最多显示几个标签（其余折成「+N」，避免把标题挤爆） */
-const HERO_TAG_LIMIT = 12
+const HERO_TAG_LIMIT = 10
 
 const props = withDefaults(
   defineProps<{
@@ -105,12 +99,31 @@ watch(
 const showBackground = computed(() => Boolean(props.backgroundSrc) && backgroundOk.value)
 const visibleTags = computed(() => props.tags.slice(0, HERO_TAG_LIMIT))
 const hiddenTagCount = computed(() => Math.max(0, props.tags.length - HERO_TAG_LIMIT))
+
+/**
+ * 标题上方那行小字（用户 2026-11-24 定稿）：源 · 社团/开发商 · 发售日 · 作品形式 · 评分。
+ * 「社团」取 work.maker —— DLsite 是社团名、Steam 是开发商（getFromSteam 里做的映射）；
+ * 评分带评价条数（与左栏原来的「评分 4.5（123 条）」口径一致），没有条数就只显示分数。
+ */
+const kickerParts = computed(() => {
+  const parts: string[] = []
+  if (props.sourceLabel) parts.push(props.sourceLabel)
+  if (props.work.maker) parts.push(props.work.maker)
+  if (props.work.releaseDate) parts.push(props.work.releaseDate)
+  if (props.work.workType) parts.push(props.work.workType)
+  const rating = props.work.rating?.trim()
+  if (rating) {
+    const count = props.work.ratingCount?.trim()
+    parts.push(count ? `评分 ${rating}（${count} 条）` : `评分 ${rating}`)
+  }
+  return parts
+})
 </script>
 
 <style scoped>
 /* ===== 大图区 =====
    高度用 min-height：窗口宽时图铺得开，窄时也不至于把标题挤出卡片。
-   圆角 + 描边与全站卡片一致（card-flat 的长相），图片不溢出圆角。 */
+   2026-11-25 全站卡片改方形：大图区与竖版封面都去掉圆角（描边保留）。 */
 .work-hero {
   position: relative;
   display: flex;
@@ -118,7 +131,7 @@ const hiddenTagCount = computed(() => Math.max(0, props.tags.length - HERO_TAG_L
   min-height: 340px;
   overflow: hidden;
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--color-bg-secondary);
   isolation: isolate;
 }
@@ -136,6 +149,8 @@ const hiddenTagCount = computed(() => Math.max(0, props.tags.length - HERO_TAG_L
   height: 100%;
   object-fit: cover;
   z-index: 0;
+  /* 用户 2026-11-25 澄清：hero 画面本身不模糊、也不加反光带。
+     模糊拷贝只用来给周边 UI 做遮罩（见 WorksPage 的 .work-ambient 与动作栏的 ::after）。 */
 }
 
 /* 压两层渐变（都只做「压暗」，不往页面底色过渡 —— 早期版本用
@@ -233,7 +248,7 @@ const hiddenTagCount = computed(() => Math.max(0, props.tags.length - HERO_TAG_L
   aspect-ratio: 2 / 3;
   overflow: hidden;
   border: 1px solid var(--color-border-dark);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--color-bg-secondary);
   color: var(--color-text-muted);
   box-shadow: var(--color-shadow-heavy);

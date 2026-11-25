@@ -1,6 +1,13 @@
 # 样式系统
 
-三层结构：**CSS 变量定义颜色** → **UnoCSS rules 映射变量** → **shortcuts 组合复用**。
+> ⚠️ **2026-11-25 起主题色不再写在 `global.css`**：一套主题只写四个颜色，放在
+> `frontend/src/styles/themePresets.ts`；其余 `--color-*` 由 `frontend/src/styles/theme.ts`
+> 按对比度目标统一推导，并在启动/换肤时写到 `<html>` 的 inline style。
+> 控件外观仍由 `frontend/src/styles/naiveTheme.ts` 接管（naive-ui），UnoCSS 只负责布局与色值映射。
+> 本文 §1 的色值表、§3 的 `btn-*` / `input-theme` / `chip-*` shortcut **均已过时**；
+> 最新口径以 `PROJECT_CONTEXT.md` §0.1 / §0.6 为准。
+
+三层结构：**四色主题（`themePresets.ts` + `theme.ts`）** → **UnoCSS rules 映射变量** → **shortcuts 组合布局**。
 
 ## 0. 盒模型基准（`box-sizing: border-box`）⚠️
 
@@ -19,21 +26,33 @@
 于是「定了高度又带 padding」的每一层都溢出，逐级累积。
 **任何"最后一条/底部够不到"类问题，先查这一条。**
 
-## 1. CSS 变量 `src/styles/global.css`
+## 1. 四色主题 `src/styles/themePresets.ts` + `src/styles/theme.ts`
 
-`:root` 浅色（:13），`[data-theme="dark"]` 深色（:60）。`data-theme` 由 `stores/Theme.ts: applyTheme()` 写入 `<html>`。
+一套主题 = `{ light: 四色, dark: 四色 }`，四色依次是：
 
-| 类别 | 变量 |
+| 字段 | 角色 |
 | --- | --- |
-| 背景 | `--color-bg-base #f5f5f7` / `-primary #fff` / `-secondary #f0f0f2` / `-secondary-soft`（60% 透明）/ `-tertiary` / `-hover` / `-card` |
-| 文本 | `--color-text-primary #1a1a22` / `-secondary` / `-tertiary` / `-muted` / `-inverse` |
-| 品牌 | `--color-primary #5b7a8a` / `-hover` / `-active` / `-light`（12% 透明） |
-| 边框 | `--color-border` / `-light` / `-dark` |
-| 功能 | `--color-success` `--color-warning` `--color-danger` `--color-info` |
-| 阴影 | `--color-shadow` `--color-shadow-heavy` |
-| 侧边栏 | `--sidebar-bg` `--sidebar-border` |
+| `bgPrimary` | 主要背景色（页面底） |
+| `bgSecondary` | 次一级背景色（卡片 / 浮层 / 输入框） |
+| `bgTertiary` | 再次一级背景色（输入 / 悬停） |
+| `brand` | 品牌色（最次一级；填充用 `--color-primary`，文字用 `--color-brand-text`） |
 
-全局隐藏滚动条（:107）。**新增颜色必须同时补 `:root` 与 `[data-theme="dark"]` 两处。**
+默认 `nightfall` 夜岚：深色 `#404258 / #474E68 / #50577A / #6B728E`；`ember` 暖砂保留迁移前的暖米色 + 青绿。
+
+`theme.ts` 的 `buildThemeVars()` 由四色推导所有变量（文字按对比度目标调亮/调暗、控件描边按 3:1、
+品牌文字按 4.5:1；`bgCard / bgHover / bgBase / sidebar / 状态色 / 阴影 / 滚动条` 也在这里算）。
+`applyThemeVars()` 写到 `<html>`；`stores/Theme.ts` 负责持久化 `theme-id` 并触发 naive 主题同步。
+
+**新增主题只改 `themePresets.ts`**，不要再去 `global.css` 手写颜色；设置页「主题配色」会自动出现新选项。
+
+### 卡片形状与间隔（2026-11-25）
+
+- 全站卡片直角：`naiveTheme.ts` 的 `Card.borderRadius: '0'`；`card` shortcut 也是 `rounded-none`。
+  批量浮条也已改方形；弹窗/浮层（modal、popover、dropdown、toast）仍保留圆角，和内容卡片区分。
+- 卡片贴边堆叠用 `global.css` 的 `.card-stack`：`gap: 0`，后一张卡片 `border-top-width: 0 !important`，
+  相邻卡片之间只保留前一张的下边框；内部共享线用 **2px + `--color-border`**（比 1px 外框更重）。
+  **不要用负 margin 叠边框**（DPR 1.25 下容易叠成粗线）。
+- TODO 行之间保留 8px 间隔、游戏库 cover 网格保留原 gap（用户明确要求这两处不改间隔）。
 
 ## 2. UnoCSS 规则 `frontend/uno.config.ts`
 
@@ -65,32 +84,30 @@
 | 阴影 | `shadow-theme` `shadow-theme-heavy` |
 | 动效 | `will-change-width` |
 
-## 3. 常用 shortcuts
+## 3. 常用 shortcuts（只剩布局 / 结构）
+
+2026-11-24 引入 naive-ui 后，`btn-*` / `input-theme` / `chip-*` / `theme-option*` / `title-lg` 等控件 shortcut **已删除**，
+控件外观只改 `styles/naiveTheme.ts`。当前 shortcuts 见 `uno.config.ts`：
 
 | 快捷类 | 用途 |
 | --- | --- |
-| `card` / `card-hover` | 卡片容器 / 可悬停卡片 |
-| `btn-brand` / `btn-ghost` / `btn-delete` | 主按钮 / 幽灵按钮 / 圆形删除按钮 |
-| `input-theme` | 输入框统一样式 |
-| `title-lg/-md/-sm` `subtitle` | 标题层级 |
-| `flex-center` `flex-between` `flex-col-center` `absolute-center` | 布局 |
-| `main-content` | 主内容区 |
-| `titlebar` `titlebar-btn` `titlebar-btn-close` | 标题栏 |
-| `sidebar` `sidebar-header` `logo-icon` `logo-text` | 侧边栏框架 |
-| `sidebar-nav-top` `sidebar-nav-bottom` `nav-item` `nav-item-active` `nav-icon` `nav-text` `nav-badge` | 侧边栏导航 |
-| `settings-page` `settings-section` `section-header` `settings-item` `item-label` `item-description` `item-control` | 设置页 |
-| `filter-bar` `filter-group` `filter-label` `filter-chips` | 筛选栏骨架（横向排列 + 横向滚动） |
-| `chip` / `chip-active` | 药丸按钮：未选中 / 选中（品牌色） |
-| `theme-options` `theme-option` `theme-option-active` `theme-toggle` `version-text` | 主题与版本控件 |
+| `flex-center` `flex-col-center` | 布局 |
+| `icon-xs` `icon-sm` `icon-md` `icon-lg` `icon-xl` | 图标尺寸五档 |
+| `card` | 还没有换成 n-card 的容器（1px 边框 + 直角，无投影） |
+| `titlebar` | 标题栏 |
+| `sidebar` `sidebar-header` `logo-icon` `logo-text` `sidebar-nav-top` `sidebar-nav-bottom` | 侧边栏外壳（**导航项本身是 naive 的 n-menu**，外观在 `naiveTheme.ts` 的 `Menu` 段） |
+| `filter-bar` `filter-group` `filter-label` | 筛选栏骨架（横向排列 + 横向滚动） |
+| `todo-desc-block` | TODO 描述块 |
+| `settings-page` `settings-title` `settings-container` `settings-item` `item-info` `item-label` `item-description` `item-control` | 设置页 |
 
 完整定义见 `uno.config.ts` rules :14-66、shortcuts :68-161。
 
 ## 4. 用法示例
 
 ```vue
-<div class="card flex-between">
-  <span class="title-sm">标题</span>
-  <button class="btn-brand">确定</button>
+<div class="card flex items-center justify-between gap-3">
+  <span class="text-sm font-medium text-primary">标题</span>
+  <n-button size="small" type="primary">确定</n-button>
 </div>
 ```
 

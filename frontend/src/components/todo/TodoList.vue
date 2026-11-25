@@ -4,9 +4,7 @@
 
      批量操作模型：
        行的左侧选择框负责「选中哪些」，工具栏右侧的「删除所选」
-       对选中集合执行删除。
-       按钮要求**连点两下**（第一下进入待确认态，第二下才执行），
-       并且不会弹任何确认框或展开额外面板。
+       对选中集合执行删除，确认走 naive 的 n-popconfirm 气泡。
        （「完成全部 / 取消完成」已随完成功能一起移除，2026-11-23。） -->
 <template>
   <div class="todo-container select-none h-full min-h-0 flex flex-col gap-3">
@@ -30,61 +28,65 @@
     <!-- 工具行：左「筛选」，右批量操作（有选中才出现） -->
     <div v-if="hasTodos" class="flex flex-col flex-shrink-0">
       <div class="flex items-center gap-1">
-        <button
-          type="button"
-          class="panel-toggle flex items-center gap-1.5 px-2 py-1 rounded-md text-xs cursor-pointer border-none bg-transparent hover:bg-hover transition-colors duration-200"
-          :class="!isFilterOpen && 'text-tertiary'"
+        <n-button
+          quaternary
+          size="tiny"
           :aria-expanded="isFilterOpen"
           aria-controls="todo-filter-panel"
           @click="toggleFilterPanel"
         >
-          <span class="i-lucide-sliders-horizontal icon-xs" aria-hidden="true" />
+          <template #icon>
+            <span class="i-lucide-sliders-horizontal icon-xs" aria-hidden="true" />
+          </template>
           {{ isFilterOpen ? '收起筛选' : '筛选' }}
           <span
             v-if="activeFilterCount"
-            class="ml-0.5 px-1.5 rounded-full text-[10px] font-medium bg-brand-light text-brand tabular-nums"
+            class="ml-1 px-1.5 rounded-full text-[10px] font-medium bg-brand-light text-brand tabular-nums"
           >
             {{ activeFilterCount }}
           </span>
-        </button>
+        </n-button>
 
         <!-- 全选当前可见（键盘可达的替代路径：逐个点行内选择框亦可） -->
-        <button
+        <n-button
           v-if="visibleIds.length"
-          type="button"
-          class="panel-toggle flex items-center gap-1.5 px-2 py-1 rounded-md text-xs cursor-pointer border-none bg-transparent hover:bg-hover transition-colors duration-200"
-          :class="allVisibleSelected ? 'text-brand' : 'text-tertiary'"
+          quaternary
+          size="tiny"
+          :type="allVisibleSelected ? 'primary' : 'default'"
           :aria-pressed="allVisibleSelected"
           @click="toggleSelectAll"
         >
-          <span :class="allVisibleSelected ? 'i-lucide-square-check-big icon-xs' : 'i-lucide-square icon-xs'" aria-hidden="true" />
+          <template #icon>
+            <span :class="allVisibleSelected ? 'i-lucide-square-check-big icon-xs' : 'i-lucide-square icon-xs'" aria-hidden="true" />
+          </template>
           {{ allVisibleSelected ? '取消全选' : '全选' }}
-        </button>
+        </n-button>
 
         <!-- 批量删除：对「已选中」执行。没有选中时不渲染，避免一排禁用按钮占位 -->
         <div v-if="selectedIds.length" class="ml-auto flex items-center gap-1.5">
-          <button
-            type="button"
-            class="bulk-btn bulk-delete"
-            :class="{ 'is-armed': armed === 'delete' }"
-            :style="{ '--bulk-accent': 'var(--color-danger)' }"
-            :disabled="deleting"
-            :aria-label="deleting
-              ? '正在删除'
-              : armed === 'delete'
-                ? `再次点击确认删除这 ${selectedIds.length} 项`
-                : `删除选中的 ${selectedIds.length} 项（需连点两下确认）`"
-            @click="handleDeleteClick"
-            @mouseleave="disarm"
-            @blur="disarm"
+          <n-popconfirm
+            positive-text="删除"
+            negative-text="取消"
+            :positive-button-props="{ type: 'error' }"
+            @positive-click="deleteSelected"
           >
-            <span
-              :class="deleting ? 'i-lucide-loader-circle icon-xs spin' : armed === 'delete' ? 'i-lucide-check icon-xs' : 'i-lucide-trash-2 icon-xs'"
-              aria-hidden="true"
-            />
-            {{ deleting ? '删除中…' : armed === 'delete' ? '再点一次确认' : '删除所选' }}
-            <span class="bulk-count">{{ selectedIds.length }}</span>
-          </button>
+            <template #trigger>
+              <n-button
+                type="error"
+                size="small"
+                :loading="deleting"
+                :disabled="deleting"
+                :aria-label="`删除选中的 ${selectedIds.length} 项`"
+              >
+                <template #icon>
+                  <span class="i-lucide-trash-2 icon-xs" aria-hidden="true" />
+                </template>
+                删除所选
+                <span class="bulk-count">{{ selectedIds.length }}</span>
+              </n-button>
+            </template>
+            删除选中的 {{ selectedIds.length }} 项？此操作不可撤销。
+          </n-popconfirm>
         </div>
       </div>
 
@@ -102,47 +104,53 @@
       </Transition>
     </div>
 
-    <!-- 操作反馈走全局浮层（components/AppToaster.vue）：不在本页占位，
-         出现/消失都不会把下面的列表卡片往下推。文案由 utils/toast.ts 统一管理。 -->
+    <!-- 操作反馈走全局浮层（styles/naive.ts 的 n-message，入口 utils/toast.ts）：不在本页占位，
+         出现/消失都不会把下面的列表卡片往下推。 -->
 
-    <!-- 列表卡片：flex-1 吃掉剩余高度并内部滚动 -->
+    <!-- 列表卡片：flex-1 吃掉剩余高度并内部滚动；上下边缘按滚动位置渐隐（v-scroll-fade） -->
     <!-- 不要用 max-h-[calc(100vh-Npx)] 固定扣减：那个 N 算不准，且描述框一展开卡片又被下推，
          导致最后一条滚不到底。交给 flex 自适应即无需任何魔法数字。 -->
-    <div class="card p-2 flex-1 min-h-[120px] overflow-y-auto scrollbar-theme flex flex-col gap-2">
+    <div
+      v-scroll-fade
+      class="scroll-fade card p-2 flex-1 min-h-[120px] overflow-y-auto scrollbar-theme flex flex-col gap-2"
+    >
       <!-- 加载状态 -->
-      <div v-if="todoStore.loading" class="flex-1 flex-col-center py-8 text-tertiary text-sm gap-2">
-        <span class="i-lucide-loader-circle icon-lg spin" aria-hidden="true" />
-        加载中…
+      <div v-if="todoStore.loading" class="flex-1 flex-col-center py-8 gap-2">
+        <n-spin size="medium" description="加载中…" />
       </div>
 
       <!-- 错误 -->
-      <div v-else-if="todoStore.error" class="flex-1 flex-col-center py-8 text-danger text-sm gap-2" role="alert">
-        <span class="i-lucide-circle-alert icon-lg" aria-hidden="true" />
-        <span>{{ todoStore.error }}</span>
-        <button type="button" class="chip mt-1" @click="todoStore.loadTodos()">
-          <span class="i-lucide-rotate-ccw icon-xs" aria-hidden="true" />
+      <div v-else-if="todoStore.error" class="flex-1 flex-col-center py-8 gap-2" role="alert">
+        <n-alert type="error" :bordered="true" class="w-full max-w-[420px]">{{ todoStore.error }}</n-alert>
+        <n-button size="small" quaternary @click="todoStore.loadTodos()">
+          <template #icon>
+            <span class="i-lucide-rotate-ccw icon-xs" aria-hidden="true" />
+          </template>
           重新加载
-        </button>
+        </n-button>
       </div>
 
       <!-- 空状态：本来就没有数据 -->
-      <div v-else-if="!hasTodos" class="flex-1 flex-col-center py-8 text-tertiary gap-2">
-        <span class="i-lucide-inbox icon-xl text-muted" aria-hidden="true" />
-        <p class="m-0 text-sm">还没有 TODO</p>
-        <p class="m-0 text-xs text-muted">在上方输入框写下第一件事，按 Enter 即可添加</p>
-      </div>
+      <n-empty v-else-if="!hasTodos" class="flex-1 py-8" description="还没有 TODO">
+        <template #extra>
+          <p class="m-0 text-xs text-muted">在上方输入框写下第一件事，按 Enter 即可添加</p>
+        </template>
+      </n-empty>
 
       <!-- 空状态：被筛选条件挡住 -->
-      <div v-else-if="todoStore.isFilteredEmpty" class="flex-1 flex-col-center py-8 text-tertiary gap-2">
-        <span class="i-lucide-search-x icon-xl text-muted" aria-hidden="true" />
-        <p class="m-0 text-sm">当前筛选条件下没有匹配的 TODO</p>
-        <button type="button" class="chip mt-1" @click="todoStore.resetFilters()">
-          <span class="i-lucide-rotate-ccw icon-xs" aria-hidden="true" />
+      <div v-else-if="todoStore.isFilteredEmpty" class="flex-1 flex-col-center py-8 gap-2">
+        <n-empty description="当前筛选条件下没有匹配的 TODO" />
+        <n-button size="small" quaternary @click="todoStore.resetFilters()">
+          <template #icon>
+            <span class="i-lucide-rotate-ccw icon-xs" aria-hidden="true" />
+          </template>
           恢复默认筛选
-        </button>
+        </n-button>
       </div>
 
       <!-- TODO 列表：用 TransitionGroup 做进出场，删除/新增不再生硬跳变 -->
+      <!-- TODO 行之间保留 8px 间隔（用户 2026-11-25 要求）：行本身已是方形，
+           但列表行需要可点的呼吸感，不做「只靠 1px 边框」的贴边堆叠。 -->
       <TransitionGroup v-else name="list" tag="div" class="relative flex flex-col gap-2">
         <TodoItem
           v-for="todo in todoStore.filteredTodos"
@@ -162,6 +170,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { NAlert, NButton, NEmpty, NPopconfirm, NSpin } from 'naive-ui'
 import { useTodoStore } from '../../stores/todoStore'
 import { useAutoHeightStore } from '../../stores/autoHeightStore'
 import { copyText } from '../../utils/clipboard'
@@ -215,7 +224,6 @@ function toggleSelected(id: number) {
   selectedIds.value = selectedIds.value.includes(id)
     ? selectedIds.value.filter((x) => x !== id)
     : [...selectedIds.value, id]
-  disarm()
 }
 
 const toggleSelectAll = () => {
@@ -226,47 +234,26 @@ const toggleSelectAll = () => {
   } else {
     selectedIds.value = [...new Set([...selectedIds.value, ...visibleIds.value])]
   }
-  disarm()
 }
 
 const clearSelection = () => {
   selectedIds.value = []
-  disarm()
 }
 
-// ===== 批量删除：连点两下 =====
-// 「完成」相关的批量操作已随完成功能移除（2026-11-23），这里只剩删除。
-const armed = ref<'delete' | null>(null)
+// ===== 批量删除 =====
+// 确认交给 n-popconfirm（2026-11-24 从「连点两下 + 移开撤销」换过来），
+// 因此不再需要 armed / disarm 这套本地状态。
 const deleting = ref(false)
-
-const disarm = () => {
-  armed.value = null
-}
-
-// 选择集合一变就撤销待确认态：避免「看到的是 A，确认时动的是 B」
-watch(selectedIds, disarm)
 
 // 切换筛选时清空所有选择。
 // 理由：筛选会换掉列表里可见的条目，留着旧选择会造成
 // 「看不见的选中项被批量删除带上」，极易误操作。
-// 同时撤销待确认态，避免按钮停在 armed 状态。
 watch(
   () => [todoStore.filters.priority, todoStore.filters.time],
   () => {
     clearSelection()
-    disarm()
   }
 )
-
-function handleDeleteClick() {
-  if (deleting.value || !selectedIds.value.length) return
-  if (armed.value !== 'delete') {
-    armed.value = 'delete'
-    return
-  }
-  armed.value = null
-  void deleteSelected()
-}
 
 async function deleteSelected() {
   const ids = [...selectedIds.value]
@@ -298,7 +285,7 @@ function setBusy(id: number, busy: boolean) {
 
 // ===== 一次性反馈 =====
 // 只显示「已删除」「已复制」这类一次性结果，长时间停留的错误统一由 store.error 渲染在列表区。
-// 反馈条本身在 components/AppToaster.vue（fixed 浮层），这里只负责说什么。
+// 反馈条本身是 utils/toast.ts → naive 的 n-message（fixed 浮层），这里只负责说什么。
 
 /** 行内动作的通用壳：置忙 → 执行 → 成功/失败提示 → 解除置忙 */
 async function runWithBusy(
@@ -320,7 +307,7 @@ async function runWithBusy(
   }
 }
 
-// 单条删除：确认动作由 TodoItem 的「连点两下」承担，这里不弹确认框。
+// 单条删除：确认由 TodoItem 的 n-popconfirm 承担，这里不弹确认框。
 // 删除后条目就不在列表里了，所以要在删除前把标题取出来当提示的第二行。
 const handleDelete = (id: number) => {
   const title = todoStore.todos.find((todo) => todo.id === id)?.title?.trim() ?? ''
@@ -328,7 +315,8 @@ const handleDelete = (id: number) => {
 }
 
 // 点击卡片复制「标题 + 描述」。
-// 复制能力与提示文案集中在这里：写剪贴板失败时用同一条 toast 报错，不弹系统对话框。
+// 2026-11-25 用户明确要求「TODO 复制成功后添加土司提醒」——
+// 这是四类保留提示之外的一个显式例外；失败仍报错。
 async function handleCopy(text: string) {
   try {
     await copyText(text)
@@ -401,54 +389,14 @@ onMounted(() => {
 }
 
 /* ===== 一次性反馈 =====
-   已改为全局浮层（components/AppToaster.vue → vue-sonner），本文件不再需要反馈条样式：
+   已改为全局浮层（utils/toast.ts → naive 的 n-message），本文件不再需要反馈条样式：
    旧实现是列表容器里的一个 flex 子项，弹出/消失会把下面的列表卡片上下推动，
    而且只有一种字号、没有图标层次。 */
 
-/* ===== 批量操作按钮（删除所选）=====
-   现在只剩这一个按钮（完成相关的两个已随完成功能移除）：
-     默认态：透明底 + accent 描边 + accent 文字
-     hover  ：填 accent + 反色文字
-     待确认 ：同 hover + 填 accent（.is-armed），不再额外加外描边
-   把颜色放在 scoped 里而不是模板工具类，是为了避免再踩
-   「UnoCSS 出序/同权重覆盖」那类静默失效——这里只有一处决定颜色。
-   反色文字必须用随主题翻转的语义变量：深色主题下 danger 是亮色，
-   白字压上去只有 1.7~2.8:1，不达标。 */
-.bulk-btn {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.25rem 0.625rem;
-  border-radius: 0.375rem;
-  font-size: 0.75rem;
-  font-weight: 500;
-  cursor: pointer;
-  border: 1px solid var(--bulk-accent);
-  background-color: transparent;
-  color: var(--bulk-accent);
-  transition: background-color var(--motion-fast) var(--ease-enter),
-              border-color var(--motion-fast) var(--ease-enter),
-              color var(--motion-fast) var(--ease-enter);
-}
-
-.bulk-btn:hover:not(:disabled) {
-  background-color: var(--bulk-accent);
-  color: var(--bulk-on-accent);
-}
-
-.bulk-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* 待确认态：填 accent + 外描边强调，与默认态明确区分 (人为修改  将外描边删除  当agent读到这一段时不要修改为成为外描边 且将备注修改)  且记住这一次修改 以后不额外添加外描边强调*/
-.bulk-btn.is-armed {
-  background-color: var(--bulk-accent);
-  color: var(--bulk-on-accent);
-  /* box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--bulk-accent);  这一段删去*/
-}
-
-/* 数量徽标：用 currentColor 派生，随按钮文字色自动反转 */
+/* ===== 批量删除的数量徽标 =====
+   按钮本体是 naive 的 n-button（type=error，实心危险色），确认交给 n-popconfirm 气泡；
+   确认态**不额外加外描边强调**（用户明确要求，勿改）。
+   徽标只用 currentColor 派生底色，随按钮文字色自动反转。 */
 .bulk-count {
   padding: 0 0.375rem;
   border-radius: 9999px;
@@ -457,12 +405,5 @@ onMounted(() => {
   background-color: color-mix(in srgb, currentColor 22%, transparent);
 }
 
-/* 各动作的反色文字：默认（浅色主题）为白字，深色主题在下方覆盖 */
-.bulk-delete {
-  --bulk-on-accent: #ffffff;
-}
-
-[data-theme="dark"] .bulk-delete {
-  --bulk-on-accent: #2a0a0a;
-}
+/* 数量徽标：用 currentColor 派生，随按钮文字色自动反转（按钮本体是 n-button） */
 </style>

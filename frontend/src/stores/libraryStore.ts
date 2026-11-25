@@ -17,6 +17,7 @@ import { computed, ref } from 'vue'
 import { libraryApi } from '../services/libraryService'
 import type { LibrarySource, LibraryWork } from '../services/libraryService'
 import { toMessage } from '../utils/metaFormat'
+import { toastError, toastSuccess } from '../utils/toast'
 
 /** 封面缓存的 key：来源 + 编号（dlsite: RJ… / steam: appid） */
 function coverKey(work: Pick<LibraryWork, 'source' | 'workId'>): string {
@@ -42,20 +43,37 @@ export const useLibraryStore = defineStore('library', () => {
   // ===== Actions =====
 
   /** 拉列表（**所有来源**）+ 并发把每条的本地封面取成 data URL */
-  async function load(force = false) {
-    if (loading.value) return
-    if (loaded.value && !force) return
+  async function load(force = false): Promise<boolean> {
+    if (loading.value) return false
+    if (loaded.value && !force) return true
     loading.value = true
     error.value = ''
     try {
       works.value = await libraryApi.list()
       loaded.value = true
       await loadCovers()
+      return true
     } catch (err) {
       error.value = `读取游戏库失败：${toMessage(err)}`
+      toastError(error.value)
+      return false
     } finally {
       loading.value = false
     }
+  }
+
+  /**
+   * 顶栏「刷新」：重新读库 + 封面，**完成后**弹一次结果。
+   * 2026-11-25 用户收紧了 toast 口径（只保留删除成功 / 编辑保存 / 出错 / 刷新完成），
+   * 所以进页面时的自动 load() 不弹，只有用户主动点刷新才弹。
+   */
+  async function refresh(): Promise<void> {
+    if (loading.value) return
+    const ok = await load(true)
+    if (!ok) return
+    toastSuccess('刷新完成', {
+      description: works.value.length ? `游戏库共 ${works.value.length} 款` : '游戏库还是空的',
+    })
   }
 
   /** 只取封面（新入库的作品、或封面刚下载完时单独调） */
@@ -115,6 +133,7 @@ export const useLibraryStore = defineStore('library', () => {
       }
       if (failures.length) {
         error.value = `有 ${failures.length} 款删除失败：${failures.join('；')}`
+        toastError('有游戏没能删除', { description: error.value })
       }
     } finally {
       removing.value = false
@@ -151,6 +170,7 @@ export const useLibraryStore = defineStore('library', () => {
     count,
     // Actions
     load,
+    refresh,
     loadCovers,
     coverFor,
     removeMany,

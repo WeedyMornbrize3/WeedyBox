@@ -36,8 +36,8 @@ watch(
 )
 
 const SIZE_CLASS: Record<Size, string> = {
-  sm: 'w-11 h-11 rounded-md',
-  md: 'w-[140px] h-[105px] rounded-lg',
+  sm: 'w-11 h-11 rounded-none',
+  md: 'w-[140px] h-[105px] rounded-none',
 }
 
 const FALLBACK_ICON: Record<Size, string> = {

@@ -1,81 +1,76 @@
 <!-- frontend/src/components/todo/TodoInput.vue -->
+<!-- 新增 TODO 的输入区（2026-11-24 改为 naive 的 n-input-group）：
+     标题输入 + 描述开关 + 添加按钮拼成一组；
+     描述用 n-input type=textarea，展开/收起仍走原来的过渡。
+     快捷键：Enter 添加；描述区里 Enter 也添加、Ctrl/⌘ + Enter 换行、Esc 收起。 -->
 <template>
   <div class="flex flex-col">
     <!-- 标题行：输入框（内嵌描述开关）+ 添加按钮 -->
-    <div class="flex gap-2">
-      <!--
-        输入框 + 内嵌图标按钮用同级 flex item 排布（不用 absolute + 手调 padding）：
-        两者永不重叠，且图标按钮随输入框高度居中。
-        min-w-0 让输入框可收缩，否则长内容会把添加按钮挤出容器。
-
-        ⚠️ 外观必须与 uno.config.ts 的 `input-theme`（作品库/调试页的搜索框
-           MetaSearchBar.vue 走这条）一致：
-           外壳 = control-h rounded-[10px] bg-secondary border-theme
-                  transition-colors duration-200 focus-within:border-brand
-           内层 = text-sm text-primary placeholder:text-tertiary
-                  （不写纵向 padding：高度已由外壳的 control-h 固定，
-                    再写 py-* 只会把内容撑出固定高度）
-           改这里就要同步改 `input-theme`，反之亦然，否则两个输入框会长得不一样。
-        外壳用 focus-within（不是 focus）：焦点实际落在内层 <input> 上。
-      -->
-      <div
-        class="control-h flex items-center gap-1 flex-1 min-w-0 pl-3 pr-1 rounded-[10px] bg-secondary border-theme transition-colors duration-200 focus-within:border-brand"
+    <n-input-group>
+      <n-input
+        v-model:value="newTodo"
+        :placeholder="showDesc ? '添加新的 TODO 标题…' : '添加新的 TODO…'"
+        aria-label="TODO 标题"
+        @keyup.enter="handleSubmit"
       >
-        <span class="i-lucide-plus icon-sm text-tertiary flex-shrink-0" aria-hidden="true" />
+        <template #prefix>
+          <span class="i-lucide-plus icon-sm text-tertiary" aria-hidden="true" />
+        </template>
+        <template #suffix>
+          <!-- 描述开关：图标按钮，带可访问名称与展开状态 -->
+          <n-button
+            quaternary
+            circle
+            size="tiny"
+            :type="showDesc ? 'primary' : 'default'"
+            :title="showDesc ? '收起描述' : '添加描述'"
+            :aria-label="showDesc ? '收起描述' : '添加描述'"
+            :aria-expanded="showDesc"
+            aria-controls="todo-desc-field"
+            @click="toggleDesc"
+          >
+            <template #icon>
+              <span class="i-lucide-align-left icon-sm" aria-hidden="true" />
+            </template>
+          </n-button>
+        </template>
+      </n-input>
 
-        <input
-          v-model="newTodo"
-          type="text"
-          :placeholder="showDesc ? '添加新的 TODO 标题…' : '添加新的 TODO…'"
-          aria-label="TODO 标题"
-          class="flex-1 min-w-0 bg-transparent border-none outline-none text-sm text-primary placeholder:text-tertiary"
-          @keyup.enter="handleSubmit"
-        />
-
-        <!-- 描述开关：图标按钮，带可访问名称与展开状态 -->
-        <button
-          type="button"
-          class="desc-toggle"
-          :class="{ 'desc-toggle-active': showDesc }"
-          :title="showDesc ? '收起描述' : '添加描述'"
-          :aria-label="showDesc ? '收起描述' : '添加描述'"
-          :aria-expanded="showDesc"
-          aria-controls="todo-desc-field"
-          @click="toggleDesc"
-        >
-          <span class="i-lucide-align-left icon-sm" aria-hidden="true" />
-        </button>
-      </div>
-
-      <!-- 提交按钮：与测试页搜索按钮同一套样式（btn-brand shortcut）。
-           唯一额外项是 disabled 态 —— 本按钮在输入为空时是 disabled 的，
-           不写 disabled:* 会看起来「可点但没反应」（btn-brand 本身不含禁用态）。 -->
-      <button
-        type="button"
+      <!-- 提交按钮：输入为空时禁用（避免"可点但没反应"） -->
+      <n-button
+        type="primary"
+        class="shrink-0"
         :disabled="!newTodo.trim() || loading"
-        class="btn-brand flex items-center gap-1.5 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+        :loading="loading"
         @click="handleSubmit"
       >
-        <span :class="loading ? 'i-lucide-loader-circle icon-sm spin' : 'i-lucide-plus icon-sm'" aria-hidden="true" />
+        <template #icon>
+          <span class="i-lucide-plus icon-sm" aria-hidden="true" />
+        </template>
         {{ loading ? '添加中…' : '添加' }}
-      </button>
-    </div>
+      </n-button>
+    </n-input-group>
 
     <!-- 描述区：点击图标后展开，带高度/透明度过渡 -->
     <Transition name="desc-slide">
-      <div v-show="showDesc" id="todo-desc-field" class="desc-field flex flex-col">
-        <textarea
-          ref="descInput"
-          v-model="desc"
+      <div
+        v-show="showDesc"
+        id="todo-desc-field"
+        class="desc-field flex flex-col"
+        @keydown.enter.exact.prevent="handleSubmit"
+        @keydown.ctrl.enter.prevent="insertLineBreak"
+        @keydown.meta.enter.prevent="insertLineBreak"
+        @keydown.esc="toggleDesc"
+      >
+        <n-input
+          ref="descRef"
+          v-model:value="desc"
+          type="textarea"
           placeholder="添加描述（可选）…"
           aria-label="TODO 描述"
-          class="w-full h-[4.5rem] leading-relaxed resize-none outline-none rounded-[10px] px-3 py-2.5 text-xs bg-secondary text-secondary placeholder:text-tertiary border-theme transition-colors duration-200 focus:border-brand"
-          @keydown.enter.exact.prevent="handleSubmit"
-          @keydown.ctrl.enter.prevent="insertLineBreak"
-          @keydown.meta.enter.prevent="insertLineBreak"
-          @keydown.esc="toggleDesc"
+          :autosize="{ minRows: 2, maxRows: 6 }"
         />
-        <!-- 快捷键提示：作为 textarea 的同级元素排在下方右对齐，不与输入文字重叠 -->
+        <!-- 快捷键提示：排在下方右对齐，不与输入文字重叠 -->
         <span class="desc-hint">Enter 添加 · Ctrl/⌘ + Enter 换行 · Esc 收起</span>
       </div>
     </Transition>
@@ -84,6 +79,7 @@
 
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
+import { NButton, NInput, NInputGroup, type InputInst } from 'naive-ui'
 import { useTodoStore } from '../../stores/todoStore'
 
 const todoStore = useTodoStore()
@@ -91,20 +87,16 @@ const newTodo = ref('')
 const desc = ref('')
 const showDesc = ref(false)
 const loading = ref(false)
-const descInput = ref<HTMLTextAreaElement | null>(null)
+const descRef = ref<InputInst | null>(null)
 
-// 说明：提交用 @keydown.enter.exact.prevent
-//   .exact 让 Ctrl+Enter / Shift+Enter 不匹配本监听器。
+// 说明：提交用 @keyup.enter（标题）/ @keydown.enter.exact.prevent（描述）。
 // 为什么需要 insertLineBreak：Chromium/WebKit 的 textarea 在 Ctrl+Enter（及 Cmd+Enter）
-//   下【不会】插入换行——原生只有 Enter 和 Shift+Enter 会换行，带 Ctrl 的 Enter 被丢弃。
-//   所以 Ctrl+Enter 必须自己插入 '\n'，不能指望原生行为。
-// 标题框仍是单行 input，Enter 直接添加。
-
-// 在光标处插入换行，并同步 v-model（textarea 自己改 value 不会触发 input 事件）
-const insertLineBreak = () => {
-  const el = descInput.value
-  if (!el) return
-  const start = el.selectionStart ?? el.value.length
+//   下【不会】插入换行，带 Ctrl 的 Enter 被丢弃，所以必须自己插入 '\n'。
+//   n-input 不暴露内部 textarea 的 ref，这里直接取事件冒泡上来的真实元素。
+const insertLineBreak = (event: KeyboardEvent) => {
+  const el = event.target as HTMLTextAreaElement | null
+  if (!el || typeof el.selectionStart !== 'number') return
+  const start = el.selectionStart
   const end = el.selectionEnd ?? start
   desc.value = el.value.slice(0, start) + '\n' + el.value.slice(end)
   nextTick(() => {
@@ -116,7 +108,7 @@ const toggleDesc = async () => {
   showDesc.value = !showDesc.value
   if (showDesc.value) {
     await nextTick()
-    descInput.value?.focus()
+    descRef.value?.focus()
   } else {
     desc.value = ''
   }
@@ -140,41 +132,12 @@ const handleSubmit = async () => {
 </script>
 
 <style scoped>
-/* ===== 内嵌在输入框内的图标按钮 =====
-   定位交给父级 flex（不用 absolute + 手调 padding：那种写法依赖手调值，
-   内边距与按钮实际宽度一旦不一致就会重叠）。这里只负责外观与尺寸。 */
-.desc-toggle {
-  flex-shrink: 0;
-  width: 1.75rem;
-  height: 1.75rem;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  transition: color 0.2s ease, background-color 0.2s ease;
-}
-
-.desc-toggle:hover {
-  color: var(--color-primary);
-  background: var(--color-bg-hover);
-}
-
-.desc-toggle-active {
-  color: var(--color-primary);
-  background: var(--color-primary-light);
-}
-
 /* ===== 描述区容器 ===== */
 .desc-field {
   margin-top: 0.5rem;
 }
 
-/* 快捷键提示：与 textarea 同级，排在下方右对齐，不会与 placeholder 重叠；
+/* 快捷键提示：与输入框同级，排在下方右对齐，不会与 placeholder 重叠；
    平时低透明度，聚焦时提亮，避免常驻干扰 */
 .desc-hint {
   align-self: flex-end;

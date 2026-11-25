@@ -1,23 +1,25 @@
 <!-- frontend/src/components/meta/MetaTags.vue
-     标签云。这里不可点（DLsite 的 tag 我们没做筛选路由），所以 chip 配 cursor-default，
-     避免鼠标变手型误导用户以为能点进去。
-     limit = 最多显示几个（0 = 不限）；超出的折成一个「+N」chip，鼠标悬停给出提示。
+     标签云。这里不可点（DLsite 的 tag 我们没做筛选路由），所以用普通 n-tag，
+     不给 checkable（避免看起来能点进去）。
+     limit = 最多显示几个（0 = 不限）；超出的折成一个「+N」tag，鼠标悬停给出提示。
      数量由设置页「标签显示数量」控制（stores/App.ts 的 tagLimit）。 -->
 <template>
   <ul v-if="tags.length" class="list-none m-0 p-0 flex flex-wrap gap-1.5">
-    <li v-for="tag in visibleTags" :key="tag" class="chip cursor-default">{{ tag }}</li>
+    <li v-for="tag in visibleTags" :key="tag">
+      <n-tag size="small" :bordered="true">{{ tag }}</n-tag>
+    </li>
     <li
       v-if="hiddenCount > 0"
-      class="chip cursor-default"
       :title="`还有 ${hiddenCount} 个标签未显示，可在设置里调整「标签显示数量」`"
     >
-      +{{ hiddenCount }}
+      <n-tag size="small" :bordered="true" type="primary">+{{ hiddenCount }}</n-tag>
     </li>
   </ul>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { NTag } from 'naive-ui'
 
 const props = withDefaults(defineProps<{ tags?: string[]; limit?: number }>(), {
   tags: () => [],

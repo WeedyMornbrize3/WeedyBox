@@ -7,12 +7,13 @@ export const useSidebarStore = defineStore('sidebar', () => {
   const isCollapsed = ref<boolean>(false)
   
   // ===== Getters =====
-  // 全局侧边栏宽度设置
-  const barWidth: number = 72
-  const barWidthCollapsed: number = 250
+  // 全局侧边栏宽度设置（折叠 72 / 展开 250）
+  const COLLAPSED_WIDTH: number = 72
+  const EXPANDED_WIDTH: number = 250
 
-  const sidebarWidth = computed(() => isCollapsed.value ? barWidth : barWidthCollapsed)
-  const mainPaddingLeft = computed(() => isCollapsed.value ? barWidth : (barWidthCollapsed-barWidth))
+  const sidebarWidth = computed(() => isCollapsed.value ? COLLAPSED_WIDTH : EXPANDED_WIDTH)
+  // 主内容让位用的就是侧栏宽度本身（aside 是 fixed，不让位会把内容压住）——
+  // 旧的 mainPaddingLeft（= 展开时的 178 = 250−72）会让内容钻到侧栏底下，2026-11-25 已删。
   const isExpanded = computed(() => !isCollapsed.value)
   
   // ===== Actions =====
@@ -38,7 +39,6 @@ export const useSidebarStore = defineStore('sidebar', () => {
     isCollapsed,
     // Getters
     sidebarWidth,
-    mainPaddingLeft,
     isExpanded,
     // Actions
     toggleSidebar,

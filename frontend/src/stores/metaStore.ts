@@ -8,7 +8,7 @@
 // 顺带的好处：页面之间切换时搜索条件与结果都还在，不用重新搜一遍。
 
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { metaApi } from '../services/metaService'
 import type { DownloadResult, SearchCandidate, SteamStats, WorkMeta } from '../services/metaService'
 import { LIBRARY_SOURCE_DLSITE, LIBRARY_SOURCE_STEAM, libraryApi } from '../services/libraryService'
@@ -16,6 +16,7 @@ import type { LibraryMeta, LibrarySource } from '../services/libraryService'
 import { gameApi } from '../services/gameService'
 import type { LibraryLaunchMode } from '../services/gameService'
 import { looksLikeWorkId, toMessage } from '../utils/metaFormat'
+import { toastError, toastSuccess, toastWarning } from '../utils/toast'
 
 /** 快捷示例：省得每次手打编号（编号精确抓取 + 作品名模糊搜索各来一个） */
 export const META_SAMPLES = ['RJ01721474', 'RJ01682332', 'エルフ パラダイス']
@@ -88,6 +89,8 @@ export const useMetaStore = defineStore('meta', () => {
   const tagsEdited = ref(false)
   const tagsSaving = ref(false)
   const tagError = ref('')
+  /** 正在保存「编辑」页的元数据修改（保存按钮 loading + 防连点） */
+  const metaSaving = ref(false)
 
   /** 搜索/入库结果的附加提示（某个来源失败但整体还有结果、或需要用户注意的说明） */
   const searchNotice = ref('')
@@ -103,6 +106,15 @@ export const useMetaStore = defineStore('meta', () => {
    * 空串 = 本机没有（游戏没装 / 缓存被清），详情页回落到商店接口的预览图。
    */
   const heroImage = ref('')
+  /** Steam 本机 hero 正在读（读文件 + base64，通常几毫秒；遮罩等它落定再生成，避免先按远程预览算一张） */
+  const heroImageLoading = ref(false)
+  /**
+   * 预模糊 hero 图（data URL）：后端把当前 hero 图缩到 480px + 盒式模糊一次，
+   * 缓存到 covers/hero_blur_<source>_<id>_<hash>.jpg，之后直接读缓存。
+   * /works 的所有遮罩层共用这一张图，CSS 里不再做 filter: blur —— 滚动只剩合成。
+   * 空串 = 后端还没算好 / 失败（webp 源等）：页面不做遮罩，正文照常。
+   */
+  const heroBlurred = ref('')
 
   /** 后端返回的完整结构（原样展示，调试页用） */
   const raw = ref<unknown>(null)
@@ -200,6 +212,48 @@ export const useMetaStore = defineStore('meta', () => {
     return deriveDlsitePreviewUrl(current.coverUrl) || current.coverUrl || ''
   })
 
+  /**
+   * 让后端把当前 hero 图「预模糊」一次（缓存到 covers/，带 URL 哈希）。
+   * 换作品 / 换背景图时自动重取；失败就留空（页面不做遮罩），不打扰用户。
+   */
+  let heroBlurToken = 0
+  /** 去抖定时器：backgroundUrl 常连续变化（远程预览 → Steam 本地 hero），只让最后一次生效 */
+  let heroBlurTimer = 0
+  async function refreshHeroBlur() {
+    const current = work.value
+    const url = backgroundUrl.value
+    const token = ++heroBlurToken
+    if (!current || !url) {
+      heroBlurred.value = ''
+      return
+    }
+    try {
+      const blurred = await libraryApi.heroBlur(current.id, source.value, url)
+      if (token !== heroBlurToken || work.value?.id !== current.id) return
+      heroBlurred.value = blurred
+    } catch {
+      if (token === heroBlurToken) heroBlurred.value = ''
+    }
+  }
+
+  // immediate：store 初始化时先对齐一次（通常是空作品）；之后 hero 图变了就重取。
+  // 去抖 400ms：Steam 源会先拿到远程预览、随后才拿到本地 hero 的 data URL，
+  // 不等待就会生成两张模糊图（用户反馈「生成遮罩时生成了两张图片」）。
+  watch(
+    [backgroundUrl, heroImageLoading],
+    () => {
+      heroBlurred.value = ''
+      if (heroBlurTimer) window.clearTimeout(heroBlurTimer)
+      // Steam 的本机 hero 还在读：等它落定（watch 会再触发），否则会先按远程预览算一张
+      if (source.value === LIBRARY_SOURCE_STEAM && heroImageLoading.value) return
+      heroBlurTimer = window.setTimeout(() => {
+        heroBlurTimer = 0
+        void refreshHeroBlur()
+      }, 30)
+    },
+    { immediate: true },
+  )
+
   /** 前端搜索每页条数 */
   const CANDIDATE_PAGE_SIZE = 10
   /** DLsite 搜索每页条数（服务端固定 30，改 per_page 无效） */
@@ -221,6 +275,28 @@ export const useMetaStore = defineStore('meta', () => {
     const offset = ((candidatePage.value - 1) % FRONT_PAGES_PER_SOURCE) * CANDIDATE_PAGE_SIZE
     return (sourcePages.value[sourcePage] ?? []).slice(offset, offset + CANDIDATE_PAGE_SIZE)
   })
+
+  // ===== 一次性反馈 =====
+  // 2026-11-25 用户要求：页面内的 MetaMessage 全部改成 toast；随即又要求
+  // 「减少 toast 频率 —— 只有删除成功、编辑保存后、出现错误、刷新完成后才弹」。
+  // 所以这里重新分工：
+  //   · fail  → 错误，**继续弹**（用户明确保留）；
+  //   · note  → 例行状态（搜索了几条、按编号命中、从缓存读取…），只写 status 不弹；
+  //   · done  → 非编辑类的成功（入库 / 启动 / 换程序 / 切启动方式），只写 status 不弹，
+  //             页面本身的状态变化（按钮变「运行中」、库状态变已入库）就是反馈；
+  //   · 编辑保存（saveMeta / saveTags）与刷新完成在各自动作里单独弹成功 toast。
+  function fail(message: string) {
+    error.value = message
+    toastError(message)
+  }
+
+  function note(message: string) {
+    status.value = message
+  }
+
+  function done(message: string) {
+    status.value = message
+  }
 
   // ===== Actions =====
 
@@ -250,12 +326,20 @@ export const useMetaStore = defineStore('meta', () => {
     tagsEdited.value = false
     tagsSaving.value = false
     tagError.value = ''
+    metaSaving.value = false
     searchNotice.value = ''
     steamCandidates.value = []
     steamSearchTotal.value = 0
     steamStats.value = null
     steamStatsLoading.value = false
     heroImage.value = ''
+    heroImageLoading.value = false
+    heroBlurred.value = ''
+    heroBlurToken += 1
+    if (heroBlurTimer) {
+      window.clearTimeout(heroBlurTimer)
+      heroBlurTimer = 0
+    }
     if (!opts.keepCandidates) {
       sourcePages.value = {}
       sourcePageCount.value = 1
@@ -277,7 +361,7 @@ export const useMetaStore = defineStore('meta', () => {
     const q = (query ?? keyword.value).trim()
     if (!q) {
       // 用户要求：搜索栏为空时点「搜索」只提示「搜索栏不能为空」，不做任何跳转
-      error.value = '搜索栏不能为空'
+      fail('搜索栏不能为空')
       return false
     }
     keyword.value = q
@@ -294,11 +378,13 @@ export const useMetaStore = defineStore('meta', () => {
         status.value = cached.value
           ? `按编号 ${data.id} 从本地库读取（缓存）`
           : `按编号 ${data.id} 精确抓取成功（还没入库，点「入库」才收进游戏库）`
+        note(status.value)
         return true
       }
       const resp = await metaApi.searchWorks(q, 1)
       raw.value = resp
       status.value = resp.message ?? ''
+      if (status.value) note(status.value)
       sourcePages.value = { 1: resp.results ?? [] }
       sourcePageCount.value = Math.max(1, resp.pageCount ?? 1)
       searchTotal.value = resp.total ?? 0
@@ -309,7 +395,7 @@ export const useMetaStore = defineStore('meta', () => {
       if (resp.work) applyWork(resp.work)
       return true
     } catch (err) {
-      error.value = toMessage(err)
+      fail(toMessage(err))
       return false
     } finally {
       loading.value = false
@@ -348,6 +434,7 @@ export const useMetaStore = defineStore('meta', () => {
         status.value = cached.value
           ? `按编号 ${data.id} 从本地库读取（缓存）`
           : `按编号 ${data.id} 精确抓取成功（还没入库，点「入库」才收进游戏库）`
+        note(status.value)
         return true
       }
 
@@ -383,16 +470,20 @@ export const useMetaStore = defineStore('meta', () => {
         notices.push(`Steam 搜索失败：${toMessage(steam.reason)}`)
       }
 
-      // 两边都没成功：当成一次失败搜索（error 条会显示具体原因）
+      // 两边都没成功：当成一次失败搜索
       if (!parts.length) {
-        error.value = notices.join('；') || '没有搜索到结果'
+        fail(notices.join('；') || '没有搜索到结果')
         return false
       }
       searchNotice.value = notices.join('；')
+      if (searchNotice.value) {
+        toastWarning('部分来源搜索失败', { description: searchNotice.value })
+      }
       status.value = `同时搜索 DLsite 与 Steam：${parts.join(' · ')}；点「详情」核对后再入库`
+      note(status.value)
       return true
     } catch (err) {
-      error.value = toMessage(err)
+      fail(toMessage(err))
       return false
     } finally {
       // 期间又搜了一次就别动 loading：新请求还在飞
@@ -429,6 +520,7 @@ export const useMetaStore = defineStore('meta', () => {
    * 只有 Steam 源才有；本机没有就留空 —— 详情页会回落到商店接口的预览图。
    */
   async function loadSteamHeroImage(appID: string) {
+    heroImageLoading.value = true
     try {
       const url = await libraryApi.steamHeroImage(appID)
       if (!url) return
@@ -437,6 +529,8 @@ export const useMetaStore = defineStore('meta', () => {
       heroImage.value = url
     } catch {
       // 背景图是装饰，拿不到不影响详情页
+    } finally {
+      heroImageLoading.value = false
     }
   }
 
@@ -498,8 +592,9 @@ export const useMetaStore = defineStore('meta', () => {
       status.value = cached.value
         ? `按编号 ${id} 从本地库读取（缓存）`
         : `按编号 ${id} 精确抓取成功（还没入库，点「入库」才收进游戏库）`
+      note(status.value)
     } catch (err) {
-      error.value = toMessage(err)
+      fail(toMessage(err))
     } finally {
       loading.value = false
     }
@@ -551,7 +646,7 @@ export const useMetaStore = defineStore('meta', () => {
         if (resp.total && resp.total > 0) searchTotal.value = resp.total
         return true
       } catch (err) {
-        if (token === searchToken && !silent) error.value = toMessage(err)
+        if (token === searchToken && !silent) fail(toMessage(err))
         return false
       }
     })()
@@ -649,8 +744,9 @@ export const useMetaStore = defineStore('meta', () => {
           ? `已入库：${data.id}（元数据已载入数据库，封面存到 covers/，游戏位置已记录）`
           : `已入库：${data.id}（元数据已载入数据库，封面存到 covers/；未记录游戏位置，启动时会再让你选）`
       }
+      done(status.value)
     } catch (err) {
-      error.value = `入库失败：${toMessage(err)}`
+      fail(`入库失败：${toMessage(err)}`)
     } finally {
       downloading.value = false
     }
@@ -679,10 +775,15 @@ export const useMetaStore = defineStore('meta', () => {
       const reportedMode = (status.launchMode ?? '').toLowerCase()
       if (reportedMode === 'steam' || reportedMode === 'exe') launchMode.value = reportedMode
       // Steam 方式不依赖本地 exe：没装/换了目录都不该提示"程序已被删除"
-      gameWarning.value =
+      const warning =
         effectiveLaunchMode.value === 'steam' || status.exists || !status.path
           ? ''
           : '游戏程序已被删除或移动了位置，请点「更换位置」重新选择游戏程序'
+      // 只在「从无到有」时提示一次，别让 5 秒轮询反复弹同一条
+      if (warning && warning !== gameWarning.value) {
+        toastError('游戏程序不可用', { description: warning })
+      }
+      gameWarning.value = warning
     } catch {
       // 静默：轮询偶尔失败不该弹错误打断浏览
     } finally {
@@ -721,10 +822,11 @@ export const useMetaStore = defineStore('meta', () => {
       gameRunning.value = result.running
       gameWarning.value = ''
       status.value = result.message || `已启动游戏：${result.path}`
+      done(status.value)
       // 稍后复核一次（进程可能秒退；Steam 方式下 Steam 客户端拉起游戏也需要几秒）
       void refreshGameStatus()
     } catch (err) {
-      error.value = `启动游戏失败：${toMessage(err)}`
+      fail(`启动游戏失败：${toMessage(err)}`)
       // 启动失败可能正是因为 exe 变了，刷新状态让按钮/提示回到真实情况
       void refreshGameStatus()
     } finally {
@@ -746,9 +848,10 @@ export const useMetaStore = defineStore('meta', () => {
       gameRunning.value = false
       gameWarning.value = ''
       status.value = `已记录游戏位置：${savedPath.path}`
+      done(status.value)
       void refreshGameStatus()
     } catch (err) {
-      error.value = `设置游戏位置失败：${toMessage(err)}`
+      fail(`设置游戏位置失败：${toMessage(err)}`)
     }
   }
 
@@ -781,9 +884,10 @@ export const useMetaStore = defineStore('meta', () => {
         mode === 'steam'
           ? `启动方式已切换：通过 Steam 启动（steam://rungameid/${current.id}）`
           : `启动方式已切换：本地程序启动（${gamePath.value}）`
+      done(status.value)
       void refreshGameStatus()
     } catch (err) {
-      error.value = `切换启动方式失败：${toMessage(err)}`
+      fail(`切换启动方式失败：${toMessage(err)}`)
     }
   }
 
@@ -858,12 +962,40 @@ export const useMetaStore = defineStore('meta', () => {
       tagSaved.value = saved
       tagList.value = [...saved]
       tagsEdited.value = state.edited
+      // 「编辑保存后」弹一次（用户 2026-11-25 只保留的四种成功提示之一）
+      toastSuccess('标签已保存', { description: `整份列表已写进数据库（${saved.length} 个）` })
       return true
     } catch (err) {
       tagError.value = `保存标签失败：${toMessage(err)}`
+      toastError(tagError.value)
       return false
     } finally {
       tagsSaving.value = false
+    }
+  }
+
+  /**
+   * 保存「编辑」页对元数据的修改（**打补丁**）：只传改过的字段，
+   * 后端把 raw_json 与对应的公共列一起更新，返回的作品直接 applyWork 刷新 store。
+   * 只对已入库的作品开放（未入库时后端会报错，按钮在组件里挡掉）。
+   * 成功后返回 true（页面据此提示，游戏库列表在返回时自己会重新加载）。
+   */
+  async function saveMeta(fields: Record<string, unknown>): Promise<boolean> {
+    const current = work.value
+    if (!current || !stored.value || metaSaving.value) return false
+    metaSaving.value = true
+    error.value = ''
+    try {
+      const data = await libraryApi.updateMeta(current.id, fields, source.value)
+      applyWork(data)
+      status.value = '元数据已保存'
+      toastSuccess('元数据已保存', { description: '写入游戏库，重新抓取不会覆盖这次修改' })
+      return true
+    } catch (err) {
+      fail(`保存元数据失败：${toMessage(err)}`)
+      return false
+    } finally {
+      metaSaving.value = false
     }
   }
 
@@ -910,12 +1042,14 @@ export const useMetaStore = defineStore('meta', () => {
     tagsEdited,
     tagsSaving,
     tagError,
+    metaSaving,
     searchNotice,
     steamCandidates,
     steamSearchTotal,
     steamStats,
     steamStatsLoading,
     heroImage,
+    heroBlurred,
     // Getters
     rawJson,
     hasResult,
@@ -942,6 +1076,7 @@ export const useMetaStore = defineStore('meta', () => {
     addTag,
     removeTag,
     saveTags,
+    saveMeta,
     setCandidatePage,
     refreshCoversDir,
     ensureCoversDir,

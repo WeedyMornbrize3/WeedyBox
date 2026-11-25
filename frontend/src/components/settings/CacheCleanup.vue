@@ -20,20 +20,20 @@
         {{ sizeText }}
       </span>
 
-      <button
-        type="button"
-        class="cache-btn"
+      <n-button
+        size="small"
+        quaternary
+        type="error"
         :disabled="!canClear"
+        :loading="busy"
         :aria-label="busy ? '正在清理缓存' : '清理缓存'"
         @click="clearCache"
       >
-        <span
-          :class="busy ? 'i-lucide-loader-circle spin' : 'i-lucide-trash-2'"
-          class="icon-xs"
-          aria-hidden="true"
-        />
+        <template #icon>
+          <span class="i-lucide-trash-2 icon-xs" aria-hidden="true" />
+        </template>
         {{ busy ? '清理中…' : '清理缓存' }}
-      </button>
+      </n-button>
     </div>
 
     <!-- 一次性反馈：4 秒后自己消失，不占常驻空间 -->
@@ -45,6 +45,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { NButton } from 'naive-ui'
 import { metaApi, type CacheInfo } from '../../services/metaService'
 import { formatBytes, toMessage } from '../../utils/metaFormat'
 
@@ -125,37 +126,6 @@ onBeforeUnmount(() => {
 /* 清理按钮：与项目里其他破坏性按钮同一套颜色语言 ——
    透明底 + danger 红描边红图标 → hover 填红 + 随主题翻转的深色文字（--color-text-on-danger）。
    形状（圆角/内边距/字号）跟设置页里的紧凑控件一致，不用 btn-brand（那是 35.2px 的大按钮）。 */
-.cache-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
-  border: 1px solid var(--color-danger);
-  border-radius: 8px;
-  background-color: transparent;
-  color: var(--color-danger);
-  font-size: 12px;
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color var(--motion-fast) var(--ease-enter),
-    border-color var(--motion-fast) var(--ease-enter),
-    color var(--motion-fast) var(--ease-enter),
-    opacity var(--motion-fast) var(--ease-enter);
-}
-
-.cache-btn:hover:not(:disabled) {
-  background-color: var(--color-danger);
-  border-color: var(--color-danger);
-  color: var(--color-text-on-danger);
-}
-
-.cache-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 /* 结果反馈：成功用 success、失败用 danger，都是 token 色 */
 .cache-note {
   font-size: 11px;

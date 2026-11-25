@@ -2,24 +2,26 @@
      原始返回数据（未加工）：调试用，一眼看清后端到底给了什么。
      复制失败只在按钮旁标红一句，不弹全局错误 —— 复制失败不该打断"看数据"这件事。 -->
 <template>
-  <MetaSection icon="i-lucide-braces" title="原始返回数据（未加工）" body-class="p-0">
+  <MetaSection icon="i-lucide-braces" title="原始 JSON">
     <template #actions>
-      <button
-        type="button"
-        class="flex items-center gap-1.5 text-xs text-secondary hover:text-primary cursor-pointer bg-transparent border-none"
-        @click="copy"
-      >
-        <span :class="copied ? 'i-lucide-clipboard-check' : 'i-lucide-clipboard'" class="icon-xs" aria-hidden="true" />
+      <n-button text size="tiny" :type="copied ? 'success' : 'default'" @click="copy">
+        <template #icon>
+          <span :class="copied ? 'i-lucide-clipboard-check' : 'i-lucide-clipboard'" class="icon-xs" aria-hidden="true" />
+        </template>
         {{ copied ? '已复制' : '复制' }}
-      </button>
+      </n-button>
     </template>
 
-    <pre class="m-0 p-5 text-[11px] leading-relaxed font-mono text-secondary overflow-auto max-h-[420px] scrollbar-theme">{{ text }}</pre>
+    <pre
+      v-scroll-fade
+      class="scroll-fade m-0 text-[11px] leading-relaxed font-mono text-secondary overflow-auto max-h-[420px] scrollbar-theme"
+    >{{ text }}</pre>
   </MetaSection>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { NButton } from 'naive-ui'
 import MetaSection from './MetaSection.vue'
 
 const props = defineProps<{ value: unknown }>()

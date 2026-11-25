@@ -465,6 +465,15 @@ func toRawMap(v any) (map[string]any, error) {
 	return out, nil
 }
 
+// FetchImageBytes 下载图片原始字节（带 UA / Referer 与一次重试）。
+//
+// 给 LibraryService 生成「预模糊 hero 图」用：hero 图既可能来自本机 Steam 缓存（data URL），
+// 也可能是 DLsite 的预览图直链，后者需要和封面下载同一套请求头，否则会被拦。
+func (s *MetaApiService) FetchImageBytes(ctx context.Context, rawURL string) ([]byte, error) {
+	data, _, err := s.fetchImage(ctx, rawURL)
+	return data, err
+}
+
 // fetchImage 下载图片字节并给出安全的文件后缀，带一次重试。
 func (s *MetaApiService) fetchImage(ctx context.Context, rawURL string) ([]byte, string, error) {
 	client := s.ensure().client

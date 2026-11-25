@@ -1,75 +1,96 @@
 <template>
-  <header 
+  <header
     class="titlebar"
-    style="--wails-draggable: drag;
-      -webkit-app-region: drag;
-    "
+    style="--wails-draggable: drag; -webkit-app-region: drag;"
   >
     <div class="titlebar-left"></div>
 
     <div class="relative flex items-center gap-1" style="--wails-draggable: no-drag; -webkit-app-region: no-drag">
-      <button class="titlebar-btn" @click="minimize" title="最小化" aria-label="最小化窗口">
-        <span class="i-lucide-minus icon-sm" aria-hidden="true" />
-      </button>
-      <button class="titlebar-btn" @click="toggleMaximize" :title="isMaximised ? '还原' : '最大化'" :aria-label="isMaximised ? '还原窗口' : '最大化窗口'">
-        <span :class="isMaximised ? 'i-lucide-copy icon-sm' : 'i-lucide-square icon-sm'" aria-hidden="true" />
-      </button>
+      <n-button quaternary circle size="small" title="最小化" aria-label="最小化窗口" @click="minimize">
+        <template #icon>
+          <span class="i-lucide-minus icon-sm" aria-hidden="true" />
+        </template>
+      </n-button>
+
+      <n-button
+        quaternary
+        circle
+        size="small"
+        :title="isMaximised ? '还原' : '最大化'"
+        :aria-label="isMaximised ? '还原窗口' : '最大化窗口'"
+        @click="toggleMaximize"
+      >
+        <template #icon>
+          <span :class="isMaximised ? 'i-lucide-copy' : 'i-lucide-square'" class="icon-sm" aria-hidden="true" />
+        </template>
+      </n-button>
 
       <!-- 关闭按钮：行为取决于设置。
-           「每次询问」时点它不直接关窗，而是在下方弹出一个浮层让用户选
-           「最小化 / 退出程序」——这是两个不同意图的动作，用模态对话框
-           打断体验不值得，浮层更轻、也不阻塞其它操作。 -->
-      <button
-        class="titlebar-btn-close"
-        :class="{ 'is-open': isPromptOpen }"
-        @click="handleCloseClick"
-        title="关闭"
-        aria-label="关闭窗口"
-        :aria-expanded="isPromptOpen"
-        aria-controls="close-prompt"
+           「每次询问」时点它不直接关窗，而是在下方浮出一个面板让用户选
+           「隐藏到托盘 / 退出程序」——两个不同意图的动作，用模态对话框打断体验不值得。
+           面板改用 naive 的 n-popover（trigger=manual），点外部关闭由它自己处理。 -->
+      <n-popover
+        :show="isPromptOpen"
+        trigger="manual"
+        placement="bottom-end"
+        :show-arrow="false"
+        :style="{ width: '224px' }"
+        @update:show="(value: boolean) => (isPromptOpen = value)"
+        @clickoutside="isPromptOpen = false"
       >
-        <span class="i-lucide-x icon-sm" aria-hidden="true" />
-      </button>
+        <template #trigger>
+          <n-button
+            class="titlebar-close"
+            :class="{ 'is-open': isPromptOpen }"
+            quaternary
+            circle
+            size="small"
+            title="关闭"
+            aria-label="关闭窗口"
+            :aria-expanded="isPromptOpen"
+            @click="handleCloseClick"
+          >
+            <template #icon>
+              <span class="i-lucide-x icon-sm" aria-hidden="true" />
+            </template>
+          </n-button>
+        </template>
 
-      <!-- 关闭浮层 -->
-      <Transition name="close-pop">
-        <div
-          v-if="isPromptOpen"
-          id="close-prompt"
-          class="close-pop absolute top-[calc(100%+6px)] right-0 z-[1200] w-56 p-2 rounded-lg bg-card border-theme shadow-theme-heavy"
-        >
-          <p class="m-0 px-1.5 pb-1.5 text-[11px] text-tertiary">
-            隐藏到托盘，还是退出程序？
-          </p>
+        <p class="m-0 px-1 pb-2 text-[11px] text-tertiary">
+          隐藏到托盘，还是退出程序？
+        </p>
 
-          <button type="button" class="close-opt" @click="choose('hide')">
+        <n-button block quaternary size="small" class="close-opt" @click="choose('hide')">
+          <template #icon>
             <span class="i-lucide-eye-off icon-sm" aria-hidden="true" />
-            <span class="flex-1 text-left">隐藏到托盘</span>
-          </button>
+          </template>
+          隐藏到托盘
+        </n-button>
 
-          <button type="button" class="close-opt close-opt-danger" @click="choose('close')">
+        <n-button block quaternary size="small" type="error" class="close-opt" @click="choose('close')">
+          <template #icon>
             <span class="i-lucide-power icon-sm" aria-hidden="true" />
-            <span class="flex-1 text-left">退出程序</span>
-          </button>
+          </template>
+          退出程序
+        </n-button>
 
-          <label class="flex items-center gap-2 mt-1.5 px-1.5 py-1 rounded-md text-[11px] text-tertiary cursor-pointer hover:bg-hover transition-colors duration-200">
-            <input type="checkbox" class="close-remember" v-model="remember" />
-            记住我的选择
-          </label>
-        </div>
-      </Transition>
+        <n-checkbox v-model:checked="remember" size="small" class="mt-2 px-1">
+          记住我的选择
+        </n-checkbox>
+      </n-popover>
     </div>
   </header>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { 
-  MinimizeWindow, 
+import { NButton, NCheckbox, NPopover } from 'naive-ui'
+import {
+  MinimizeWindow,
   HideWindow,
-  ToggleMaximizeWindow, 
-  CloseWindow, 
-  IsWindowMaximised 
+  ToggleMaximizeWindow,
+  CloseWindow,
+  IsWindowMaximised
 } from '../../bindings/WeedyBox/internal/service/windowservice'
 import { useAppStore, type CloseAction } from '../stores/App'
 
@@ -126,7 +147,7 @@ const runAction = (action: Exclude<CloseAction, 'ask'>) => {
 /**
  * 点击 X：
  *   设置为「总是…」→ 直接执行，不再询问；
- *   设置为「每次询问」→ 第一次点开浮层让用户选，不直接关窗。
+ *   设置为「每次询问」→ 第一次点开面板让用户选，不直接关窗。
  */
 const handleCloseClick = () => {
   const action = appStore.closeAction
@@ -137,20 +158,14 @@ const handleCloseClick = () => {
   isPromptOpen.value = !isPromptOpen.value
 }
 
-/** 在浮层里做出选择 */
+/** 在面板里做出选择 */
 const choose = (action: Exclude<CloseAction, 'ask'>) => {
   // 勾了「记住我的选择」就写进设置，之后 X 直接执行该动作
   if (remember.value) appStore.setCloseAction(action)
   runAction(action)
 }
 
-/** 点击浮层外部或按 Esc 关闭浮层 */
-const onDocPointerDown = (e: PointerEvent) => {
-  if (!isPromptOpen.value) return
-  const target = e.target as HTMLElement | null
-  if (target?.closest('#close-prompt') || target?.closest('.titlebar-btn-close')) return
-  isPromptOpen.value = false
-}
+/** Esc 关闭面板（n-popover 只管点外部，键盘要自己接） */
 const onKeydown = (e: KeyboardEvent) => {
   if (e.key === 'Escape') isPromptOpen.value = false
 }
@@ -161,94 +176,35 @@ onMounted(async () => {
   } catch (e) {
     console.error('获取窗口状态失败', e)
   }
-  document.addEventListener('pointerdown', onDocPointerDown)
   document.addEventListener('keydown', onKeydown)
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocPointerDown)
   document.removeEventListener('keydown', onKeydown)
 })
 </script>
 
 <style scoped>
-/* ===== 关闭浮层 ===== */
-.close-pop-enter-active,
-.close-pop-leave-active {
-  transition: opacity var(--motion-fast) var(--ease-enter),
-              transform var(--motion-fast) var(--ease-enter);
+/* 关闭按钮要的是「破坏性」语义：hover / 展开时填红 + 反色图标。
+   naive 的 quaternary 变体颜色全部由这几个 CSS 变量驱动，
+   在同一个元素上覆盖比改主题更精准（只影响标题栏这一颗）。 */
+.titlebar-close:hover,
+.titlebar-close.is-open {
+  --n-color-hover: var(--color-danger);
+  --n-color-pressed: var(--color-danger);
+  --n-text-color-hover: var(--color-text-on-danger);
+  --n-text-color-pressed: var(--color-text-on-danger);
+  --n-text-color: var(--color-text-on-danger);
+  --n-color: var(--color-danger);
 }
 
-.close-pop-enter-from,
-.close-pop-leave-to {
-  opacity: 0;
-  transform: translateY(-4px) scale(0.98);
-}
-
-/* 浮层内的选项：与批量按钮同构（透明底 + hover 填充） */
+/* 面板里的两个选项：左对齐、占满宽度（n-button 默认居中） */
 .close-opt {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+  --n-content-margin: 0;
+}
+
+.close-opt :deep(.n-button__content) {
+  justify-content: flex-start;
   width: 100%;
-  padding: 0.375rem 0.375rem;
-  border: none;
-  border-radius: 0.375rem;
-  background-color: transparent;
-  color: var(--color-text-secondary);
-  font-size: 0.75rem;
-  cursor: pointer;
-  transition: background-color var(--motion-fast) var(--ease-enter),
-              color var(--motion-fast) var(--ease-enter);
-}
-
-.close-opt:hover {
-  background-color: var(--color-bg-hover);
-  color: var(--color-text-primary);
-}
-
-/* 退出是破坏性动作：hover 用 danger 语义色 */
-.close-opt-danger:hover {
-  background-color: var(--color-danger);
-  color: var(--color-text-on-danger);
-}
-
-/* 「记住我的选择」勾选框：与列表里的选择框同构 */
-.close-remember {
-  flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  border: 1px solid var(--color-border-dark);
-  border-radius: 4px;
-  background-color: transparent;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color var(--motion-fast) var(--ease-enter),
-              border-color var(--motion-fast) var(--ease-enter);
-}
-
-.close-remember:checked {
-  background-color: var(--color-bg-check);
-  border-color: var(--color-bg-check);
-}
-
-.close-remember:checked::after {
-  content: '';
-  width: 8px;
-  height: 8px;
-  background-color: var(--color-check-mark);
-  -webkit-mask: var(--icon-check) center / contain no-repeat;
-  mask: var(--icon-check) center / contain no-repeat;
-}
-
-/* 浮层打开时，关闭按钮保持 danger 语义提示 */
-.titlebar-btn-close.is-open {
-  background-color: var(--color-danger);
-  color: #ffffff;
 }
 </style>

@@ -2,23 +2,24 @@
      「扫描添加」面板：选来源（Steam 库 / 本地文件夹）→ 扫描 → **自动逐个搜索** →
      结果按扫描顺序排列；每行可勾选，底部两个入口：「全部入库」与「入库所选」。
      点「详情」只是去 /works 核对作品，不写库 —— 写库只发生在「入库」动作里。
-     数据与批量逻辑都在 stores/scanStore.ts（为什么独立 store 见那里注释）。 -->
+     数据与批量逻辑都在 stores/scanStore.ts（为什么独立 store 见那里注释）。
+     2026-11-24：来源/识别方式改成 naive 分段单选，输入框/按钮/勾选框/徽标全部换成 naive 控件。 -->
 <template>
   <div class="flex flex-col gap-3">
     <!-- 来源：Steam 自动定位；本地文件夹要选路径（用户取消就保持原路径） -->
     <div class="flex items-center gap-2 flex-wrap">
       <span class="text-xs text-secondary">扫描来源</span>
-      <button
-        v-for="option in SOURCE_OPTIONS"
-        :key="option.value"
-        type="button"
-        class="chip"
-        :class="{ 'chip-active': scan.source === option.value }"
-        :aria-pressed="scan.source === option.value"
-        @click="scan.setSource(option.value)"
+      <n-radio-group
+        :value="scan.source"
+        size="small"
+        name="scan-source"
+        aria-label="扫描来源"
+        @update:value="(value: string | number | boolean) => scan.setSource(value as ScanSource)"
       >
-        {{ option.label }}
-      </button>
+        <n-radio-button v-for="option in SOURCE_OPTIONS" :key="option.value" :value="option.value">
+          {{ option.label }}
+        </n-radio-button>
+      </n-radio-group>
     </div>
 
     <!-- 本地文件夹：路径 + 系统选择框 + 识别方式 -->
@@ -26,40 +27,35 @@
       <div class="flex items-end gap-2">
         <label class="flex-1 min-w-0 flex flex-col gap-1.5">
           <span class="text-xs text-secondary">游戏目录</span>
-          <input
-            v-model="scan.folderPath"
-            type="text"
-            class="input-theme w-full"
+          <n-input
+            v-model:value="scan.folderPath"
             placeholder="例如 D:\Games"
             autocomplete="off"
             spellcheck="false"
             @keydown.enter.prevent="runScan"
           />
         </label>
-        <button
-          type="button"
-          class="btn-brand flex items-center gap-1.5 shrink-0"
-          :disabled="scan.picking"
-          @click="scan.pickFolder()"
-        >
-          <span :class="scan.picking ? 'i-lucide-loader-circle spin' : 'i-lucide-folder-open'" class="icon-sm" aria-hidden="true" />
+        <n-button type="primary" class="shrink-0" :loading="scan.picking" :disabled="scan.picking" @click="scan.pickFolder()">
+          <template #icon>
+            <span class="i-lucide-folder-open icon-sm" aria-hidden="true" />
+          </template>
           {{ scan.picking ? '选择中' : '选择…' }}
-        </button>
+        </n-button>
       </div>
 
       <div class="flex items-center gap-2 flex-wrap">
         <span class="text-xs text-secondary">识别方式</span>
-        <button
-          v-for="option in MODE_OPTIONS"
-          :key="option.value"
-          type="button"
-          class="chip"
-          :class="{ 'chip-active': scan.mode === option.value }"
-          :aria-pressed="scan.mode === option.value"
-          @click="scan.setMode(option.value)"
+        <n-radio-group
+          :value="scan.mode"
+          size="small"
+          name="scan-mode"
+          aria-label="识别方式"
+          @update:value="(value: string | number | boolean) => scan.setMode(value as FolderScanMode)"
         >
-          {{ option.label }}
-        </button>
+          <n-radio-button v-for="option in MODE_OPTIONS" :key="option.value" :value="option.value">
+            {{ option.label }}
+          </n-radio-button>
+        </n-radio-group>
       </div>
       <p class="m-0 text-xs text-tertiary">{{ modeHint }}</p>
     </template>
@@ -72,76 +68,75 @@
 
     <!-- 扫描 → 自动搜索/取详情；进行中显示进度与「停止」 -->
     <div class="flex items-center gap-2 flex-wrap">
-      <button
-        type="button"
-        class="btn-brand flex items-center gap-1.5"
+      <n-button
+        type="primary"
+        :loading="scan.scanning"
         :disabled="scan.scanning || (scan.source === 'folder' && !scan.folderPath.trim())"
         @click="runScan"
       >
-        <span :class="scan.scanning ? 'i-lucide-loader-circle spin' : 'i-lucide-search'" class="icon-sm" aria-hidden="true" />
+        <template #icon>
+          <span class="i-lucide-search icon-sm" aria-hidden="true" />
+        </template>
         {{ scan.scanning ? '扫描中…' : '扫描' }}
-      </button>
+      </n-button>
       <span v-if="scan.searching" class="text-xs text-tertiary">{{ searchLabel }} {{ scan.searched }}/{{ scan.count }}…</span>
       <span v-else-if="scan.detailing" class="text-xs text-tertiary">获取详情 {{ scan.detailed }}/{{ scan.detailTotal }}…</span>
-      <button v-if="scan.searching || scan.detailing" type="button" class="chip" @click="scan.stopSearch()">停止</button>
+      <n-button v-if="scan.searching || scan.detailing" quaternary size="small" @click="scan.stopSearch()">
+        停止
+      </n-button>
       <span v-else-if="scan.matches.length" class="text-xs text-tertiary">匹配 {{ scan.matchedCount }}/{{ scan.count }}</span>
     </div>
 
-    <MetaMessage v-if="scan.error" tone="error" :text="scan.error" />
-    <MetaMessage v-if="scan.status" :text="scan.status" />
+    <!-- 扫描/选择文件夹的错误与「跳过 N 个」提示统一走 toast（scanStore 里弹） -->
 
     <!-- 批量入库：一键全部 / 勾选部分（搜索未完成时先别动，避免只入到一半的结果） -->
     <div v-if="scan.storableCount" class="flex items-center gap-2 flex-wrap">
       <label class="flex items-center gap-1.5 text-xs text-secondary cursor-pointer select-none">
-        <input
-          type="checkbox"
-          class="todo-checkbox flex-shrink-0 w-[18px] h-[18px] rounded-[5px] cursor-pointer appearance-none flex-center text-transparent transition-colors duration-200 border-2 border-theme-dark bg-transparent hover:border-brand checked:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
+        <n-checkbox
           :checked="scan.allSelected"
           :disabled="scan.storingAll || scan.searching || scan.detailing"
-          @change="toggleAll"
+          @update:checked="(value: boolean) => scan.toggleSelectAll(value)"
         />
         全选
       </label>
-      <button
-        type="button"
-        class="chip"
+      <n-button
+        size="small"
+        quaternary
         :disabled="scan.storingAll || scan.searching || scan.detailing"
         @click="storeAll"
       >
         {{ scan.storingAll ? `入库中 ${scan.storeProgress}/${scan.storeTotal}` : `全部入库（${scan.storableCount}）` }}
-      </button>
-      <button
-        type="button"
-        class="chip chip-active"
+      </n-button>
+      <n-button
+        size="small"
+        type="primary"
         :disabled="scan.storingAll || scan.searching || !scan.selectedCount"
         @click="storeSelected"
       >
         入库所选（{{ scan.selectedCount }}）
-      </button>
+      </n-button>
     </div>
-    <MetaMessage v-if="scan.storeError" tone="error" :text="scan.storeError" />
+    <!-- 逐行入库失败在行内显示；整批结果由 storeAll/storeSelected 弹一条汇总 toast -->
 
     <!-- 搜索结果：按扫描顺序排列，一行 = 一个扫描名 + 匹配到的作品 -->
-    <div v-if="scan.matches.length" class="min-h-0 max-h-[34vh] overflow-y-auto scrollbar-theme -mx-5 border-t-theme-light">
+    <div v-if="scan.matches.length" class="min-h-0 max-h-[34vh] overflow-y-auto scrollbar-theme -mx-4 border-t-theme-light">
       <ul class="list-none m-0 p-0">
         <li
           v-for="match in scan.matches"
           :key="match.entryIndex + ':' + match.source"
-          class="flex items-center gap-3 px-5 py-2.5 border-b-theme-light last:border-none"
+          class="flex items-center gap-3 px-4 py-2.5 border-b-theme-light last:border-none"
         >
-          <!-- 勾选框：只有「有匹配且未入库」的行可勾；其余留同宽占位保证封面左对齐。
-               外观类串与 components/todo/TodoItem.vue 的选择框一字不差（改一处必须同步另一处）。 -->
-          <input
-            v-if="match.state === 'matched' && !scan.isStored(match)"
-            type="checkbox"
-            class="todo-checkbox flex-shrink-0 w-[18px] h-[18px] rounded-[5px] cursor-pointer appearance-none flex-center text-transparent transition-colors duration-200 border-2 border-theme-dark bg-transparent hover:border-brand checked:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
-            :checked="match.selected"
-            :disabled="scan.storingAll || match.storing"
-            :aria-label="`选择「${match.workName || match.entry.name}」（${sourceLabel(match)}）`"
-            @change="scan.toggleSelect(match)"
-          />
+          <!-- 勾选框：只有「有匹配且未入库」的行可勾；其余留同宽占位保证封面左对齐 -->
+          <div v-if="match.state === 'matched' && !scan.isStored(match)" class="w-[18px] shrink-0 flex-center">
+            <n-checkbox
+              :checked="match.selected"
+              :disabled="scan.storingAll || match.storing"
+              :aria-label="`选择「${match.workName || match.entry.name}」（${sourceLabel(match)}）`"
+              @update:checked="() => scan.toggleSelect(match)"
+            />
+          </div>
           <span v-else-if="match.state === 'searching'" class="w-[18px] shrink-0 flex-center" aria-hidden="true">
-            <span class="i-lucide-loader-circle spin icon-xs text-tertiary" />
+            <n-spin :size="14" />
           </span>
           <span v-else class="w-[18px] shrink-0" aria-hidden="true" />
 
@@ -164,21 +159,21 @@
             <p v-if="match.storeError" class="m-0 text-xs text-danger truncate" :title="match.storeError">{{ match.storeError }}</p>
           </div>
 
-          <span v-if="scan.isStored(match)" class="text-xs text-success flex items-center gap-1 shrink-0">
-            <span class="i-lucide-circle-check-big icon-xs" aria-hidden="true" />
+          <n-tag v-if="scan.isStored(match)" size="small" type="success" :bordered="true" class="shrink-0">
             已入库
-          </span>
-          <button v-else-if="match.state === 'matched'" type="button" class="chip shrink-0" @click="openDetail(match)">
+          </n-tag>
+          <n-button v-else-if="match.state === 'matched'" text type="primary" size="tiny" class="shrink-0" @click="openDetail(match)">
             详情
-          </button>
-          <button
+          </n-button>
+          <n-button
             v-else-if="match.state === 'error' || match.state === 'stopped'"
-            type="button"
-            class="chip shrink-0"
+            text
+            size="tiny"
+            class="shrink-0"
             @click="scan.retryMatch(match)"
           >
             重试
-          </button>
+          </n-button>
         </li>
       </ul>
     </div>
@@ -188,11 +183,11 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { NButton, NCheckbox, NInput, NRadioButton, NRadioGroup, NSpin, NTag } from 'naive-ui'
 import { useScanStore } from '../../stores/scanStore'
 import type { FolderScanMode, ScanMatch, ScanSource, ScanStoreResult } from '../../stores/scanStore'
-import { toastError, toastSuccess } from '../../utils/toast'
+import { toastError } from '../../utils/toast'
 import MetaCover from '../meta/MetaCover.vue'
-import MetaMessage from '../meta/MetaMessage.vue'
 
 const scan = useScanStore()
 
@@ -246,22 +241,16 @@ function openDetail(match: ScanMatch) {
   emit('detail', match.workId, match.source)
 }
 
-function toggleAll(event: Event) {
-  scan.toggleSelectAll((event.target as HTMLInputElement).checked)
-}
-
 function runScan() {
   void scan.scan()
 }
 
 /**
- * 批量入库的收尾提示（游戏库「添加」的 toast，2026-11-23 用户要求）。
- * 只在整批结束时弹一次汇总：每行成功都弹会把提示刷屏，行内本身已有「已入库」状态。
+ * 批量入库的收尾提示。
+ * 2026-11-25 用户收紧 toast 口径后：**成功不再弹**（行内已有「已入库」状态、
+ * 游戏库网格也会多出卡片），只保留失败 —— 失败属于「出现错误」。
  */
 function reportStoreResult(result: ScanStoreResult) {
-  if (result.stored > 0) {
-    toastSuccess(`已入库 ${result.stored} 款游戏`, { description: '已经收进游戏库，可以在网格里看到' })
-  }
   if (result.failed > 0) {
     toastError(`${result.failed} 款入库失败`, {
       description: scan.storeError || '展开结果行可以看到具体原因',

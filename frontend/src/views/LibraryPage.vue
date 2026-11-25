@@ -19,73 +19,82 @@
          进入批量模式后，操作项在右侧的浮空长条卡片里（lib-batch-panel，图标竖排）。 -->
     <MetaSection icon="i-lucide-gamepad-2" title="游戏库">
       <template #actions>
-        <!-- 已入库数量放在标题栏右侧，和按钮同一行居中 -->
-        <span class="text-xs text-tertiary whitespace-nowrap">
+        <!-- 已入库数量放在标题栏右侧；进入批量模式后这行换成操作提示（同一行替换，不挤压布局） -->
+        <span v-if="batchMode" class="text-xs text-tertiary whitespace-nowrap">
+          点击封面选择 · 已选
+          <span class="text-primary font-medium tabular-nums">{{ selectedCount }}</span>
+          款
+        </span>
+        <span v-else class="text-xs text-tertiary whitespace-nowrap">
           已入库 <span class="text-primary font-medium tabular-nums">{{ library.count }}</span> 款
         </span>
-        <button
-          class="text-xs text-secondary hover:text-primary flex items-center gap-1 cursor-pointer bg-transparent border-none disabled:opacity-50"
-          :disabled="library.loading"
-          @click="library.load(true)"
-        >
-          <span class="i-lucide-refresh-cw icon-xs" aria-hidden="true" />
+        <n-button text size="tiny" :disabled="library.loading" @click="library.refresh">
+          <template #icon>
+            <span class="i-lucide-refresh-cw icon-xs" aria-hidden="true" />
+          </template>
           {{ library.loading ? '刷新中…' : '刷新' }}
-        </button>
+        </n-button>
         <!-- 「添加游戏」入口（用户 2026-11-23 要求：不再用网格末尾的圆形加号，
              改放到「游戏库」标题所在的这张卡里） -->
-        <button
-          type="button"
-          class="text-xs text-secondary hover:text-primary flex items-center gap-1 cursor-pointer bg-transparent border-none"
+        <n-button
+          text
+          size="tiny"
           title="添加游戏：扫描 Steam 库 / 本地文件夹，或手动搜索"
           @click="openAddGame"
         >
-          <span class="i-lucide-plus icon-xs" aria-hidden="true" />
+          <template #icon>
+            <span class="i-lucide-plus icon-xs" aria-hidden="true" />
+          </template>
           添加游戏
-        </button>
-        <button
+        </n-button>
+        <n-button
           v-if="!batchMode"
-          type="button"
-          class="text-xs text-secondary hover:text-primary flex items-center gap-1 cursor-pointer bg-transparent border-none disabled:opacity-50"
+          text
+          size="tiny"
           :disabled="!library.count"
           title="进入批量操作：选几张卡一起删除"
           @click="enterBatch"
         >
-          <span class="i-lucide-list-checks icon-xs" aria-hidden="true" />
+          <template #icon>
+            <span class="i-lucide-list-checks icon-xs" aria-hidden="true" />
+          </template>
           批量操作
-        </button>
-        <button
-          v-else
-          type="button"
-          class="text-xs text-secondary hover:text-primary flex items-center gap-1 cursor-pointer bg-transparent border-none"
-          title="退出批量操作"
-          @click="exitBatch"
-        >
-          <span class="i-lucide-x icon-xs" aria-hidden="true" />
+        </n-button>
+        <n-button v-else text size="tiny" title="退出批量操作" @click="exitBatch">
+          <template #icon>
+            <span class="i-lucide-x icon-xs" aria-hidden="true" />
+          </template>
           退出批量
-        </button>
+        </n-button>
       </template>
 
     </MetaSection>
 
-    <MetaMessage v-if="library.error" tone="error" :text="library.error" />
+    <!-- 读取/删除失败统一走 toast（libraryStore 里弹） -->
 
-    <!-- ── 网格：自己开滚动（MainLayout 的 router-view 是 overflow-hidden） ── -->
+    <!-- ── 网格：自己开滚动（MainLayout 的 router-view 是 overflow-hidden） ──
+         scroll-fade：上下边缘按「还能不能继续滚」渐隐（参考 shadcn 的 scroll-fade，
+         指令见 utils/scrollFade.ts；只有真的还有内容在视口外时才淡）。 -->
     <div class="flex-1 min-h-0 flex gap-4">
-      <div class="flex-1 min-h-0 overflow-y-auto scrollbar-theme pr-2">
+      <div v-scroll-fade class="scroll-fade flex-1 min-h-0 overflow-y-auto scrollbar-theme pr-2">
         <!-- 网格在有作品或已读完时都渲染：空库也要能看到末尾那个「添加游戏」圆钮 -->
         <div
           v-if="library.works.length || !library.loading"
           class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3"
+          :class="{ 'lib-batch-mode': batchMode }"
         >
           <!-- 一张卡片 = 一个封面按钮（**卡片上不再有任何操作按钮**，用户要求）。
                封面统一 2:3 等比裁切（Steam / DLsite / 以后所有来源都一样）：
                Steam 的 library_600x900 本身就是 2:3，DLsite 的 4:3 图会被 object-cover 居中裁掉两边。
-               批量模式：点卡片 = 选中 / 取消选中（不再进详情）；选中时**边框与遮罩都用品牌色**
-               （用户 2026-11-23 要求），边框/遮罩的具体写法在 scoped 样式里。 -->
+               批量模式：点卡片 = 选中 / 取消选中（不再进详情）；左上角出现方形勾选框、
+               未选中的卡片压暗去饱和（「进入批量操作后卡片样式变化」），
+               选中时**边框与遮罩都用品牌色**。
+               平时：hover 轻微上浮 + 封面放大 + 底部名称浮层（仿 Steam 库卡片），
+               点击从指针位置扩散一圈水纹（lib-ripple）。 -->
           <div v-for="item in library.works" :key="itemKey(item)" class="group relative">
             <button
               type="button"
-              class="lib-card relative block w-full overflow-hidden rounded-lg bg-secondary cursor-pointer p-0"
+              class="lib-card relative block w-full overflow-hidden rounded-none bg-secondary cursor-pointer p-0"
               :class="{ 'lib-selected': isSelected(item) }"
               :aria-label="
                 batchMode
@@ -93,19 +102,29 @@
                   : `打开「${item.name}」的作品详情`
               "
               :aria-pressed="batchMode ? isSelected(item) : undefined"
-              @click="handleCardClick(item)"
+              @click="handleCardClick(item, $event)"
             >
-              <span class="block w-full aspect-[2/3]">
+              <span class="lib-card-media block w-full aspect-[2/3]">
                 <img
                   v-if="library.coverFor(item)"
                   :src="library.coverFor(item)"
                   :alt="item.name"
-                  class="w-full h-full object-cover"
+                  class="lib-card-img w-full h-full object-cover"
                   draggable="false"
                 />
                 <span v-else class="flex-center w-full h-full text-muted">
                   <span class="i-lucide-image-off icon-lg" aria-hidden="true" />
                 </span>
+              </span>
+
+              <!-- 名称浮层：hover 时从下方淡入（Steam 库卡片的信息面板） -->
+              <span class="lib-card-caption" aria-hidden="true" :title="item.name">
+                {{ item.name }}
+              </span>
+
+              <!-- 批量模式的方形勾选框：未选为空框、选中填品牌色（卡片样式变化的提示） -->
+              <span v-if="batchMode" class="lib-check" :class="{ 'lib-check--on': isSelected(item) }" aria-hidden="true">
+                <span v-if="isSelected(item)" class="i-lucide-check icon-xs" />
               </span>
 
               <!-- 选中遮罩：品牌色半透明铺满封面 + 居中勾选（与品牌色边框一起表达"已选中"）。
@@ -120,13 +139,20 @@
         </div>
 
         <!-- 空库提示：添加入口在顶栏「游戏库」卡片里，这里只补一句"下一步做什么" -->
-        <p
+        <n-empty
           v-if="!library.loading && !library.works.length"
-          class="m-0 py-6 text-center text-xs text-tertiary"
+          class="py-8"
+          description="游戏库还是空的"
         >
-          游戏库还是空的 —— 点顶部「游戏库」卡片里的「添加游戏」：扫描 Steam 库 / 本地文件夹，也可以手动输入 RJ 编号或作品名；点开详情、再点「入库」才会收进这里。
-        </p>
-        <p v-else-if="library.loading && !library.works.length" class="m-0 text-sm text-tertiary py-6 text-center">正在读取游戏库…</p>
+          <template #extra>
+            <p class="m-0 text-xs text-tertiary max-w-[46ch] text-center">
+              点顶部「游戏库」卡片里的「添加游戏」：扫描 Steam 库 / 本地文件夹，也可以手动输入 RJ 编号或作品名；点开详情、再点「入库」才会收进这里。
+            </p>
+          </template>
+        </n-empty>
+        <div v-else-if="library.loading && !library.works.length" class="py-8 flex-center">
+          <n-spin size="medium" description="正在读取游戏库…" />
+        </div>
       </div>
       <!-- 批量操作长条：**浮空的独立小卡片**（fixed 定位，垂直位置在「游戏库」顶栏卡片
            下方、水平位置在游戏卡片右侧的留白里，宽 56px、高随内容）。
@@ -136,181 +162,196 @@
            条内只放得下图标：标题图标 + 已选数量 + 全选 / 删除 / 退出三个图标按钮，
            文字说明走 title / aria-label；选中与否由卡片自己的品牌色边框 + 遮罩表达。 -->
       <Transition name="lib-drawer">
-        <aside v-if="batchMode" class="lib-batch-panel" aria-label="批量操作">
-          <span class="i-lucide-list-checks icon-sm section-icon" aria-hidden="true" />
+        <aside v-if="batchMode" class="lib-batch-panel" aria-label="批量操作" title="批量操作：点击封面选择作品">
+          <span class="i-lucide-list-checks icon-sm text-brand flex-center" aria-hidden="true" />
 
           <p class="lib-batch-count" :title="`已选 ${selectedCount} / ${library.count}`">
             <span class="lib-batch-num">{{ selectedCount }}</span>
             <span class="lib-batch-total">/{{ library.count }}</span>
           </p>
 
-          <!-- 操作竖向排布（用户要求）：全选 / 删除所选 / 退出（删除要连点两下确认） -->
+          <!-- 操作竖向排布（用户要求）：全选 / 删除所选 / 退出 -->
           <div class="lib-batch-actions">
-            <button
-              type="button"
-              class="lib-batch-btn"
-              :disabled="!library.count || library.removing"
-              :title="allSelected ? '取消全选' : '全选'"
-              :aria-label="allSelected ? '取消全选' : '全选'"
-              @click="toggleSelectAll"
-            >
-              <span :class="allSelected ? 'i-lucide-square-check-big' : 'i-lucide-square'" class="icon-sm" aria-hidden="true" />
-            </button>
+            <n-tooltip placement="left" :delay="300">
+              <template #trigger>
+                <n-button
+                  size="small"
+                  quaternary
+                  :disabled="!library.count || library.removing"
+                  :aria-label="allSelected ? '取消全选' : '全选'"
+                  @click="toggleSelectAll"
+                >
+                  <template #icon>
+                    <span :class="allSelected ? 'i-lucide-square-check-big' : 'i-lucide-square'" class="icon-sm" aria-hidden="true" />
+                  </template>
+                </n-button>
+              </template>
+              {{ allSelected ? '取消全选' : '全选' }}
+            </n-tooltip>
 
-            <button
-              type="button"
-              class="lib-batch-btn lib-batch-btn-danger"
-              :class="{ 'is-armed': batchArmed }"
-              :disabled="!selectedCount || library.removing"
-              :title="batchArmed ? '再点一次确认删除' : `删除所选（${selectedCount}）—— 连点两下确认`"
-              :aria-label="batchArmed ? '再点一次确认删除' : '删除所选'"
-              @click="handleBatchDelete"
-              @mouseleave="batchArmed = false"
-              @blur="batchArmed = false"
+            <n-popconfirm
+              positive-text="删除"
+              negative-text="取消"
+              :positive-button-props="{ type: 'error' }"
+              @positive-click="handleBatchDelete"
             >
-              <span
-                :class="
-                  library.removing
-                    ? 'i-lucide-loader-circle spin'
-                    : batchArmed
-                      ? 'i-lucide-check'
-                      : 'i-lucide-trash-2'
-                "
-                class="icon-sm"
-                aria-hidden="true"
-              />
-            </button>
+              <template #trigger>
+                <n-button
+                  size="small"
+                  quaternary
+                  type="error"
+                  :disabled="!selectedCount || library.removing"
+                  :loading="library.removing"
+                  aria-label="删除所选"
+                >
+                  <template #icon>
+                    <span class="i-lucide-trash-2 icon-sm" aria-hidden="true" />
+                  </template>
+                </n-button>
+              </template>
+              删除选中的 {{ selectedCount }} 款游戏？封面文件也会一并删除。
+            </n-popconfirm>
 
-            <button
-              type="button"
-              class="lib-batch-btn"
-              title="退出批量操作"
-              aria-label="退出批量操作"
-              @click="exitBatch"
-            >
-              <span class="i-lucide-x icon-sm" aria-hidden="true" />
-            </button>
+            <n-tooltip placement="left" :delay="300">
+              <template #trigger>
+                <n-button size="small" quaternary aria-label="退出批量操作" @click="exitBatch">
+                  <template #icon>
+                    <span class="i-lucide-x icon-sm" aria-hidden="true" />
+                  </template>
+                </n-button>
+              </template>
+              退出批量
+            </n-tooltip>
           </div>
         </aside>
       </Transition>
     </div>
 
-    <!-- ── 添加游戏弹窗（扫描添加 / 手动搜索）：居中，周围模糊 ────────
-         Teleport 到 body：避免被页面/侧栏的层级与 overflow 裁掉。
-         Esc 关闭：焦点在输入框里，keydown 会冒泡到遮罩层。
-         **点遮罩不关闭**（用户要求）：只有右上角 ✕ 与 Esc 能关，避免复制/选中文字时
-         手一滑点在旁边就把整段搜索关掉。 -->
-    <Teleport to="body">
-      <Transition name="lib-modal">
-        <div
-          v-if="searchOpen"
-          class="lib-mask fixed inset-0 z-[1300] flex items-center justify-center p-6"
-          role="dialog"
-          aria-modal="true"
-          aria-label="添加游戏"
-          @keydown.esc="closeSearch"
+    <!-- ── 添加游戏弹窗（扫描添加 / 手动搜索）：改用 naive 的 n-modal ────────
+         点遮罩不关闭（用户要求）：只有右上角 ✕ 与 Esc 能关。
+         mask-style 里加一层模糊，保留原来「周围虚化、中间清晰」的观感。 -->
+    <n-modal
+      v-model:show="searchOpen"
+      preset="card"
+      title="添加游戏"
+      :mask-closable="false"
+      :style="{ width: 'min(560px, 92vw)' }"
+      :mask-style="{ backdropFilter: 'blur(8px)' }"
+      class="add-game-modal"
+      :content-style="{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: '1 1 auto', overflow: 'hidden' }"
+    >
+      <div
+        class="flex min-h-0 flex-1 flex-col gap-4"
+        :class="addMode === 'manual' ? 'overflow-hidden' : 'overflow-y-auto scrollbar-theme pr-1'"
+      >
+        <!-- 两种添加方式：默认「扫描添加」，「手动搜索」保留原来的搜索流程 -->
+        <n-radio-group
+          class="shrink-0"
+          :value="addMode"
+          size="small"
+          name="add-game-mode"
+          aria-label="添加方式"
+          @update:value="(value: string | number | boolean) => (addMode = value as AddMode)"
         >
-          <div class="lib-dialog card-flat p-5 w-[min(560px,92vw)] max-h-[80vh] flex flex-col gap-4 overflow-hidden">
-            <header class="flex items-center gap-2.5">
-              <span class="i-lucide-gamepad-2 icon-md section-icon" aria-hidden="true" />
-              <h2 class="section-title">添加游戏</h2>
-              <button
-                type="button"
-                class="ml-auto w-7 h-7 rounded-md flex-center bg-transparent border-none text-tertiary cursor-pointer hover:text-primary hover:bg-hover transition-colors duration-200"
-                aria-label="关闭添加游戏"
-                @click="closeSearch"
-              >
-                <span class="i-lucide-x icon-sm" aria-hidden="true" />
-              </button>
-            </header>
+          <n-radio-button value="scan">扫描添加</n-radio-button>
+          <n-radio-button value="manual">手动搜索</n-radio-button>
+        </n-radio-group>
 
-            <!-- 两种添加方式：默认「扫描添加」（新方法），「手动搜索」保留原来的搜索流程 -->
-            <div class="flex items-center gap-1" role="group" aria-label="添加方式">
-              <button
-                type="button"
-                class="chip"
-                :class="{ 'chip-active': addMode === 'scan' }"
-                :aria-pressed="addMode === 'scan'"
-                @click="addMode = 'scan'"
-              >
-                扫描添加
-              </button>
-              <button
-                type="button"
-                class="chip"
-                :class="{ 'chip-active': addMode === 'manual' }"
-                :aria-pressed="addMode === 'manual'"
-                @click="addMode = 'manual'"
-              >
-                手动搜索
-              </button>
+        <!-- 扫描添加：扫出来的名字点一下就进搜索（名字同时会写进手动搜索的输入框） -->
+        <ScanPanel v-if="addMode === 'scan'" class="min-h-0" @detail="openScanResult" />
+
+        <!-- 手动搜索：**一次同时查 DLsite 与 Steam**（用户 2026-11-23 要求
+             「手动搜索只显示 DLsite 数据源，应该也显示 steam 数据源」），
+             两个来源各自成页、用上面的源切换器查看（2026-11-24），不再把两源塞进同一列表。 -->
+        <template v-else>
+          <p class="m-0 shrink-0 text-xs text-tertiary">{{ searchHint }}</p>
+          <MetaSearchBar class="shrink-0" v-model="meta.keyword" :loading="meta.loading" @submit="submitSearch" />
+        </template>
+
+        <!-- 搜索/分页/游戏库的一次性反馈全部走 toast（2026-11-25 用户要求） -->
+
+        <!-- 候选：**不同来源分开显示**（用户 2026-11-24 要求：不要把多源数据归并到一页里）。
+             用源切换器选看 Steam 或 DLsite，分页只属于当前源（Steam 最多 10 条、没有分页）。
+             列表与分页仍是一张卡片：列表滚动、分页固定在卡片底部。 -->
+        <template v-if="addMode === 'manual' && sourceOptions.length">
+          <!-- 源切换：只有存在候选的源才出现，按钮上带条数 -->
+          <n-radio-group
+            class="shrink-0"
+            :value="activeSource"
+            size="small"
+            name="candidate-source"
+            aria-label="候选来源"
+            @update:value="(value: string | number | boolean) => (searchSource = value as LibrarySource)"
+          >
+            <n-radio-button v-for="option in sourceOptions" :key="option.value" :value="option.value">
+              {{ option.label }}（{{ option.count }}）
+            </n-radio-button>
+          </n-radio-group>
+
+          <div class="flex min-h-[140px] flex-1 flex-col overflow-hidden rounded-none border-theme bg-card">
+            <div v-scroll-fade class="scroll-fade min-h-0 flex-1 overflow-y-auto scrollbar-theme">
+              <MetaCandidateList
+                v-if="activeSource === 'dlsite'"
+                :candidates="meta.pagedCandidates"
+                :covers="meta.candidateCovers"
+                @select="chooseCandidate"
+              />
+              <MetaCandidateList
+                v-else
+                :candidates="meta.steamCandidates"
+                @select="chooseSteamCandidate"
+              />
             </div>
 
-            <!-- 扫描添加：扫出来的名字点一下就进搜索（名字同时会写进手动搜索的输入框） -->
-            <ScanPanel v-if="addMode === 'scan'" class="min-h-0" @detail="openScanResult" />
-
-            <!-- 手动搜索：**一次同时查 DLsite 与 Steam**（用户 2026-11-23 要求
-                 「手动搜索只显示 DLsite 数据源，应该也显示 steam 数据源」），
-                 两个来源的候选分组列出，不再需要先选来源。 -->
-            <template v-else>
-              <p class="m-0 text-xs text-tertiary">{{ searchHint }}</p>
-              <MetaSearchBar v-model="meta.keyword" :loading="meta.loading" @submit="submitSearch" />
-            </template>
-
-            <MetaMessage v-if="addMode === 'manual' && meta.error" tone="error" :text="meta.error" />
-            <MetaMessage v-if="addMode === 'manual' && meta.searchNotice" tone="warning" :text="meta.searchNotice" />
-            <MetaMessage v-if="addMode === 'manual' && meta.status" :text="meta.status" />
-            <MetaMessage v-if="addMode === 'manual' && meta.pageLoading" :text="`正在加载第 ${meta.candidatePage} 页…`" />
-
-            <!-- 候选：Steam 组（最多 10 条、无分页）+ DLsite 组（每页 10 条，可翻页） -->
-            <template v-if="addMode === 'manual' && (meta.steamCandidates.length || meta.candidateTotal > 0)">
-              <div class="min-h-0 flex-1 overflow-y-auto scrollbar-theme -mx-5 border-t-theme-light">
-                <template v-if="meta.steamCandidates.length">
-                  <p class="m-0 px-5 pt-3 pb-1.5 text-xs text-tertiary border-b-theme-light">
-                    Steam 商店 · {{ meta.steamCandidates.length }} 个候选（最多 10 个，没有分页）
-                  </p>
-                  <MetaCandidateList :candidates="meta.steamCandidates" @select="chooseSteamCandidate" />
-                </template>
-
-                <template v-if="meta.candidateTotal > 0">
-                  <p class="m-0 px-5 pt-3 pb-1.5 text-xs text-tertiary border-b-theme-light">
-                    DLsite · 共 {{ meta.candidateTotal }} 条
-                  </p>
-                  <MetaCandidateList
-                    :candidates="meta.pagedCandidates"
-                    :covers="meta.candidateCovers"
-                    @select="chooseCandidate"
-                  />
-                </template>
-              </div>
-
-              <!-- 分页只作用于 DLsite（Steam 的 storesearch 没有分页参数） -->
+            <!-- 分页只属于当前源；Steam 没有分页，所以只在 DLsite 下出现。
+                 翻页改成顶部那条很细的「处理中」进度条（原来是常驻 loading toast，
+                 2026-11-25 用户收紧 toast 口径后放回页面内，不再弹浮层）。 -->
+            <div
+              v-if="activeSource === 'dlsite' && meta.candidateTotal > 0"
+              class="shrink-0 border-t-theme-light px-2 py-2"
+            >
+              <n-progress
+                v-if="meta.pageLoading"
+                class="mb-2"
+                type="line"
+                :percentage="100"
+                processing
+                :show-indicator="false"
+                :height="2"
+              />
               <MetaPager
-                v-if="meta.candidateTotal > 0"
-                class="-mt-1"
                 :page="meta.candidatePage"
                 :page-count="meta.candidatePageCount"
-                :total="meta.candidateTotal"
                 @change="meta.setCandidatePage"
               />
-            </template>
+            </div>
           </div>
-        </div>
-      </Transition>
-    </Teleport>
+        </template>
+      </div>
+    </n-modal>
+
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import {
+  NButton,
+  NEmpty,
+  NModal,
+  NPopconfirm,
+  NProgress,
+  NRadioButton,
+  NRadioGroup,
+  NSpin,
+  NTooltip,
+} from 'naive-ui'
 import { useMetaStore } from '../stores/metaStore'
 import { useLibraryStore } from '../stores/libraryStore'
 import type { LibrarySource, LibraryWork } from '../services/libraryService'
-import { dismissToast, toastError, toastLoading, toastSuccess } from '../utils/toast'
-import type { ToastId } from '../utils/toast'
+import { toastError, toastSuccess } from '../utils/toast'
 import MetaCandidateList from '../components/meta/MetaCandidateList.vue'
-import MetaMessage from '../components/meta/MetaMessage.vue'
 import MetaPager from '../components/meta/MetaPager.vue'
 import MetaSearchBar from '../components/meta/MetaSearchBar.vue'
 import MetaSection from '../components/meta/MetaSection.vue'
@@ -323,10 +364,15 @@ const library = useLibraryStore()
 const meta = useMetaStore()
 const router = useRouter()
 
+/**
+ * 翻页加载提示：2026-11-25 用户收紧 toast 口径后不再弹浮层，
+ * 改为分页条上方一条 2px 的「处理中」进度条（见模板），加载期间不打断视线。
+ */
+
 /** 两个来源的输入提示：DLsite 支持 RJ 精确抓，Steam 按名字搜（候选最多 10 条、无分页） */
 const searchHint = computed(
   () =>
-    '一次同时搜索 DLsite 与 Steam：DLsite 支持 RJ 编号精确抓取（如 RJ01721474），Steam 按游戏名搜（最多 10 个候选）。两边结果分组列出，点「详情」核对后再入库。',
+    '一次同时搜索 DLsite 与 Steam：DLsite 支持 RJ 编号精确抓取（如 RJ01721474），Steam 按游戏名搜（最多 10 个候选）。两边结果分开显示（上方切换来源），点「详情」核对后再入库。',
 )
 
 /** 一张卡片的唯一 key（编号在两个来源里可能重复，所以带上 source） */
@@ -338,6 +384,26 @@ function itemKey(item: Pick<LibraryWork, 'source' | 'workId'>): string {
 const searchOpen = ref(false)
 /** 弹窗当前方式：默认扫描添加；切到手动搜索走原来的输入框流程 */
 const addMode = ref<AddMode>('scan')
+/** 手动搜索当前查看的候选来源：不同源不归并到同一页，用切换器分开看 */
+const searchSource = ref<LibrarySource>('dlsite')
+
+/** 有候选的来源（切换器只出现有结果的源，按钮上带条数） */
+const sourceOptions = computed(() => {
+  const options: Array<{ value: LibrarySource; label: string; count: number }> = []
+  if (meta.candidateTotal > 0) {
+    options.push({ value: 'dlsite', label: 'DLsite', count: meta.candidateTotal })
+  }
+  if (meta.steamCandidates.length) {
+    options.push({ value: 'steam', label: 'Steam 商店', count: meta.steamCandidates.length })
+  }
+  return options
+})
+
+/** 生效的源：用户选的源已经没有候选时，回落到第一个有候选的源 */
+const activeSource = computed<LibrarySource>(() => {
+  const values = sourceOptions.value.map((option) => option.value)
+  return values.includes(searchSource.value) ? searchSource.value : (values[0] ?? 'dlsite')
+})
 
 // ===== 批量操作（用户 2026-11-23）=====
 // 「只有批量操作游戏库时才弹出操作栏」：平时卡片上没有任何按钮，
@@ -346,8 +412,6 @@ const addMode = ref<AddMode>('scan')
 const batchMode = ref(false)
 /** 已选中的卡片 key（`source:workId`，来源不同的同编号是两条记录） */
 const selectedKeys = ref<string[]>([])
-/** 「删除所选」的待确认态：第一次点只上膛，第二次才真删 */
-const batchArmed = ref(false)
 
 /** 当前选中的库记录（删除时交给 store；按当前列表过滤，刷新后不会带上已不存在的 key） */
 const selectedWorks = computed(() =>
@@ -363,18 +427,16 @@ function isSelected(item: Pick<LibraryWork, 'source' | 'workId'>): boolean {
   return selectedKeys.value.includes(itemKey(item))
 }
 
-/** 进入批量模式：清空上次的选择与待确认态 */
+/** 进入批量模式：清空上次的选择 */
 function enterBatch() {
   batchMode.value = true
   selectedKeys.value = []
-  batchArmed.value = false
 }
 
 /** 退出批量模式：卡片恢复成"点开详情" */
 function exitBatch() {
   batchMode.value = false
   selectedKeys.value = []
-  batchArmed.value = false
 }
 
 function toggleSelect(item: LibraryWork) {
@@ -382,17 +444,38 @@ function toggleSelect(item: LibraryWork) {
   selectedKeys.value = selectedKeys.value.includes(key)
     ? selectedKeys.value.filter((k) => k !== key)
     : [...selectedKeys.value, key]
-  // 选择变了就撤销待确认态：避免「看到的是 A，确认时删的是 B」
-  batchArmed.value = false
 }
 
 function toggleSelectAll() {
   selectedKeys.value = allSelected.value ? [] : library.works.map((item) => itemKey(item))
-  batchArmed.value = false
 }
 
-/** 点卡片：批量模式下只切换选中；平时进作品详情 */
-function handleCardClick(item: LibraryWork) {
+/**
+ * 点击水纹：从指针落点扩散一个圆再淡出（用户 2026-11-25 要求「cover 添加点击水纹扩散动画」）。
+ * 为什么用命令式 DOM 而不是 v-for 状态数组：水纹是一次性的装饰，动画结束即销毁；
+ * 放进响应式状态会让整张网格跟着重渲染，而卡片本身不需要知道有几个水纹。
+ * 圆用「卡片对角线 × 2」当直径，保证从任意落点扩散都能盖满整张封面。
+ */
+function spawnRipple(card: HTMLElement, event: MouseEvent) {
+  const rect = card.getBoundingClientRect()
+  const size = Math.hypot(rect.width, rect.height) * 2
+  const ripple = document.createElement('span')
+  ripple.className = 'lib-ripple'
+  ripple.style.width = `${size}px`
+  ripple.style.height = `${size}px`
+  ripple.style.left = `${event.clientX - rect.left}px`
+  ripple.style.top = `${event.clientY - rect.top}px`
+  card.appendChild(ripple)
+  // animationend 为主（动画放完立刻收）；再挂一个兜底定时器：
+  // 窗口被遮挡/动画被节流时 animationend 可能迟迟不来，不能把水纹节点留在 DOM 里。
+  ripple.addEventListener('animationend', () => ripple.remove(), { once: true })
+  window.setTimeout(() => ripple.remove(), 800)
+}
+
+/** 点卡片：批量模式下只切换选中；平时进作品详情。两种情况都先扩散一圈水纹。 */
+function handleCardClick(item: LibraryWork, event: MouseEvent) {
+  const card = event.currentTarget as HTMLElement | null
+  if (card) spawnRipple(card, event)
   if (batchMode.value) {
     toggleSelect(item)
     return
@@ -400,48 +483,28 @@ function handleCardClick(item: LibraryWork) {
   void openWork(item)
 }
 
-/** 删除所选：连点两下确认（与 TODO 的删除同一套路，不弹确认框）
- *  2026-11-23：删除是游戏库的「移除」，耗时与条数相关（逐条删库记录 + 封面文件），
- *  所以操作超过 300ms 时弹一条 loading 提示占位；结束时**先关掉它、再另弹一条结果**。
- *  ⚠️ 不能把 loading 那条用同一个 id 原地改成结果：sonner 的 loading toast 不启动自动关闭计时器，
- *  原地更新后计时器也不会重启，提示会永远停在屏幕上（用户报的 bug）。详见 utils/toast.ts。 */
+/** 删除所选：确认由 n-popconfirm 气泡承担。
+ *  删除是游戏库的「移除」，耗时与条数相关（逐条删库记录 + 封面文件）。
+ *  2026-11-25 用户收紧 toast 口径后，进行中不再弹 loading 提示 ——
+ *  删除按钮自己会转圈（:loading="library.removing"）；结束后只留一条结果提示。 */
 async function handleBatchDelete() {
   if (!selectedCount.value || library.removing) return
-  if (!batchArmed.value) {
-    batchArmed.value = true
-    return
-  }
-  batchArmed.value = false
 
-  const count = selectedCount.value
-  // 「正在移除」占位提示：只有操作真的慢（>300ms）才弹，删一两款时不会闪一下再消失。
-  // 结束时必须 dismissToast 关掉它 —— loading toast 不会自动消失，也不能原地改成结果（见 utils/toast.ts）。
-  const slowNotice: { id: ToastId | null } = { id: null }
-  const loadingTimer = window.setTimeout(() => {
-    slowNotice.id = toastLoading(count > 1 ? `正在移除 ${count} 款游戏…` : '正在从游戏库移除…')
-  }, 300)
   let removed = 0
   try {
     removed = await library.removeMany(selectedWorks.value)
   } catch (e) {
     // removeMany 自己会兜住逐条失败；走到这里说明是意外错误（此时选择集留着，方便重试）
-    window.clearTimeout(loadingTimer)
-    if (slowNotice.id !== null) dismissToast(slowNotice.id)
     toastError('删除失败', { description: e instanceof Error ? e.message : '请稍后再试' })
     return
   }
-  window.clearTimeout(loadingTimer)
-  if (slowNotice.id !== null) dismissToast(slowNotice.id)
   selectedKeys.value = []
 
   if (removed > 0) {
     toastSuccess(removed > 1 ? `已移除 ${removed} 款游戏` : '已移除 1 款游戏', {
       description: '封面文件也一并删除了',
     })
-    // 部分失败时 store.error 里有逐条原因（页面上的提示条也会显示，这里补一条浮层提醒）
-    if (library.error) toastError('有游戏没能删除', { description: library.error })
-  } else if (library.error) {
-    toastError('删除失败', { description: library.error })
+    // 部分失败时 libraryStore 已弹「有游戏没能删除」的 toast，这里不再重复
   }
 
   // 全删光了就没有"选卡"的意义了，自动退回普通浏览
@@ -459,11 +522,8 @@ function openAddGame() {
   meta.clearResult()
   meta.keyword = ''
   addMode.value = 'scan'
+  searchSource.value = 'dlsite'
   searchOpen.value = true
-}
-
-function closeSearch() {
-  searchOpen.value = false
 }
 
 /**
@@ -476,7 +536,13 @@ function closeSearch() {
  */
 async function submitSearch() {
   const searched = await meta.runMultiSearch()
-  if (searched && meta.work) finishSearch()
+  if (!searched) return
+  if (meta.work) {
+    finishSearch()
+    return
+  }
+  // 两边都搜完后默认看 DLsite；DLsite 没结果时自动落到 Steam（不把两源塞进同一页）
+  searchSource.value = meta.candidateTotal > 0 ? 'dlsite' : 'steam'
 }
 
 /**
@@ -525,39 +591,145 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* ===== 名称面板 =====
-   半透明背景必须用 color-mix：项目不允许 `bg-secondary/50` 这类透明度后缀
-   （UnoCSS rules 是精确匹配，写了会被静默丢弃），而色值本身只能来自全局 token。
-   基础配色随主题：浅色=浅底深字，深色=深底浅字，所以用 bg-base + text-primary。
-   位置固定在封面下沿，向上淡入的位移交给模板里的 translate-y-full → translate-y-0。 */
-.lib-name {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 6px 8px;
-  font-size: 12px;
-  line-height: 1.35;
-  text-align: left;
-  color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--color-bg-base) 88%, transparent);
-  -webkit-backdrop-filter: blur(2px);
-  backdrop-filter: blur(2px);
-  /* 最多两行，超出省略 */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* ===== 卡片边框 + 批量模式选中态 =====
-   基础边框写在这里（模板不再挂 border-theme）：选中时要一次改 width/color，
-   和 UnoCSS 的 border-theme 简写叠在一起会争同一属性（同属性只留一条，容易互相压掉）。
-   选中态 = **品牌色边框 + 品牌色遮罩 + 居中勾选**（用户 2026-11-23 要求两者都用品牌色）。
-   边框从 1px 变 2px：border-box 下只让内容缩 1px，不改变卡片外尺寸与圆角。 */
+/* ===== 封面卡片（仿 Steam 库卡片，2026-11-25）=====
+   · hover：上浮 2px + 阴影 + 封面轻微放大 + 底部名称浮层淡入；
+   · 点击：从指针落点扩散一圈水纹（.lib-ripple）；
+   · 批量模式：未选中压暗去饱和、左上角常驻方形勾选框（见 .lib-batch-mode）。
+   位移只用 transform，不参与网格布局 —— 相邻卡片不会被挤走。
+   半透明色一律 color-mix（UnoCSS 规则是精确匹配，不能写 bg-secondary/50）。 */
 .lib-card {
   border: 1px solid var(--color-border);
-  transition: border-color var(--motion-fast) var(--ease-enter);
+  transition:
+    border-color var(--motion-fast) var(--ease-enter),
+    box-shadow var(--motion-base) var(--ease-enter),
+    transform var(--motion-base) var(--ease-enter),
+    opacity var(--motion-fast) var(--ease-enter),
+    filter var(--motion-fast) var(--ease-enter);
+}
+
+.lib-card:hover {
+  z-index: 2;
+  transform: translateY(-2px);
+  border-color: var(--color-border-dark);
+  box-shadow: var(--color-shadow-heavy);
+}
+
+.lib-card-img {
+  transition: transform var(--motion-slow) var(--ease-enter);
+  will-change: transform;
+}
+
+.lib-card:hover .lib-card-img {
+  transform: scale(1.045);
+}
+
+/* 名称浮层：平时在封面下沿外、透明，hover / 键盘聚焦时淡入。
+   图片上压白字 → 用图片专用 token（两套主题都是白字 + 黑色渐变）。 */
+.lib-card-caption {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 3;
+  padding: 22px 8px 7px;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-on-image);
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--color-hero-veil) 92%, transparent),
+    transparent
+  );
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition:
+    opacity var(--motion-base) var(--ease-enter),
+    transform var(--motion-base) var(--ease-enter);
+}
+
+.lib-card:hover .lib-card-caption,
+.lib-card:focus-visible .lib-card-caption {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* 点击水纹：位置由 JS 写在 left/top（相对卡片），直径 = 卡片对角线 × 2。 */
+.lib-ripple {
+  position: absolute;
+  z-index: 5;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--color-text-on-image) 46%, transparent) 0%,
+    color-mix(in srgb, var(--color-text-on-image) 18%, transparent) 45%,
+    transparent 70%
+  );
+  transform: translate(-50%, -50%) scale(0);
+  pointer-events: none;
+  animation: lib-ripple-spread 560ms var(--ease-enter) forwards;
+}
+
+@keyframes lib-ripple-spread {
+  from {
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0.9;
+  }
+  to {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+
+/* ===== 批量模式 =====
+   卡片样式变化本身就是「现在点封面是选择」的提示：
+   未选中的压暗 + 去饱和，hover 恢复；左上角常驻方形勾选框（选中填品牌色）。 */
+.lib-batch-mode .lib-card:not(.lib-selected) {
+  opacity: 0.6;
+  filter: saturate(0.55);
+}
+
+.lib-batch-mode .lib-card:not(.lib-selected):hover {
+  opacity: 1;
+  filter: none;
+}
+
+/* 选卡时不上浮、不显示名称浮层：避免点错，也避免名称盖住勾选框 */
+.lib-batch-mode .lib-card:hover {
+  transform: none;
+}
+
+.lib-batch-mode .lib-card-caption {
+  display: none;
+}
+
+.lib-check {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid color-mix(in srgb, var(--color-text-on-image) 70%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-hero-veil) 55%, transparent);
+  color: var(--color-text-on-image);
+  transition:
+    background var(--motion-fast) var(--ease-enter),
+    border-color var(--motion-fast) var(--ease-enter);
+}
+
+.lib-check--on {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-text-on-brand);
 }
 
 .lib-selected {
@@ -602,7 +774,7 @@ onMounted(() => {
   width: 56px;
   padding: 12px 0;
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--color-bg-card);
   box-shadow: var(--color-shadow-heavy);
 }
@@ -637,49 +809,6 @@ onMounted(() => {
 }
 
 /* 长条里的图标按钮：36×36，描边口径与标题栏/行内图标按钮一致 */
-.lib-batch-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border: 1px solid var(--color-border-dark);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-fast) var(--ease-enter),
-    border-color var(--motion-fast) var(--ease-enter),
-    color var(--motion-fast) var(--ease-enter),
-    opacity var(--motion-fast) var(--ease-enter);
-}
-
-.lib-batch-btn:hover:not(:disabled) {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-.lib-batch-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* 删除：红描边红图标 → hover / armed 填红 + 反色（与 TODO 行内删除同一套语义） */
-.lib-batch-btn-danger {
-  border-color: var(--color-danger);
-  color: var(--color-danger);
-}
-
-.lib-batch-btn-danger:hover:not(:disabled),
-.lib-batch-btn-danger.is-armed {
-  background: var(--color-danger);
-  border-color: var(--color-danger);
-  color: var(--color-text-on-danger);
-}
-
-/* 弹出/收起：从右侧轻微滑入（独立卡片，不需要整条移出视口） */
 .lib-drawer-enter-active,
 .lib-drawer-leave-active {
   transition:
@@ -693,40 +822,21 @@ onMounted(() => {
   transform: translateX(12px);
 }
 
-/* ===== 搜索弹窗 =====
-   遮罩用半透明 + 模糊：让"周围虚化、中间清晰"，色值同样只能来自 token
-   （bg-base 在浅色主题是浅底、深色主题是深底，无需两套写法）。 */
-.lib-mask {
-  background: color-mix(in srgb, var(--color-bg-base) 62%, transparent);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+/* ===== 添加游戏弹窗（n-modal preset=card）=====
+   目标：结果多时只让候选列表滚动、分页固定在卡片底部；弹窗整体不超过 86vh 且垂直居中，
+   不必滚动整个窗口才能看到分页。 */
+</style>
+
+<!-- n-modal 会 teleport 到 body：这条规则必须非 scoped，否则不一定命中卡片根元素 -->
+<style>
+.add-game-modal {
+  display: flex;
+  flex-direction: column;
+  max-height: 86vh;
+  overflow: hidden;
 }
 
-.lib-dialog {
-  box-shadow: var(--color-shadow-heavy);
-}
-
-/* 进出场：遮罩淡入 + 面板轻微缩放（时长/缓动走全局动效 token） */
-.lib-modal-enter-active,
-.lib-modal-leave-active {
-  transition: opacity var(--motion-base) var(--ease-enter);
-}
-
-.lib-modal-enter-active .lib-dialog,
-.lib-modal-leave-active .lib-dialog {
-  transition:
-    transform var(--motion-base) var(--ease-enter),
-    opacity var(--motion-base) var(--ease-enter);
-}
-
-.lib-modal-enter-from,
-.lib-modal-leave-to {
-  opacity: 0;
-}
-
-.lib-modal-enter-from .lib-dialog,
-.lib-modal-leave-to .lib-dialog {
-  transform: scale(0.96);
-  opacity: 0;
+.add-game-modal .n-card-header {
+  flex-shrink: 0;
 }
 </style>

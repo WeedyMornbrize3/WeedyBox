@@ -1,79 +1,103 @@
 <!-- frontend/src/components/meta/MetaDownloadButton.vue
      入库 / 启动按钮：只负责「长相 + 状态判断」，真正的请求在 store 里。
+     2026-11-24 起按钮改用 naive 的 n-button；「启动方式」下拉从自绘浮层换成 n-dropdown。
      两个阶段：
-       - 还没入库：显示「入库」（原「下载封面」），点击把作品收进游戏库；
-         没有封面 URL 时禁用；入库中显示「入库中」；
+       - 还没入库：显示「入库」，点击把作品收进游戏库；没有封面 URL 时禁用；
        - 已经入库：**不再显示「已入库」**，替换成「游戏启动」——
          点击按库里记录的启动方式启动（stores/metaStore.ts 的 launchGame）。
-       已入库后的状态（2026-11-16 用户要求）：
-         · exe 方式下文件不存在（被删除/移走）→ 按钮**禁用**，由页面提示"游戏已被删除或变更位置"，
-           路径选择沿用原来的「更换位置」入口（系统文件框，UI 不改）；
-         · 游戏正在运行 → 按钮显示「运行中」并禁用（防止重复启动），状态由页面轮询刷新；
-         · 没有记录位置 → 按钮可点，第一次点击弹系统文件框选一次 exe。
-       启动方式（2026-11-23）：Steam 源的作品默认走 steam://rungameid/<appid>，
-       此时不需要本地 exe，也不显示「更换位置」；方式本身由同目录的
-       MetaLaunchModeMenu 切换 —— 它就是「游戏启动」右端的分体按钮右段。
-       已经设置过位置时旁边多一个很轻的「更换位置」文字按钮：选错程序或换了安装目录
-       时需要能改，但不占视觉重量（运行中时禁用）。
-     为什么已入库后不再给「入库」按钮：下载实现刻意不覆盖同名文件
-     （重名加 -2/-3 后缀），再点一次只会多出一份重复的图。 -->
+     已入库后的状态：
+         · exe 方式下文件不存在（被删除/移走）→ 按钮禁用，由页面提示"游戏已被删除或变更位置"；
+         · 游戏正在运行 → 显示「运行中」并禁用（防止重复启动）；
+         · 没有记录位置 → 可点，第一次点击弹系统文件框选一次 exe。
+     启动方式（Steam 源）：默认走 steam://rungameid/<appid>，不需要本地 exe，
+     方式本身由「游戏启动」右端挂的 n-dropdown 切换（分体按钮，见下方 split-* 类）。 -->
 <template>
   <div class="flex items-center gap-2 flex-wrap">
-    <!-- 已入库：启动游戏（+ 更换位置） -->
+    <!-- 已入库：启动游戏（+ 启动方式 + 更换位置） -->
     <template v-if="stored">
-      <!-- 分体按钮（2026-11-23 用户要求：「启动方式通过 group 连接到游戏启动右端」）：
-           左段 = 游戏启动主按钮，右段 = 启动方式下拉。两段之间不能有 gap，
-           靠 btn-brand-split / btn-brand-attach 各自的圆角与分隔线拼成一个整体。
-           右段只有 Steam 源才有（其它来源只有一种启动方式，没什么可选的）。 -->
       <div class="flex items-stretch">
-        <button
-          type="button"
-          :class="steamSource ? 'btn-brand-split' : 'btn-brand'"
-          class="flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+        <n-button
+          type="primary"
           :disabled="launching || running || launchBlocked"
+          :loading="launching"
           :title="launchHint"
+          :style="steamSource ? { borderTopRightRadius: 0, borderBottomRightRadius: 0 } : undefined"
           @click="emit('launch')"
         >
-          <span :class="[launchIcon, { spin: launching }]" class="icon-sm" aria-hidden="true" />
+          <template #icon>
+            <span :class="launchIcon" class="icon-sm" aria-hidden="true" />
+          </template>
           {{ launchText }}
-        </button>
-        <MetaLaunchModeMenu
+        </n-button>
+
+        <!-- 右段：启动方式下拉（只有 Steam 源才有两种启动方式）。
+             2026-11-24 用户要求「去除游戏启动旁启动方式简称」：按钮上只留一个下拉箭头，
+             当前方式改用 title / aria-label 表达，选项里的勾选仍然标出当前方式。 -->
+        <n-dropdown
           v-if="steamSource"
-          :launch-mode="launchMode"
+          v-model:show="modeMenuOpen"
+          trigger="click"
+          :options="modeOptions"
           :disabled="launching || running"
-          @select="emit('setLaunchMode', $event)"
-        />
+          @select="onSelectMode"
+        >
+          <n-button
+            type="primary"
+            :disabled="launching || running"
+            :title="`启动方式：${modeLabel}`"
+            :aria-label="`启动方式：${modeLabel}，点击切换`"
+            :aria-expanded="modeMenuOpen"
+            :style="{
+              borderTopLeftRadius: 0,
+              borderBottomLeftRadius: 0,
+              borderLeft: '1px solid var(--color-divider-on-brand)',
+              padding: '0 8px',
+            }"
+          >
+            <!-- 箭头：展开时转 180°（用户 2026-11-25 要求） -->
+            <span
+              class="i-lucide-chevron-down icon-sm launch-mode-chevron"
+              :class="{ 'launch-mode-chevron--open': modeMenuOpen }"
+              aria-hidden="true"
+            />
+          </n-button>
+        </n-dropdown>
       </div>
-      <button
+
+      <n-button
         v-if="gamePath && launchMode !== 'steam'"
-        type="button"
-        class="text-xs text-secondary hover:text-primary flex items-center gap-1 cursor-pointer bg-transparent border-none disabled:opacity-50 disabled:cursor-not-allowed"
+        text
+        size="tiny"
         :disabled="launching || running"
         title="重新选择游戏程序（.exe）"
         @click="emit('changePath')"
       >
-        <span class="i-lucide-folder-search icon-xs" aria-hidden="true" />
+        <template #icon>
+          <span class="i-lucide-folder-search icon-xs" aria-hidden="true" />
+        </template>
         更换位置
-      </button>
+      </n-button>
     </template>
 
     <!-- 未入库：入库 -->
-    <button
+    <n-button
       v-else
-      type="button"
-      class="btn-brand flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+      type="primary"
       :disabled="disabled || loading"
+      :loading="loading"
       @click="emit('click')"
     >
-      <span :class="loading ? 'i-lucide-loader-circle spin' : 'i-lucide-download'" class="icon-sm" aria-hidden="true" />
+      <template #icon>
+        <span class="i-lucide-download icon-sm" aria-hidden="true" />
+      </template>
       {{ text }}
-    </button>
+    </n-button>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import MetaLaunchModeMenu from './MetaLaunchModeMenu.vue'
+import { computed, h, ref } from 'vue'
+import { NButton, NDropdown } from 'naive-ui'
 
 const props = withDefaults(
   defineProps<{
@@ -115,9 +139,12 @@ const emit = defineEmits<{
   click: []
   launch: []
   changePath: []
-  /** 右段下拉里选了另一种启动方式（透传给页面 → metaStore.setGameLaunchMode） */
+  /** 下拉里选了另一种启动方式（透传给页面 → metaStore.setGameLaunchMode） */
   setLaunchMode: [mode: 'steam' | 'exe']
 }>()
+
+/** 启动方式下拉是否展开：只用来给右侧箭头做旋转动画（展开 180°、收起回正） */
+const modeMenuOpen = ref(false)
 
 /** 未入库时的文案：加载中优先（入库成功那一轮 loading 已落回 false，不会说错话） */
 const text = computed(() => (props.loading ? props.loadingText : props.label))
@@ -135,12 +162,31 @@ const launchText = computed(() =>
   props.launching ? '启动中' : props.running ? '运行中' : '游戏启动',
 )
 const launchIcon = computed(() =>
-  props.launching
-    ? 'i-lucide-loader-circle'
-    : props.running
-      ? 'i-lucide-activity'
-      : 'i-lucide-play',
+  props.running ? 'i-lucide-activity' : 'i-lucide-play',
 )
+
+/** 当前方式的完整说法（只用于 title / aria-label，按钮上不再显示简称） */
+const modeLabel = computed(() => (props.launchMode === 'steam' ? '通过 Steam' : '本地程序'))
+
+/** 下拉选项：当前方式前面打勾（原来是自绘菜单的勾选标记） */
+const modeOptions = computed(() => [
+  {
+    key: 'steam',
+    label: '通过 Steam 启动',
+    icon: () =>
+      props.launchMode === 'steam' ? h('span', { class: 'i-lucide-check icon-xs text-brand' }) : null,
+  },
+  {
+    key: 'exe',
+    label: '本地程序启动',
+    icon: () =>
+      props.launchMode === 'exe' ? h('span', { class: 'i-lucide-check icon-xs text-brand' }) : null,
+  },
+])
+
+function onSelectMode(key: string | number) {
+  emit('setLaunchMode', key as 'steam' | 'exe')
+}
 
 /** 悬停提示：直接告诉用户这次点下去会用哪个程序 / 为什么点不了 */
 const launchHint = computed(() => {
@@ -151,3 +197,14 @@ const launchHint = computed(() => {
   return `启动游戏：${props.gamePath}`
 })
 </script>
+
+<style scoped>
+/* 启动方式箭头：展开时翻转（时长/缓动统一走全局动效 token） */
+.launch-mode-chevron {
+  transition: transform var(--motion-base) var(--ease-enter);
+}
+
+.launch-mode-chevron--open {
+  transform: rotate(180deg);
+}
+</style>

@@ -1,24 +1,31 @@
 // frontend/src/utils/toast.ts
-// 全局「一次性操作反馈」的唯一入口（底层是 vue-sonner，2026-11-23 引入）。
+// 全局「一次性操作反馈」的唯一入口（2026-11-24 从 vue-sonner 迁到 naive-ui 的 message）。
 //
-// 为什么再包一层而不是各组件直接 import { toast }：
+// 为什么再包一层而不是各组件直接 import { message }：
 //   - 组件/store 只描述"发生了什么"，停留多久、描述文字怎么截断、用哪个类型在这里统一；
-//   - 换组件库或改外观时，只需改这里 + components/AppToaster.vue，调用点不动；
-//   - 提示文案与图标一一对应（success/error/info），不会各写各的。
+//   - 换组件库或改外观时，只需改这里（naive 的外观在 styles/naiveTheme.ts 的 Message 段），
+//     调用点不动；
+//   - 提示文案与图标一一对应（success/warning/error/info），不会各写各的。
 //
-// 边界：这里只放"一闪而过、不需要回头对照"的结果。
-//   长期停留的状态（列表加载失败、入库详情、exe 已被移动等）仍然走页面内的
-//   MetaMessage / store.error —— 那些信息用户要能盯着看，不能 2 秒就消失。
-import type { CSSProperties } from 'vue'
-import { toast } from 'vue-sonner'
+// 边界（2026-11-25 更新）：页面里不再有常驻的 MetaMessage 提示条 —— 用户要求
+// "MetaMessage 全部调整为 toast"。所以 store 里的 error/status 现在也统一走这里。
+//
+// 2026-11-25：每条 toast 顶端加一条 n-progress 进度条：
+//   - 结果类提示：进度条按停留时长从左到右消退（剩余时间可视化）；
+//   - loading 提示：进度条走 naive 的 processing 条纹，不自动消失。
+import { h } from 'vue'
+import { NProgress, type MessageReactive } from 'naive-ui'
+import { message } from '../styles/naive'
 
 /** 成功提示停留时长：短，避免一直挡在界面上 */
 const SUCCESS_DURATION = 2400
+/** 警告提示：比成功多留一会儿，让用户看清哪一部分失败 */
+const WARNING_DURATION = 3200
 /** 失败提示要多留一会儿：用户往往需要看清原因 */
 const ERROR_DURATION = 3800
 
-/** 提示 id（loading 与结果各是一条，loading 需要手动 dismiss） */
-export type ToastId = string | number
+/** 提示句柄（loading 需要手动关；结果类会自己消失） */
+export type ToastId = MessageReactive
 
 export interface NotifyOptions {
   /** 第二行小字（补充说明 / 错误原因），过长会自动截断 */
@@ -27,7 +34,7 @@ export interface NotifyOptions {
   duration?: number
 }
 
-/** 描述文字上限：toast 只有一行的位置，超出部分截断（完整原因仍在页面内的提示条里） */
+/** 描述文字上限：toast 只有一行的位置，超出部分截断（完整原因见日志/详情） */
 const DESCRIPTION_MAX = 120
 
 function clampDescription(text?: string): string | undefined {
@@ -37,60 +44,77 @@ function clampDescription(text?: string): string | undefined {
 }
 
 /**
- * 顶部定时条（components/AppToaster.vue 里的 ::before）靠这个 CSS 变量决定走完动画的时间。
- * 必须与 toast 自身的 duration 完全一致，否则会出现「条走完了提示还挂着」或反之。
- * 时长不是有限正数时不写变量 —— 样式里 `var(--toast-duration, 0ms)` 会让条直接收成 0（不可见）。
+ * 把「顶栏进度 + 标题 + 描述」渲染成两行。
+ * naive 的 message 内容支持 render 函数，所以不必为了进度条/第二行去改全局 DOM 结构；
+ * 样式在 global.css 的 `.app-toast*`（进度条倒计时靠 --toast-duration 传时长）。
  */
-function countdownStyle(durationMs: number): CSSProperties {
-  if (!Number.isFinite(durationMs) || durationMs <= 0) return {}
-  return { '--toast-duration': `${durationMs}ms` }
+function renderContent(title: string, description?: string, duration = SUCCESS_DURATION) {
+  const loading = duration <= 0
+  return () =>
+    h('div', { class: 'app-toast' }, [
+      h(
+        'div',
+        {
+          class: ['app-toast__bar', { 'app-toast__bar--loading': loading }],
+          // loading 不跑倒计时；结果类由 CSS 按这个时长把进度条缩到 0
+          style: loading ? undefined : { '--toast-duration': `${duration}ms` },
+        },
+        h(NProgress, {
+          type: 'line',
+          percentage: 100,
+          showIndicator: false,
+          height: 3,
+          borderRadius: 0,
+          processing: loading,
+        }),
+      ),
+      h('div', { class: 'app-toast__title' }, title),
+      description ? h('div', { class: 'app-toast__desc' }, description) : null,
+    ])
 }
 
 /** 成功（绿勾）：入库、删除、复制这类"做成了"的结果 */
-export function toastSuccess(message: string, options: NotifyOptions = {}) {
+export function toastSuccess(title: string, options: NotifyOptions = {}) {
   const duration = options.duration ?? SUCCESS_DURATION
-  return toast.success(message, {
-    description: clampDescription(options.description),
-    duration,
-    style: countdownStyle(duration),
-  })
+  return message.success(renderContent(title, clampDescription(options.description), duration), { duration })
+}
+
+/** 警告（黄色感叹号）：一部分成功、需要用户注意但不阻断 */
+export function toastWarning(title: string, options: NotifyOptions = {}) {
+  const duration = options.duration ?? WARNING_DURATION
+  return message.warning(renderContent(title, clampDescription(options.description), duration), { duration })
 }
 
 /** 失败（红色感叹号）：请求报错、部分失败 */
-export function toastError(message: string, options: NotifyOptions = {}) {
+export function toastError(title: string, options: NotifyOptions = {}) {
   const duration = options.duration ?? ERROR_DURATION
-  return toast.error(message, {
-    description: clampDescription(options.description),
-    duration,
-    style: countdownStyle(duration),
-  })
+  return message.error(renderContent(title, clampDescription(options.description), duration), { duration })
 }
 
 /** 中性提示（蓝色 i）：没有成败之分、只是告知 */
-export function toastInfo(message: string, options: NotifyOptions = {}) {
+export function toastInfo(title: string, options: NotifyOptions = {}) {
   const duration = options.duration ?? SUCCESS_DURATION
-  return toast.info(message, {
-    description: clampDescription(options.description),
-    duration,
-    style: countdownStyle(duration),
-  })
+  return message.info(renderContent(title, clampDescription(options.description), duration), { duration })
 }
 
 /**
  * 正在进行的动作（转圈、不自动消失）。
  *
- * ⚠️ 两个坑（2026-11-23 线上踩过）：
- *   1. sonner 在 `type='loading'` 时**根本不启动自动关闭计时器**，所以它天然要留在屏幕上；
- *   2. 更不能用同一个 id 把它更新成结果：Toast 组件挂载时把剩余时间记成 loading 的初值，
- *      更新 type 后计时器不会重启 —— 表现就是「移除游戏的提示永远不消失」。
- * 正确用法：结束时先 `dismissToast(id)` 关掉它，再另弹一条新的 toastSuccess / toastError。
- * 新 toast 会正常自动消失，顶端定时条也从头开始走（进度与停留时长因此始终一致）。
+ * ⚠️ 用法与之前一致：结束时先 `dismissToast(id)` 关掉它，再另弹一条新的
+ *   toastSuccess / toastError。**不要**指望它自己消失（duration 0 = 常驻），
+ *   也**不要**试图把这条原地改成结果 —— 类型与计时器都不会跟着变。
  */
-export function toastLoading(message: string, options: NotifyOptions = {}) {
-  return toast.loading(message, { description: clampDescription(options.description) })
+export function toastLoading(title: string, options: NotifyOptions = {}) {
+  return message.loading(renderContent(title, clampDescription(options.description), 0), {
+    duration: 0,
+  })
 }
 
-/** 手动关掉某条（不传 id = 关掉全部） */
+/** 手动关掉某条（不传 = 关掉全部） */
 export function dismissToast(id?: ToastId) {
-  toast.dismiss(id)
+  if (!id) {
+    message.destroyAll()
+    return
+  }
+  id.destroy()
 }

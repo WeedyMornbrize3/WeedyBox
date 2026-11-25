@@ -115,6 +115,23 @@ export const libraryApi = {
     return (await LibraryService.List(source)) ?? []
   },
 
+  /**
+   * 保存用户对元数据的修改（/works「编辑」页的「保存」）。
+   *
+   * 语义是**打补丁**：fields 里只放改过的键（键名即 raw_json 的键），
+   * 值传空串 / 空数组 = 清掉这一项。后端会把 raw_json 与对应的公共列一起更新，
+   * 封面指针、游戏位置、启动方式不受影响。
+   * 只对**已入库**的作品有效（未入库会报错，不会凭空造一条记录）。
+   */
+  async updateMeta(
+    workId: string,
+    fields: Record<string, unknown>,
+    source: LibrarySource = LIBRARY_SOURCE_DLSITE,
+  ): Promise<LibraryMeta> {
+    const result = await LibraryService.UpdateMeta({ workId, source, fields })
+    return ensure<LibraryMeta>(result as LibraryMeta | null, '保存失败：后端未返回作品数据')
+  },
+
   /** 从游戏库删掉一条记录（磁盘上的图片不动） */
   async remove(workId: string, source: LibrarySource = LIBRARY_SOURCE_DLSITE): Promise<void> {
     await LibraryService.Remove(workId, source)
@@ -135,6 +152,20 @@ export const libraryApi = {
    */
   async steamHeroImage(appID: string): Promise<string> {
     return (await LibraryService.SteamHeroImage(appID)) ?? ''
+  },
+
+  /**
+   * 预模糊 hero 图（data URL）：后端把当前 hero 图缩到 480px + 盒式模糊一次，
+   * 缓存到 `covers/hero_blur_<source>_<id>_<hash>.jpg`，之后直接读缓存。
+   * 前端所有遮罩层共用这一张图，CSS 不再做 filter: blur —— 滚动时只剩合成。
+   * 失败（webp 源 / 网络）返回空串，页面退化为不做遮罩。
+   */
+  async heroBlur(
+    workId: string,
+    source: LibrarySource = LIBRARY_SOURCE_DLSITE,
+    url = '',
+  ): Promise<string> {
+    return (await LibraryService.HeroBlur(workId, source, url)) ?? ''
   },
 
   /**

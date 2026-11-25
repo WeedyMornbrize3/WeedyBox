@@ -11,17 +11,15 @@
         <br />绝对路径：<code class="font-mono text-secondary">{{ path }}</code>
       </template>
     </span>
-    <button
-      type="button"
-      class="ml-auto shrink-0 text-xs text-brand hover:underline cursor-pointer bg-transparent border-none"
-      @click="emit('refresh')"
-    >
+    <n-button text size="tiny" type="primary" class="ml-auto shrink-0" @click="emit('refresh')">
       刷新
-    </button>
+    </n-button>
   </div>
 </template>
 
 <script setup lang="ts">
+import { NButton } from 'naive-ui'
+
 withDefaults(defineProps<{ path?: string }>(), { path: '' })
 
 const emit = defineEmits<{ refresh: [] }>()

@@ -2,97 +2,117 @@
      接口测试卡片 · DLsite 元数据抓取（MetaApiService）
      由 views/test.vue 挂载（视图层只留一个薄壳，与 TodoPage → TodoList 同一结构）。
 
-     定位：这是"调试用"的单列排布 —— 原始 JSON 只在这里出现，方便对着 DLsite 页面核对解析结果。
-     作品库（/works）的路由已摘掉、页面文件保留（views/WorksPage.vue 与 components/meta/* 后续复用）；
-     现阶段抓取入口只剩本页。两者共用：
-       stores/metaStore.ts   状态 + 请求
-       components/meta/*     卡片外壳、搜索行、封面、键值表等积木
-     所以本文件现在只描述"摆什么"，不再自己写请求逻辑。
+     定位：这是"调试用"的页面 —— 原始 JSON 只在这里出现，方便对着 DLsite 页面核对解析结果。
+     2026-11-25 布局改为 **naive 的 n-split 左右分栏**（用户要求「用 naive ui split 分割卡片」）：
+       左栏：请求（搜索/示例/封面目录）→ 精确命中 → 模糊搜索候选
+       右栏：原始 JSON（未加工），两侧各自滚动、可拖动中间的分隔条调宽度
+     卡片改为方形（全局 Card.borderRadius=0），左栏用 `.card-stack` 让相邻卡片只共享一条 1px 边框。
 
-     滚动：MainLayout 的 router-view 是 overflow-hidden，所以本组件必须自己开滚动容器；
-     而又因为 global.css 用 !important 隐藏了全局滚动条，必须配 scrollbar-theme 恢复。 -->
+     滚动：MainLayout 的 router-view 是 overflow-hidden；n-split 的左右面板各自 overflow:hidden，
+     所以两栏内部各开一个滚动容器（scrollbar-theme 恢复全局被隐藏的滚动条）。
+     注意：数据不做二次加工，右栏直接展示后端返回的原始 JSON。 -->
 <template>
-  <div class="w-full max-w-4xl mx-auto h-full min-h-0 overflow-y-auto scrollbar-theme pr-2 flex flex-col gap-4 select-text">
-    <!-- ── 卡片 1：请求 ───────────────────────────────────────────── -->
-    <MetaSection icon="i-lucide-plug" title="接口测试 · DLsite 元数据" body-class="p-5 flex flex-col gap-4">
-      <template #actions>
-        <span class="text-xs text-tertiary font-mono">MetaApiService</span>
-      </template>
-
-      <MetaSearchBar v-model="meta.keyword" :loading="meta.loading" @submit="meta.runSearch(undefined, true)" />
-      <MetaSampleChips :samples="META_SAMPLES" @pick="pickSample" />
-      <MetaCoversPath :path="meta.coversPath" @refresh="meta.refreshCoversDir" />
-      <MetaMessage v-if="meta.error" tone="error" :text="meta.error" />
-      <MetaMessage v-if="meta.status" :text="meta.status" />
-    </MetaSection>
-
-    <!-- ── 卡片 2：精确命中（按编号） ─────────────────────────────── -->
-    <MetaSection v-if="meta.work" icon="i-lucide-file-json" body-class="p-5 flex flex-col gap-5">
-      <template #title>
-        <code class="font-mono">{{ meta.work.id }}</code>
-        <span class="text-xs text-tertiary font-normal ml-2">按编号精确抓取</span>
-      </template>
-      <template #actions>
-        <a
-          v-if="meta.work.sourceUrl"
-          :href="meta.work.sourceUrl"
-          target="_blank"
-          rel="noreferrer noopener"
-          class="text-xs text-brand hover:underline flex items-center gap-1"
-        >
-          <span class="i-lucide-external-link icon-xs" aria-hidden="true" />
-          原始页面
-        </a>
-      </template>
-
-      <MetaWorkOverview
-        :work="meta.work"
-        :downloading="meta.downloading"
-        :saved="meta.saved"
-        :stored="meta.stored"
-        :game-path="meta.gamePath"
-        :game-path-exists="meta.gamePathExists"
-        :launch-mode="meta.effectiveLaunchMode"
-        :steam-source="meta.source === 'steam'"
-        :running="meta.gameRunning"
-        :launching="meta.launching"
-        @download="meta.storeIn"
-        @launch="meta.launchGame"
-        @change-path="meta.changeGamePath"
-        @set-launch-mode="meta.setGameLaunchMode"
-      />
-      <MetaMessage v-if="meta.gameWarning" tone="error" :text="meta.gameWarning" />
-      <MetaWorkDetails :work="meta.work" />
-    </MetaSection>
-
-    <!-- ── 卡片 3：模糊搜索候选 ───────────────────────────────────── -->
-    <MetaSection
-      v-if="!meta.work && meta.candidates.length"
-      icon="i-lucide-list"
-      :title="`搜索候选（${meta.candidates.length}）`"
-      body-class="p-0"
+  <div class="w-full max-w-6xl mx-auto h-full min-h-0 select-text">
+    <n-split
+      class="h-full"
+      direction="horizontal"
+      :default-size="0.62"
+      :min="0.4"
+      :max="0.78"
+      :resize-trigger-size="4"
     >
-      <template #actions>
-        <span class="text-xs text-tertiary">点「详情」按编号精确抓取</span>
-      </template>
-      <MetaCandidateList
-        :candidates="meta.candidates"
-        :covers="meta.candidateCovers"
-        @select="loadCandidate"
-      />
-    </MetaSection>
+      <!-- 左栏：请求 + 结果 -->
+      <template #1>
+        <div v-scroll-fade class="scroll-fade h-full min-h-0 overflow-y-auto scrollbar-theme pr-2 card-stack">
+          <!-- 卡片 1：请求 -->
+          <MetaSection icon="i-lucide-plug" title="接口测试 · DLsite 元数据" body-class="flex flex-col gap-4">
+            <template #actions>
+              <span class="text-xs text-tertiary font-mono">MetaApiService</span>
+            </template>
 
-    <!-- ── 卡片 4：原始数据 ───────────────────────────────────────── -->
-    <MetaRawJson v-if="meta.raw !== null" :value="meta.raw" />
+            <MetaSearchBar v-model="meta.keyword" :loading="meta.loading" @submit="meta.runSearch(undefined, true)" />
+            <MetaSampleChips :samples="META_SAMPLES" @pick="pickSample" />
+            <MetaCoversPath :path="meta.coversPath" @refresh="meta.refreshCoversDir" />
+          </MetaSection>
+
+          <!-- 卡片 2：精确命中（按编号） -->
+          <MetaSection v-if="meta.work" icon="i-lucide-file-json" body-class="flex flex-col gap-5">
+            <template #title>
+              <code class="font-mono">{{ meta.work.id }}</code>
+              <span class="text-xs text-tertiary font-normal ml-2">按编号精确抓取</span>
+            </template>
+            <template #actions>
+              <a
+                v-if="meta.work.sourceUrl"
+                :href="meta.work.sourceUrl"
+                target="_blank"
+                rel="noreferrer noopener"
+                class="text-xs text-brand hover:underline flex items-center gap-1"
+              >
+                <span class="i-lucide-external-link icon-xs" aria-hidden="true" />
+                原始页面
+              </a>
+            </template>
+
+            <MetaWorkOverview
+              :work="meta.work"
+              :downloading="meta.downloading"
+              :saved="meta.saved"
+              :stored="meta.stored"
+              :game-path="meta.gamePath"
+              :game-path-exists="meta.gamePathExists"
+              :launch-mode="meta.effectiveLaunchMode"
+              :steam-source="meta.source === 'steam'"
+              :running="meta.gameRunning"
+              :launching="meta.launching"
+              @download="meta.storeIn"
+              @launch="meta.launchGame"
+              @change-path="meta.changeGamePath"
+              @set-launch-mode="meta.setGameLaunchMode"
+            />
+            <MetaWorkDetails :work="meta.work" />
+          </MetaSection>
+
+          <!-- 卡片 3：模糊搜索候选 -->
+          <MetaSection
+            v-if="!meta.work && meta.candidates.length"
+            icon="i-lucide-list"
+            :title="`搜索候选（${meta.candidates.length}）`"
+            body-class="-mx-4 -my-4"
+          >
+            <template #actions>
+              <span class="text-xs text-tertiary">点「详情」按编号精确抓取</span>
+            </template>
+            <MetaCandidateList
+              :candidates="meta.candidates"
+              :covers="meta.candidateCovers"
+              @select="loadCandidate"
+            />
+          </MetaSection>
+        </div>
+      </template>
+
+      <!-- 右栏：原始返回数据（与左栏并排，方便对照解析结果） -->
+      <template #2>
+        <div v-scroll-fade class="scroll-fade h-full min-h-0 overflow-y-auto scrollbar-theme pl-2">
+          <MetaRawJson v-if="meta.raw !== null" :value="meta.raw" />
+          <MetaSection v-else icon="i-lucide-braces" title="原始 JSON">
+            <p class="m-0 text-xs text-tertiary">
+              搜索或抓取后，这里显示后端返回的完整 JSON，方便对着 DLsite 页面核对解析结果。
+            </p>
+          </MetaSection>
+        </div>
+      </template>
+    </n-split>
   </div>
 </template>
 
 <script setup lang="ts">
 // 调试页：数据不做二次加工，直接展示后端返回的原始 JSON。
 import { onMounted } from 'vue'
+import { NSplit } from 'naive-ui'
 import { META_SAMPLES, useMetaStore } from '../../stores/metaStore'
 import MetaCandidateList from '../meta/MetaCandidateList.vue'
-import MetaMessage from '../meta/MetaMessage.vue'
 import MetaCoversPath from '../meta/MetaCoversPath.vue'
 import MetaRawJson from '../meta/MetaRawJson.vue'
 import MetaSampleChips from '../meta/MetaSampleChips.vue'

@@ -1,10 +1,13 @@
 /* src/styles/global.css */
 /* =============================================================================
    设计系统 token（三层结构）
-     1. CSS 变量：本文件，唯一色值来源（浅色 :root / 深色 [data-theme="dark"]）
+     1. CSS 变量：本文件只保留**与主题无关**的动效/排版/滚动条等基准；
+        所有颜色 token 由 styles/theme.ts 在运行时按「四色主题」写入 <html>，
+        四色清单在 styles/themePresets.ts（改主题只动那一个文件）。
      2. UnoCSS rules：把变量映射成类名（uno.config.ts）
      3. shortcuts：复用组合
-   配色：Teal 主色 + 语义状态色。所有正文级文本组合均已核验 WCAG AA(4.5:1)。
+   主题口径（2026-11-25）：一套主题 = 主背景 / 次一级 / 再次一级 / 品牌色，
+   其余颜色由 theme.ts 按对比度目标统一推导。
    ============================================================================= */
 
 /* ===== 盒模型基准（必须）=====
@@ -23,52 +26,15 @@ html, body, #app {
   padding: 0;
   width: 100%;
   height: 100%;
-  /* 与窗口创建时的 BackgroundColour 一致，避免启动瞬间闪白。
-     ⚠️ 这是「启动底色」而非主题色，两套主题下都保持深色，
-     真正的界面底色由 #app 内的 bg-primary 元素覆盖。 */
-  background: #101418;
+  /* 启动底色：theme.ts 尚未写入变量时用深色兜底（与窗口 BackgroundColour 一致），
+     写入后自动跟随当前主题的主背景色。 */
+  background: var(--color-bg-primary, #101418);
   overflow: hidden;
 }
 
-/* ===== 浅色主题（默认）===== */
+/* 明暗只影响浏览器原生控件（滚动条/表单）的绘制方式；具体颜色全部来自主题变量 */
 :root {
   color-scheme: light;
-
-  /* 背景 */
-  --color-bg-base: #f1ece2;
-  --color-bg-primary: #f3eee5;
-  --color-bg-secondary: #e6ddcc;
-  --color-bg-tertiary: #e6decf;
-  --color-bg-hover: #ebe2d3;
-  --color-bg-card: #f5f1eb;
-  /* 半透明次级背景（统计栏 / 筛选栏），alpha 60% */
-  --color-bg-secondary-soft: rgba(231, 221, 193, 0.6);
-
-  /* 文本（对 #ffffff / #f8fafc 均 ≥4.5:1） */
-  --color-text-primary: #292a0f;    /* 17.9:1 */
-  --color-text-secondary: #61513b;  /* 10.4:1 */
-  --color-text-tertiary: #615b3e;   /*  7.6:1 */
-  --color-text-muted: #84775b;      /*  4.8:1 —— 仅用于辅助小字 */
-  --color-text-inverse: #f4f0e8;
-
-  /* 品牌色（Teal）
-     ⚠️ #0D9488(teal-600) 作文字只有 3.74:1、白字压在其上也只有 3.74:1，
-        两者都不达 AA，故文字/填充统一用 teal-700。 */
-  --color-primary: #52621f;          /* 对白 5.47:1、对底 5.25:1 */
-  --color-primary-hover: #4b5c12;    /* 7.58:1 */
-  --color-primary-active: #494e13;
-  --color-primary-light: rgba(118, 101, 15, 0.1);
-
-  /* 边框（非文本对比度 ≥3:1） */
-  --color-border: #cfc3a8;        /* 对卡片 1.5:1，仅作分隔 */
-  --color-border-light: #d5c9b0;
-  --color-border-dark: #9f9175;   /* 3.0:1，用于交互控件描边 */
-
-  /* 功能色 */
-  --color-success: #136431;  /* 5.02:1 */
-  --color-warning: #a78913;  /* 5.02:1 */
-  --color-danger: #ba1d1d;   /* 4.83:1 */
-  --color-info: #234dc3;     /* 6.70:1 */
 
   /* ===== 动效基调 =====
      Minimalism 取向要求动效克制且一致：同一类动作用统一时长/缓动，
@@ -84,109 +50,15 @@ html, body, #app {
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-leave: cubic-bezier(0.4, 0, 1, 1);
 
-  /* 阴影：Flat Design 默认不用装饰性阴影，仅浮层与焦点环使用 */
-  --color-shadow: 0 1px 2px rgba(42, 36, 15, 0.06);
-  --color-shadow-heavy: 0 8px 24px rgba(42, 38, 15, 0.12);
-  --color-ring: var(--color-primary);
-  /* 键盘聚焦光环的「淡一层」版本（shadcn 的 ring/50）：按钮聚焦时画 3px 半透明环。
-     用 color-mix 从主色算出来，不另写一份色值；⚠️ 必须两套主题各写一份 ——
-     自定义属性的 var() 替换发生在**声明所在的元素**上，只写在 :root 里的话，
-     深色主题会继承到浅色的计算结果。 */
-  --color-ring-soft: color-mix(in srgb, var(--color-primary) 50%, transparent);
-  /* 品牌实心按钮上分隔「主操作 / 下拉」的 1px 细线（分体按钮右段的左边框）。
-     用反色算 30%：浅色主题下品牌底是深色、反色是米白 → 细白线；
-     深色主题下品牌底是亮青、反色是近黑 → 细暗线。两套主题都看得见又不抢戏。 */
-  --color-divider-on-brand: color-mix(in srgb, var(--color-text-inverse) 30%, transparent);
-
-  /* 滚动条 */
-  --color-scrollbar: rgba(114, 111, 89, 0.18);
-  --color-scrollbar-hover: rgba(127, 132, 154, 0.32);
-
-  /* 侧边栏 */
-  --sidebar-bg: #f5f1e9;
-  --sidebar-border: #f0e8d7;
-
-  /* 语义别名 */
-  --color-bg-check: var(--color-primary);
-  --color-check-mark: #faf8f3;
-  --color-brand-text: var(--color-primary);
-  --color-text-body: var(--color-text-primary);
-  --color-text-hint: var(--color-text-muted);
   /* 压在图片上的文字与遮罩（作品详情页 hero 大背景图）：
      游戏画面本身是深色图，与界面主题无关，所以两套主题下都用白字 + 黑色半透明遮罩。
-     只定义在 :root，深色主题继承同一组值。 */
+     theme.ts 也会写这两个变量，这里只是无 JS 时的兜底。 */
   --color-text-on-image: #ffffff;
   --color-hero-veil: rgba(0, 0, 0, 0.55);
-  --color-text-on-brand: #faf8f3;
-  /* 实心功能色按钮上的文字色。
-     ⚠️ 不能统一用白字：深色主题下 success/brand/danger 都是「亮色」
-     （#4ade80 / #2dd4bf / #f87171），白字压上去只有 1.7~2.8:1，远不达 AA；
-     必须换成深色文字（9~10:1）。浅色主题反之。 */
-  --color-text-on-success: #faf8f3;
-  --color-text-on-danger: #faf8f3;
 }
 
-/* ===== 深色主题 ===== */
 [data-theme="dark"] {
   color-scheme: dark;
-
-  /* 背景（比纯黑更柔和，避免 OLED 拖影与强对比疲劳） */
-  --color-bg-base: #0b0e12;
-  --color-bg-primary: #101418;
-  --color-bg-secondary: #1b222a;
-  --color-bg-tertiary: #232c35;
-  --color-bg-hover: #232c35;
-  --color-bg-card: #171c21;
-  --color-bg-secondary-soft: rgba(27, 34, 42, 0.6);
-
-  /* 文本（对 #171c21 均 ≥4.5:1；不用纯白，降低眩光） */
-  --color-text-primary: #e6edf3;    /* 14.5:1 */
-  --color-text-secondary: #c3cdd6;  /* 10.6:1 */
-  --color-text-tertiary: #9aa6b2;   /*  6.9:1 */
-  --color-text-muted: #8a94a0;      /*  5.6:1 */
-  --color-text-inverse: #0b1116;
-
-  /* 品牌色：深色底上改用更亮的 teal，保证文字对比 9.21:1 */
-  --color-primary: #2dd4bf;
-  --color-primary-hover: #5eead4;
-  --color-primary-active: #14b8a6;
-  --color-primary-light: rgba(45, 212, 191, 0.14);
-
-  /* 边框（深色下提升亮度，保证分隔可见） */
-  --color-border: #2b3540;
-  --color-border-light: #232c35;
-  --color-border-dark: #4a5764;
-
-  /* 功能色：深色底改用亮色调 */
-  --color-success: #4adea3;  /* 9.84:1 */
-  --color-warning: #f4fb24;  /* 10.27:1 */
-  --color-danger: #f87185;   /* 6.20:1 */
-  --color-info: #60cefa;
-
-  --color-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --color-shadow-heavy: 0 8px 24px rgba(0, 0, 0, 0.55);
-  --color-ring: var(--color-primary);
-  /* 深色主题的淡光环：主色是亮青，50% 透明压深色底刚好可见（见 :root 的说明） */
-  --color-ring-soft: color-mix(in srgb, var(--color-primary) 50%, transparent);
-  /* 分体按钮分隔线（见 :root 的说明）：深色下反色是近黑，压在亮青上 */
-  --color-divider-on-brand: color-mix(in srgb, var(--color-text-inverse) 30%, transparent);
-
-  --color-scrollbar: rgba(149, 155, 171, 0.16);
-  --color-scrollbar-hover: rgba(31, 35, 48, 0.3);
-
-  --sidebar-bg: #101418;
-  --sidebar-border: #22232e;
-
-  /* 语义别名：深色下品牌色是亮色，勾选框/按钮上的文字必须用深色 */
-  --color-bg-check: var(--color-primary);
-  --color-check-mark: #04211f;
-  --color-brand-text: var(--color-primary);
-  --color-text-body: var(--color-text-primary);
-  --color-text-hint: var(--color-text-muted);
-  --color-text-on-brand: #04211f;
-  /* 深色主题下功能色是亮色，实心按钮必须用深色文字 */
-  --color-text-on-success: #04211f;
-  --color-text-on-danger: #2a0a0a;
 }
 
 /* ===== 排版基准 =====
@@ -204,7 +76,7 @@ body {
 /* 键盘可达性：所有可交互控件的可见焦点环
    （组件内用 focus-visible:outline-none 显式接管时，本规则作为兜底） */
 :focus-visible {
-  outline: 2px solid var(--color-ring);
+  outline: 2px solid var(--color-ring, #6b728e);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -265,41 +137,110 @@ body {
   background: var(--color-scrollbar-hover) !important;
 }
 
-/* ===== 复选框（TODO 完成态）=====
-   放在这里而不是 scoped style：该元素的选中态需要在两套主题下都正确换色，
-   用变量集中控制，避免组件内出现硬编码色值。 */
-
-/* 勾号形状提为变量：列表行勾选框与「删除范围」清单的勾选框共用同一形状，
-   避免在多个组件里各抄一遍 data URI（那正是容易写岔的地方）。 */
-:root {
-  --icon-check: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+/* ===== 滚动边缘渐隐（scroll-fade，2026-11-25）=====
+   参考 shadcn 的 scroll-fade：只在「该方向还有内容没滚出来」时把边缘淡掉。
+   utils/scrollFade.ts 的 v-scroll-fade 指令按实际滚动位置写 --scroll-fade-top /
+   --scroll-fade-bottom（0px = 已到顶/到底）。四个 stop 里顶部为 0px 时前两个 stop
+   重合 → 硬边、不淡；底部同理，所以不需要额外类名区分「上/下」状态。 */
+.scroll-fade {
+  --scroll-fade-top: 0px;
+  --scroll-fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--scroll-fade-top),
+    #000 calc(100% - var(--scroll-fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--scroll-fade-top),
+    #000 calc(100% - var(--scroll-fade-bottom)),
+    transparent 100%
+  );
 }
 
-.todo-checkbox {
-  background-color: transparent;
+/* ===== 卡片堆叠：卡片之间只留边框 =====
+   2026-11-25 用户要求「卡片容器之间只使用 border 间隔」：
+   容器内卡片首尾相接（gap: 0），后一张卡片直接去掉上边框，
+   只用前一张的下边框作为两张卡片之间的唯一一条线。
+   用户随后要求「加粗紧凑卡片之间的 border」：共享线用 2px + 正常边框色
+   （外框仍是 1px，内部线更重，形成层次）。
+   不用负 margin 叠边框（DPR 1.25 的 WebView 里容易叠成双层/显粗且不可控）。
+   只加在纯卡片堆栈上，不要把含文字段落的容器直接套上。 */
+.card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
-.todo-checkbox:checked {
-  background-color: var(--color-bg-check);
-  border-color: var(--color-bg-check);
-  color: var(--color-check-mark);
+.card-stack > * + * {
+  border-top-width: 0 !important;
 }
 
-/* 勾号用 mask 绘制，颜色由外层 color 决定（随主题变化的 --color-check-mark） */
-.todo-checkbox::after {
-  content: "";
-  display: block;
-  width: 10px;
-  height: 10px;
-  background-color: currentColor;
-  opacity: 0;
-  transition: opacity var(--motion-fast, 160ms) ease;
-  -webkit-mask: var(--icon-check) center / contain no-repeat;
-  mask: var(--icon-check) center / contain no-repeat;
+/* 内部共享线：2px + --color-border（比外框更重） */
+.card-stack > *:not(:last-child) {
+  border-bottom-width: 2px !important;
+  border-bottom-color: var(--color-border) !important;
 }
 
-.todo-checkbox:checked::after {
-  opacity: 1;
+/* ===== naive-ui 提示条内容 =====
+   utils/toast.ts 用渲染函数拼出「标题 + 描述」两行，样式集中在这里。
+   外观（底色/描边/圆角/图标色）走 styles/naiveTheme.ts 的 Message 段，不在这里重复。 */
+.app-toast__title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+
+.app-toast__desc {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+  word-break: break-word;
+}
+
+/* ===== toast 顶端的进度条（2026-11-25 用户要求）=====
+   位于提示条最顶端：结果类提示按停留时长从左到右消退，loading 提示走朴素处理中的条纹。
+   颜色/高度由 naive 的 n-progress 提供，这里只补「贴边」和倒计时动画。
+   负外边距抵消 Message 主题的 10px 14px 内边距，让进度条真正贴住提示条顶边。 */
+.app-toast__bar {
+  /* 内容区从图标右侧开始：左负边距要多算「图标 18px + 间距 10px」，
+     这样进度条才能从提示条最左端开始（.n-message 自己有 overflow:hidden 会裁掉圆角外的部分）。 */
+  margin: -10px -14px 8px -42px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 9px 9px 0 0;
+}
+
+.app-toast__bar .n-progress-graph-line-rail {
+  border-radius: 0;
+}
+
+.app-toast__bar .n-progress-graph-line-fill {
+  transform-origin: left center;
+  animation-name: app-toast-countdown;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  /* toast.ts 在 .app-toast__bar 上写 --toast-duration（自定义属性可继承到这里） */
+  animation-duration: var(--toast-duration, 2400ms);
+}
+
+.app-toast__bar--loading .n-progress-graph-line-fill {
+  animation: none;
+}
+
+/* 鼠标停在提示条上时 naive 会暂停自动关闭计时（keepAliveOnHover），进度条也一起暂停 */
+.n-message:hover .app-toast__bar .n-progress-graph-line-fill {
+  animation-play-state: paused;
+}
+
+@keyframes app-toast-countdown {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
 }
 
 /* ===== 加载旋转 ===== */

@@ -22,6 +22,7 @@ import { libraryApi } from '../services/libraryService'
 import type { LibrarySource } from '../services/libraryService'
 import { useLibraryStore } from './libraryStore'
 import { toMessage } from '../utils/metaFormat'
+import { toastError } from '../utils/toast'
 
 export type ScanSource = 'steam' | 'folder'
 export type FolderScanMode = 'exe' | 'folder'
@@ -536,6 +537,7 @@ export const useScanStore = defineStore('scan', () => {
       }
     } catch (err) {
       error.value = `选择文件夹失败：${toMessage(err)}`
+      toastError(error.value)
     } finally {
       picking.value = false
     }
@@ -562,6 +564,7 @@ export const useScanStore = defineStore('scan', () => {
         const root = folderPath.value.trim()
         if (!root) {
           error.value = '请先选择或填写游戏文件夹'
+          toastError(error.value)
           return
         }
         if (mode.value === 'exe') {
@@ -582,7 +585,10 @@ export const useScanStore = defineStore('scan', () => {
           }
           entries.value = list
           const skipped = result.skipped?.length ?? 0
-          if (skipped > 0) status.value = `已跳过 ${skipped} 个读不动的子文件夹`
+          if (skipped > 0) {
+            // 只写状态、不弹 toast（2026-11-25 用户收紧口径：只保留删除/保存/错误/刷新四类提示）
+            status.value = `已跳过 ${skipped} 个读不动的子文件夹`
+          }
         } else {
           const folders = await scanApi.subfolders(root)
           // 按文件夹名扫到：入库时后端进这个文件夹挑主程序
@@ -599,6 +605,7 @@ export const useScanStore = defineStore('scan', () => {
       void searchAll()
     } catch (err) {
       error.value = `扫描失败：${toMessage(err)}`
+      toastError(error.value)
     } finally {
       scanning.value = false
     }

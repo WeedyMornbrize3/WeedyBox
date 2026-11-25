@@ -1,30 +1,31 @@
 <template>
-  <!-- 关闭按钮行为选择：与 ThemeModeSelector 同构的单选按钮组，
-       选项文本短（4 字），用按钮组比下拉更快也更直观。 -->
-  <div class="flex items-center gap-1 bg-secondary p-[3px] rounded-[10px] border-theme" role="group" aria-label="点击关闭时的行为">
-    <button
-      v-for="option in CLOSE_ACTION_OPTIONS"
-      :key="option.value"
-      type="button"
-      class="theme-option"
-      :class="{ 'theme-option-active': modelValue === option.value }"
-      :aria-pressed="modelValue === option.value"
-      :title="option.description"
-      @click="$emit('update:modelValue', option.value)"
-    >
+  <!-- 关闭按钮行为：与 ThemeModeSelector 同构的分段单选（选项文字短，比下拉更快也更直观） -->
+  <n-radio-group
+    :value="modelValue"
+    size="small"
+    name="close-action"
+    aria-label="点击关闭时的行为"
+    @update:value="onChange"
+  >
+    <n-radio-button v-for="option in CLOSE_ACTION_OPTIONS" :key="option.value" :value="option.value">
       {{ option.label }}
-    </button>
-  </div>
+    </n-radio-button>
+  </n-radio-group>
 </template>
 
 <script setup lang="ts">
+import { NRadioButton, NRadioGroup } from 'naive-ui'
 import { CLOSE_ACTION_OPTIONS, type CloseAction } from '../../stores/App'
 
 defineProps<{
   modelValue: CloseAction
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   'update:modelValue': [value: CloseAction]
 }>()
+
+function onChange(value: string | number | boolean) {
+  emit('update:modelValue', value as CloseAction)
+}
 </script>

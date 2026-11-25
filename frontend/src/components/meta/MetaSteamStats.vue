@@ -4,33 +4,25 @@
      由 stores/metaStore.ts 的 loadSteamStats() 读取；只有 Steam 源的作品才由父组件渲染。
      三项各自独立：某项拿不到就少显示一块，不整块报错。 -->
 <template>
-  <MetaSection icon="i-lucide-activity" title="Steam 动态" body-class="p-5 flex flex-col gap-4">
+  <MetaSection icon="i-lucide-activity" title="Steam 动态">
     <template #actions>
       <span v-if="stats?.fetchedAt" class="text-[11px] text-tertiary whitespace-nowrap">{{ updatedText }}</span>
-      <button
-        class="text-xs text-secondary hover:text-primary flex items-center gap-1 cursor-pointer bg-transparent border-none disabled:opacity-50"
-        :disabled="meta.steamStatsLoading"
-        @click="meta.loadSteamStats()"
-      >
-        <span class="i-lucide-refresh-cw icon-xs" aria-hidden="true" />
+      <n-button text size="tiny" :loading="meta.steamStatsLoading" :disabled="meta.steamStatsLoading" @click="meta.loadSteamStats()">
+        <template #icon>
+          <span class="i-lucide-refresh-cw icon-xs" aria-hidden="true" />
+        </template>
         刷新
-      </button>
+      </n-button>
     </template>
 
     <p v-if="meta.steamStatsLoading" class="m-0 text-xs text-tertiary">正在获取 Steam 动态…</p>
     <template v-else-if="stats">
       <div class="flex items-start gap-8 flex-wrap">
-        <div class="flex flex-col gap-0.5">
-          <span class="text-xs text-tertiary">评价</span>
-          <span class="text-sm text-primary">{{ reviewText }}</span>
-        </div>
-        <div class="flex flex-col gap-0.5">
-          <span class="text-xs text-tertiary">当前在线</span>
-          <span class="text-sm text-primary tabular-nums">{{ playersText }}</span>
-        </div>
+        <n-statistic label="评价" :value="reviewText" />
+        <n-statistic label="当前在线" :value="playersText" />
       </div>
 
-      <div v-if="news.length" class="flex flex-col gap-1.5">
+      <div v-if="news.length" class="flex flex-col gap-1.5 mt-4">
         <p class="m-0 text-xs text-tertiary">最近公告</p>
         <ul class="list-none m-0 p-0 flex flex-col gap-1.5">
           <li v-for="item in news" :key="item.gid" class="flex items-baseline gap-2 min-w-0">
@@ -47,7 +39,7 @@
           </li>
         </ul>
       </div>
-      <p v-else class="m-0 text-xs text-tertiary">这个游戏还没有公开公告。</p>
+      <p v-else class="m-0 text-xs text-tertiary mt-4">这个游戏还没有公开公告。</p>
     </template>
     <p v-else class="m-0 text-xs text-tertiary">暂时拿不到 Steam 动态（可能网络不通，或该条目没有公开数据）。</p>
   </MetaSection>
@@ -55,6 +47,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { NButton, NStatistic } from 'naive-ui'
 import { useMetaStore } from '../../stores/metaStore'
 import MetaSection from './MetaSection.vue'
 

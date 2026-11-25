@@ -1,28 +1,26 @@
 <!-- frontend/src/components/todo/TodoItem.vue -->
-<!-- 单条 TODO。交互分工：
-       1. 左侧勾选框表示「选择」——勾选只表达选中，用于批量删除。
-       2. 行右侧只剩删除按钮（「完成」按钮与完成状态已按用户要求移除）。
-       3. 根元素是 <div> 而不是 <label>：旧版把删除按钮放在 <label> 内部，
-          点删除会先触发 label 的默认行为，行为不可靠；现在控件之间是同级 flex item。
-       4. 选择框是原生 input（键盘可达、有可见焦点环）。
-       5. 点击卡片空白/文字区 = 复制「标题 + 描述」（emit copy，父组件弹 toast）；
+<!-- 单条 TODO。交互分工（2026-11-24 起控件换成 naive）：
+       1. 左侧 n-checkbox 表示「选择」——勾选只表达选中，用于批量删除。
+       2. 行右侧只剩删除（「完成」按钮与完成状态已按用户要求移除）；
+          删除改用 n-popconfirm 气泡确认（原来是自己实现的「连点两下 + 移开撤销」）。
+       3. 根元素是 <div> 而不是 <label>：控件之间是同级 flex item，点删除不会触发选择/复制。
+       4. 点击卡片空白/文字区 = 复制「标题 + 描述」（emit copy，父组件弹 toast）；
           指针保持默认（不加 cursor-pointer），行内控件都 .stop 冒泡，避免误复制。 -->
 <template>
   <div
-    class="group flex items-start gap-3 px-3 py-2.5 rounded-lg bg-card border-theme transition-colors duration-200"
+    class="group flex items-start gap-3 px-3 py-2.5 rounded-none bg-card border-theme transition-colors duration-200"
     :class="selected ? 'border-brand bg-brand-light' : 'hover:border-brand'"
     @click="handleCopy"
   >
     <!-- 选择框：只表示「已选中」，用来做批量删除 -->
-    <input
-      type="checkbox"
-      class="todo-checkbox flex-shrink-0 w-[18px] h-[18px] mt-[2px] rounded-[5px] cursor-pointer appearance-none flex-center text-transparent transition-colors duration-200 border-2 border-theme-dark bg-transparent hover:border-brand checked:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
-      :checked="selected"
-      :disabled="isUpdating"
-      :aria-label="selected ? `取消选择「${todo.title}」` : `选择「${todo.title}」`"
-      @change="emit('select', todo.id)"
-      @click.stop
-    />
+    <div class="flex-shrink-0 mt-[2px]" @click.stop>
+      <n-checkbox
+        :checked="selected"
+        :disabled="isUpdating"
+        :aria-label="selected ? `取消选择「${todo.title}」` : `选择「${todo.title}」`"
+        @update:checked="emit('select', todo.id)"
+      />
+    </div>
 
     <!-- 主内容区：标题主行 + 描述块 -->
     <div class="flex-1 min-w-0 flex flex-col gap-0.5">
@@ -52,49 +50,48 @@
 
       <!-- 描述块：默认只有左侧一条竖线，hover 时只有这条竖线换成品牌色。
            竖线本身（宽度/样式/基础色）定义在下方 scoped 样式里，
-           这里只负责「悬停时换成品牌色」。
-           为什么这样拆：UnoCSS 对同一属性（border-left）只保留一条规则，
-           两条都改 border-left 的类同时写在模板上会丢掉其中一个（实测）；
-           而整框的 border-brand 会给四边都加 1px，变成方框。 -->
+           这里只负责「悬停时换成品牌色」——UnoCSS 对同一属性只保留一条规则。 -->
       <p v-if="todo.description" class="todo-desc-block group-hover:border-l-brand">
         {{ todo.description }}
       </p>
     </div>
 
-    <!-- 行内操作：只剩删除（「完成」按钮与完成状态已按用户要求移除）。
-         颜色类全部放进动态 :class，静态 class 里不留任何颜色工具类——
-         UnoCSS 按字母序输出 rules，同权重时排后面的会压掉排前面的
-         （`.text-tertiary` 会压掉 `.text-success`），同一属性只能由一处决定。
-         ⚠️ 静息态用 opacity-75 而不是更弱的 40%：实测 40% 时图标对比度仅 1.78:1，
-         达不到「有意义的图标需 ≥3:1」；0.75 时两套主题最低 3.18:1，正好达标。 -->
-    <div class="flex items-center gap-1 flex-shrink-0">
-      <!-- 删除：连点两下删除，不弹确认框。
-           第一下进入待确认态（图标变红 + 底色变红，提示改为「再点一次删除」），
-           第二下才真正删除；移开鼠标或失焦即自动撤销。 -->
-      <button
+    <!-- 行内操作：只剩删除（n-popconfirm 气泡确认） -->
+    <div class="flex items-center gap-1 flex-shrink-0" @click.stop>
+      <n-popconfirm
         v-if="!isDeleting"
-        type="button"
-        class="btn-row opacity-75 group-hover:opacity-100 group-focus-within:opacity-100 hover:opacity-100 focus-visible:opacity-100"
-        :class="isArmed ? 'row-btn-delete-armed opacity-100 scale-110' : 'row-btn-delete'"
-        :aria-label="isArmed ? `再次点击确认删除「${todo.title}」` : `删除「${todo.title}」（需连点两下）`"
-        :title="isArmed ? '再点一次删除' : '删除（连点两下）'"
-        @click.stop="handleDeleteClick"
-        @mouseleave="cancelDelete"
-        @blur="cancelDelete"
+        positive-text="删除"
+        negative-text="取消"
+        :positive-button-props="{ type: 'error' }"
+        @positive-click="emit('delete', todo.id)"
       >
-        <span :class="isArmed ? 'i-lucide-check icon-sm' : 'i-lucide-trash-2 icon-sm'" aria-hidden="true" />
-      </button>
+        <template #trigger>
+          <n-button
+            size="small"
+            quaternary
+            circle
+            type="error"
+            :disabled="isUpdating"
+            :aria-label="`删除「${todo.title}」`"
+            title="删除"
+          >
+            <template #icon>
+              <span class="i-lucide-trash-2 icon-sm" aria-hidden="true" />
+            </template>
+          </n-button>
+        </template>
+        确定删除「{{ todo.title }}」吗？
+      </n-popconfirm>
 
       <!-- 提交中：短暂态，避免删除瞬间元素直接消失造成的视觉跳跃 -->
-      <span v-else class="btn-row row-btn-busy cursor-default opacity-100" aria-hidden="true">
-        <span class="i-lucide-loader-circle icon-sm spin" />
-      </span>
+      <n-button v-else size="small" quaternary circle loading disabled aria-hidden="true" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onBeforeUnmount, watch } from 'vue'
+import { computed } from 'vue'
+import { NButton, NCheckbox, NPopconfirm } from 'naive-ui'
 import type { Todo } from '../../../bindings/WeedyBox/internal/model'
 
 const props = defineProps<{
@@ -117,10 +114,8 @@ const emit = defineEmits<{
  *
  * 设计取舍：
  *   - 卡片是整块点击区，但**刻意不加 cursor-pointer**：用户要求不把指针变成手型，
- *     免得整行看起来像按钮；按钮类控件（选择框 / 删除）各自 `.stop` 掉冒泡，
- *     所以点它们不会误触发复制。
- *   - 真正的剪贴板写入与 toast 放在父组件（TodoList）里：错误提示与其它操作共用同一套 toast，
- *     这里只负责"该复制什么"。
+ *     免得整行看起来像按钮；控件区各自 `.stop` 掉冒泡，所以点它们不会误触发复制。
+ *   - 真正的剪贴板写入与 toast 放在父组件（TodoList）里：错误提示与其它操作共用同一套 toast。
  */
 function handleCopy() {
   const title = props.todo.title?.trim() ?? ''
@@ -129,65 +124,6 @@ function handleCopy() {
   if (!text) return
   emit('copy', text)
 }
-
-// ===== 连点两下删除 =====
-// armed = 已点第一下、正在等待第二下确认；移开鼠标或失焦会自动撤销。
-const armed = ref(false)
-// 提交中：显示转圈并阻止再次点击
-const submitting = ref(false)
-// 提交态兜底复位：父组件无论成功或失败都会清掉 busy，
-// 但若父组件根本没进入 busy（异常路径），这里保证按钮不会永久卡住。
-const STUCK_TIMEOUT_MS = 4000
-let stuckTimer: ReturnType<typeof setTimeout> | undefined
-let timer: ReturnType<typeof setTimeout> | undefined
-
-const isArmed = computed(() => armed.value && !props.isDeleting)
-const isDeleting = computed(() => props.isDeleting || submitting.value)
-
-const cancelDelete = () => {
-  armed.value = false
-}
-
-function clearStuckTimer() {
-  if (stuckTimer) {
-    clearTimeout(stuckTimer)
-    stuckTimer = undefined
-  }
-}
-
-function handleDeleteClick() {
-  if (!armed.value) {
-    // 第一下：只进入待确认态，不发出删除事件
-    armed.value = true
-    return
-  }
-  armed.value = false
-  submitting.value = true
-  // 立即 emit（不延迟）：删除动作与这次点击在同一批更新里完成，
-  // 因此按钮不会在指针仍按下、或状态尚未闭合时被移除。
-  emit('delete', props.todo.id)
-  clearStuckTimer()
-  stuckTimer = setTimeout(() => {
-    submitting.value = false
-  }, STUCK_TIMEOUT_MS)
-}
-
-// 删除失败时父组件的 isDeleting 会由 true 落回 false（该行仍在列表里），
-// 此时立即撤销本地的「提交中」，不必等兜底定时器。
-watch(
-  () => props.isDeleting,
-  (now, prev) => {
-    if (prev === true && now !== true) {
-      submitting.value = false
-      clearStuckTimer()
-    }
-  }
-)
-
-onBeforeUnmount(() => {
-  clearTimeout(timer)
-  clearStuckTimer()
-})
 
 // 优先级 0 低 / 1 中 / 2 高：颜色 + 图标 + 文字三重编码
 const PRIORITY_MAP: Record<number, { label: string; icon: string; className: string }> = {
@@ -200,6 +136,8 @@ const meta = computed(() => PRIORITY_MAP[props.todo.priority] ?? PRIORITY_MAP[1]
 const priorityLabel = computed(() => meta.value.label)
 const priorityIcon = computed(() => meta.value.icon)
 const priorityClass = computed(() => meta.value.className)
+
+const isDeleting = computed(() => props.isDeleting)
 
 const fullDate = computed(() => new Date(props.todo.createdAt).toLocaleString('zh-CN'))
 
@@ -224,55 +162,8 @@ function formatDate(dateStr: string): string {
 <style scoped>
 /* 描述块：默认只有左侧一条竖线，hover 时只有这条竖线换成品牌色。
    竖线本身（宽度/样式/基础色）定义在这里，
-   UnoCSS 只负责 group-hover 时的颜色切换（见模板的 group-hover:border-l-brand）。
-   这样同一属性只有一个来源，不依赖 UnoCSS 的规则输出顺序。 */
+   UnoCSS 只负责 group-hover 时的颜色切换（见模板的 group-hover:border-l-brand）。 */
 .todo-desc-block {
   border-left: 2px solid var(--color-border-light);
-}
-
-/* ===== 行内操作按钮（删除 / 提交中转圈）=====
-    删除按钮沿用「描边图标按钮」外观；转圈只是删除过程中的占位，
-    用中性描边而不是功能色，避免看起来像另一个可点的动作。
-    实心 hover 态的文字色必须用随主题翻转的语义变量：
-    深色主题下 danger 是亮色，白字压上去只有 1.7~2.8:1。
-
-    静息不透明度由模板的 opacity-75 提供（实测 40% 时图标对比度仅 1.78:1，
-    达不到「有意义的图标需 ≥3:1」；0.75 时两套主题最低 3.18:1）。
-    提亮交给 group-hover / group-focus-within / hover 工具类，这里不重复声明。 */
-.row-btn-busy,
-.row-btn-delete,
-.row-btn-delete-armed {
-  transition: background-color var(--motion-fast) var(--ease-enter),
-              border-color var(--motion-fast) var(--ease-enter),
-              color var(--motion-fast) var(--ease-enter),
-              opacity var(--motion-fast) var(--ease-enter),
-              transform var(--motion-fast) var(--ease-enter);
-}
-
-/* --- 提交中：中性描边，不可点 --- */
-.row-btn-busy {
-  background-color: transparent;
-  border-color: var(--color-border-dark);
-  color: var(--color-text-tertiary);
-}
-
-/* --- 删除：默认只描边，hover 才填红 --- */
-.row-btn-delete {
-  background-color: transparent;
-  border-color: var(--color-danger);
-  color: var(--color-danger);
-}
-
-.row-btn-delete:hover:not(:disabled) {
-  background-color: var(--color-danger);
-  border-color: var(--color-danger);
-  color: var(--color-text-on-danger);
-}
-
-/* 待确认态：填红 + 轻微放大，明确区别于默认态 */
-.row-btn-delete-armed {
-  background-color: var(--color-danger);
-  border-color: var(--color-danger);
-  color: var(--color-text-on-danger);
 }
 </style>

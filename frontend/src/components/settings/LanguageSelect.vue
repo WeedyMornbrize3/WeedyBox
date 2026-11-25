@@ -1,23 +1,18 @@
-<!--
-  语言选择：仍是占位实现（后端/前端均未接入 i18n），但不再是裸露的 <p>占位</p>，
-  而是一个禁用态的下拉，视觉上与其它设置项一致，并如实告知尚未支持。
--->
 <template>
-  <div class="relative flex-shrink-0">
-    <select
-      :value="modelValue"
-      disabled
-      aria-label="界面语言（暂未支持切换）"
-      class="appearance-none bg-secondary text-secondary text-xs rounded-md pl-3 pr-7 py-1.5 border-theme cursor-not-allowed opacity-70"
-      @change="$emit('update:modelValue', ($event.target as HTMLSelectElement).value)"
-    >
-      <option value="zh-CN">简体中文</option>
-    </select>
-    <span class="i-lucide-chevron-down icon-xs text-tertiary absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
-  </div>
+  <!-- 语言选择：仍是占位实现（前后端均未接入 i18n），用禁用的 n-select 如实告知「还没支持」 -->
+  <n-select
+    :value="modelValue ?? 'zh-CN'"
+    :options="options"
+    disabled
+    size="small"
+    aria-label="界面语言（暂未支持切换）"
+    style="width: 132px"
+  />
 </template>
 
 <script setup lang="ts">
+import { NSelect } from 'naive-ui'
+
 defineProps<{
   modelValue?: string
 }>()
@@ -25,4 +20,6 @@ defineProps<{
 defineEmits<{
   'update:modelValue': [value: string]
 }>()
+
+const options = [{ label: '简体中文', value: 'zh-CN' }]
 </script>

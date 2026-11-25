@@ -69,16 +69,17 @@ filters = reactive({ completed: 'pending', priority: null, time: 'all' })
 
 ### `stores/Sidebar.ts` — `useSidebarStore()`
 
-State：`isCollapsed`。常量：`barWidth=72`、`barWidthCollapsed=250`
+State：`isCollapsed`。常量：`COLLAPSED_WIDTH=72`、`EXPANDED_WIDTH=250`
 
 | 成员 | 行 | 说明 |
 | --- | --- | --- |
-| `sidebarWidth` | 14 | 当前宽度 px |
-| `mainPaddingLeft` | 15 | 主内容左内边距 |
+| `sidebarWidth` | 14 | 当前宽度 px（MainLayout 的 router-view 直接用它当左内边距） |
 | `isExpanded` | 16 | `!isCollapsed` |
 | `toggleSidebar()` | 19 | 折叠切换（写 localStorage） |
 | `setCollapsed(v)` | 24 | 显式设置 |
 | `restoreState()` | 29 | 读取 localStorage |
+
+> `mainPaddingLeft`（展开时 178 = 250−72）已于 2026-11-25 删除：aside 是 `fixed`，让位必须给满侧栏宽度，否则内容会钻到侧栏底下。
 
 ### `stores/Theme.ts` — `useThemeStore()`，`ThemeMode = 'light' | 'dark' | 'system'`
 

@@ -23,22 +23,25 @@
       <span class="text-xs text-tertiary whitespace-nowrap tabular-nums" aria-live="polite">
         已筛选 {{ todoStore.filteredTodos.length }} / {{ todoStore.todos.length }} 条
       </span>
-      <button
+      <n-button
         v-if="todoStore.isFilterActive"
-        type="button"
-        class="chip"
+        quaternary
+        size="tiny"
         title="恢复默认筛选"
         @click="todoStore.resetFilters()"
       >
-        <span class="i-lucide-rotate-ccw icon-xs" aria-hidden="true" />
+        <template #icon>
+          <span class="i-lucide-rotate-ccw icon-xs" aria-hidden="true" />
+        </template>
         重置
-      </button>
+      </n-button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
+import { NButton } from 'naive-ui'
 import { useTodoStore, PRIORITY_OPTIONS, TIME_OPTIONS } from '../../stores/todoStore'
 import FilterChipGroup from './FilterChipGroup.vue'
 

@@ -12,6 +12,11 @@
       <SettingsItem label="主题模式" description="选择您偏好的主题模式">
         <ThemeModeSelector v-model="themeMode" />
       </SettingsItem>
+
+      <!-- 四色主题：选项来自 styles/themePresets.ts，以后加主题自动出现 -->
+      <SettingsItem label="主题配色" :description="themeStore.activePreset.description">
+        <ThemePresetSelector v-model="themePreset" />
+      </SettingsItem>
     </SettingsSection>
 
     <!-- 通用设置 -->
@@ -60,6 +65,7 @@ import SettingsSection from '../components/settings/SettingsSection.vue'
 import SettingsItem from '../components/settings/SettingsItem.vue'
 import ThemeToggle from '../components/settings/ThemeToggle.vue'
 import ThemeModeSelector from '../components/settings/ThemeModeSelector.vue'
+import ThemePresetSelector from '../components/settings/ThemePresetSelector.vue'
 import CloseActionSelect from '../components/settings/CloseActionSelect.vue'
 import LanguageSelect from '../components/settings/LanguageSelect.vue'
 import VersionInfo from '../components/settings/VersionInfo.vue'
@@ -70,6 +76,12 @@ const themeStore = useThemeStore()
 const themeMode = computed({
   get: () => themeStore.mode,
   set: (value: 'light' | 'dark' | 'system') => themeStore.setMode(value)
+})
+
+// 四色主题选择：选项与颜色定义在 styles/themePresets.ts
+const themePreset = computed({
+  get: () => themeStore.themeId,
+  set: (value: string) => themeStore.setThemeId(value),
 })
 
 const modeDes = computed(() => 
@@ -90,37 +102,17 @@ const language = ref('zh-CN')
 </script>
 
 <style scoped>
-/* 响应式样式保留 */
+/* 响应式样式保留：窄窗口下设置项改成上下排布（控件占满宽度） */
 @media (max-width: 600px) {
   .settings-item {
     flex-direction: column;
     align-items: flex-start;
     gap: 10px;
   }
-  
+
   .item-control {
     width: 100%;
     margin-left: 0;
-  }
-  
-  .theme-toggle-btn {
-    width: 100%;
-    height: 44px;
-  }
-  
-  .theme-options {
-    width: 100%;
-    justify-content: stretch;
-  }
-  
-  .theme-option {
-    flex: 1;
-    justify-content: center;
-  }
-  
-  .settings-select {
-    width: 100%;
-    min-width: unset;
   }
 }
 </style>
