@@ -97,6 +97,25 @@ export const useMetaStore = defineStore('meta', () => {
   /** Steam 搜索候选（storesearch 最多 10 条，没有分页） */
   const steamCandidates = ref<SearchCandidate[]>([])
   const steamSearchTotal = ref(0)
+  /**
+   * 多源搜索里**第一个带回数据的来源**（2026-11-28 用户要求：
+   * 「不同数据源之间，哪个搜索先返回就优先使用哪个；只要有一条源返回数据就立刻显示
+   * 返回了的源，不原子操作」）。
+   * 页面据此把候选的「当前查看来源」切到它；为空 = 还没有任何源返回。
+   */
+  const searchFirstSource = ref<LibrarySource | ''>('')
+  /** DLsite 这一路是否已经回来（流式搜索：候选区据此显示"还在搜"） */
+  const dlsiteSettled = ref(false)
+  /** Steam 这一路是否已经回来 */
+  const steamSettled = ref(false)
+  /**
+   * 多源搜索是否正在进行（专用于流式候选区判定"这一源还在路上"）。
+   * 不复用 loading：loading 也被按编号精确抓取 / 打开详情用，
+   * 那些场景不该让候选区的源按钮闪一下「搜索中…」。
+   */
+  const multiSearching = ref(false)
+  /** 多源搜索里哪几路**失败了**（候选源按钮据此显示「失败」而不是「0」） */
+  const searchFailed = ref<Record<LibrarySource, boolean>>({ dlsite: false, steam: false })
   /** /works「Steam 动态」：评价汇总 + 在线人数 + 最近公告（只有 Steam 源才有） */
   const steamStats = ref<SteamStats | null>(null)
   const steamStatsLoading = ref(false)
@@ -355,6 +374,8 @@ export const useMetaStore = defineStore('meta', () => {
       sourcePageCount.value = 1
       searchTotal.value = 0
       candidatePage.value = 1
+      // 候选清空 = 这次搜索彻底作废，「第一个返回的源」也要跟着重置
+      searchFirstSource.value = ''
     }
   }
 
@@ -419,10 +440,19 @@ export const useMetaStore = defineStore('meta', () => {
    * 所以不再让用户先选来源再搜，而是把两边的候选并列出来：
    *   - DLsite：名字模糊搜（每页 30 条，前端 10 条一页，可翻页）；
    *   - Steam：storesearch（最多 10 条、没有分页）。
+   *
+   * 用户 2026-11-28 追加要求：「不同数据源之间，那个搜索先返回就优先使用那个；
+   * 如果有一条源返回数据则立刻显示返回了的源，不原子操作」——
+   * 所以这里**不再 Promise.allSettled 等两边都回来**：两路各自返回就各自写进 store，
+   * 页面上的候选列表与会「当前查看来源」跟着第一个带回数据的源先亮出来；
+   * 后到的源只补自己的列表，不会把已经显示的源切走。
+   *
    * 两路各取各的，一路失败不影响另一路（失败原因写进 searchNotice 显示为警告）。
-   * 编号输入（RJ/RE/VJ）仍然只走 DLsite 精确抓取 —— 它本来就不是"搜索"。
+   * 编号输入（RJ/RE/VJ）仍然只走 DLsite 精确抓取 —— 它本来就不是"搜索"（这条路要等，见下）。
    *
    * 返回值语义与 runSearch 一致：true = 这次真的发了请求（空关键词只提示、不搜索）。
+   * 关键词搜索时这个 Promise 在**两路都结束**后才 resolve（便于调用方判断是否命中了作品），
+   * 但 store 里的候选是两路各自回来就各自写 —— 界面早就亮出来了，不会被"等齐"拖住。
    */
   async function runMultiSearch(query?: string): Promise<boolean> {
     const q = (query ?? keyword.value).trim()
@@ -433,12 +463,19 @@ export const useMetaStore = defineStore('meta', () => {
     keyword.value = q
     source.value = LIBRARY_SOURCE_DLSITE
     const token = ++searchToken
+    // 谁先带回数据谁被记下来（页面据此切「当前查看来源」）；每次搜索重置
+    searchFirstSource.value = ''
     clearResult()
+    dlsiteSettled.value = false
+    steamSettled.value = false
+    searchFailed.value = { dlsite: false, steam: false }
     loading.value = true
-    const notices: string[] = []
-    try {
-      // 编号：DLsite 精确抓详情（Steam 没有这种编号，不用搜）
-      if (looksLikeWorkId(q)) {
+    multiSearching.value = true
+
+    // 编号：DLsite 精确抓详情（Steam 没有这种编号，不用搜）。这条路只有一个请求，照旧等它。
+    if (looksLikeWorkId(q)) {
+      multiSearching.value = false
+      try {
         const data = await libraryApi.fetch(q, '', false)
         applyWork(data)
         status.value = cached.value
@@ -446,59 +483,131 @@ export const useMetaStore = defineStore('meta', () => {
           : `按编号 ${data.id} 精确抓取成功（还没入库，点「入库」才收进游戏库）`
         note(status.value)
         return true
-      }
-
-      const [dlsite, steam] = await Promise.allSettled([
-        metaApi.searchWorks(q, 1),
-        metaApi.searchSteam(q),
-      ])
-      // 期间又搜了一次：这次的结果整个作废（别把旧关键词的候选塞进新列表）
-      if (token !== searchToken) return false
-
-      const parts: string[] = []
-      if (dlsite.status === 'fulfilled') {
-        const resp = dlsite.value
-        raw.value = resp
-        sourcePages.value = { 1: resp.results ?? [] }
-        sourcePageCount.value = Math.max(1, resp.pageCount ?? 1)
-        searchTotal.value = resp.total ?? 0
-        candidatePage.value = 1
-        // 只给当前页（第一页）下预览图
-        void loadCandidateCovers(pagedCandidates.value)
-        // 模糊搜索命中单个作品时后端也会带上 work
-        if (resp.work) applyWork(resp.work)
-        parts.push(`DLsite ${candidateTotal.value} 条`)
-      } else {
-        notices.push(`DLsite 搜索失败：${toMessage(dlsite.reason)}`)
-      }
-
-      if (steam.status === 'fulfilled') {
-        steamCandidates.value = steam.value.items ?? []
-        steamSearchTotal.value = steam.value.total ?? 0
-        parts.push(`Steam ${steamCandidates.value.length} 个候选`)
-      } else {
-        notices.push(`Steam 搜索失败：${toMessage(steam.reason)}`)
-      }
-
-      // 两边都没成功：当成一次失败搜索
-      if (!parts.length) {
-        fail(notices.join('；') || '没有搜索到结果')
+      } catch (err) {
+        fail(toMessage(err))
         return false
+      } finally {
+        if (token === searchToken) loading.value = false
       }
-      searchNotice.value = notices.join('；')
-      if (searchNotice.value) {
-        toastWarning('部分来源搜索失败', { description: searchNotice.value })
-      }
-      status.value = `同时搜索 DLsite 与 Steam：${parts.join(' · ')}；点「详情」核对后再入库`
-      note(status.value)
-      return true
-    } catch (err) {
-      fail(toMessage(err))
-      return false
-    } finally {
-      // 期间又搜了一次就别动 loading：新请求还在飞
-      if (token === searchToken) loading.value = false
     }
+
+    // 关键词：两路并发，谁先回来谁先上屏（store 立刻更新），但整体等两路结束再返回
+    const notices: string[] = []
+    let pending = 2
+    const onSettled = () => {
+      pending -= 1
+      // 期间又搜了一次：这次的结果整个作废（别把旧关键词的候选塞进新列表）
+      if (token !== searchToken) return
+      if (pending > 0) {
+        // 还有源在飞：先把已经拿到的写进状态，不弹"失败"之类的总结
+        note(progressText())
+        return
+      }
+      loading.value = false
+      multiSearching.value = false
+      finishMultiSearch(notices)
+    }
+    await Promise.all([
+      searchDlsiteFirstPage(q, token, notices).finally(onSettled),
+      searchSteamFirstPage(q, token, notices).finally(onSettled),
+    ])
+    return true
+  }
+
+  /** DLsite 关键词搜索的第一页：一回来就写进 store（不等 Steam） */
+  async function searchDlsiteFirstPage(q: string, token: number, notices: string[]): Promise<void> {
+    try {
+      const resp = await metaApi.searchWorks(q, 1)
+      if (token !== searchToken) return
+      raw.value = resp
+      sourcePages.value = { 1: resp.results ?? [] }
+      sourcePageCount.value = Math.max(1, resp.pageCount ?? 1)
+      searchTotal.value = resp.total ?? 0
+      candidatePage.value = 1
+      dlsiteSettled.value = true
+      // 只给当前页（第一页）下预览图
+      void loadCandidateCovers(pagedCandidates.value)
+      // 模糊搜索命中单个作品时后端也会带上 work
+      if (resp.work) applyWork(resp.work)
+      markFirstSource(LIBRARY_SOURCE_DLSITE)
+    } catch (err) {
+      if (token === searchToken) {
+        dlsiteSettled.value = true
+        searchFailed.value = { ...searchFailed.value, dlsite: true }
+        notices.push(`DLsite 搜索失败：${toMessage(err)}`)
+      }
+    }
+  }
+
+  /** Steam 商店搜索（storesearch，最多 10 条）：一回来就写进 store（不等 DLsite） */
+  async function searchSteamFirstPage(q: string, token: number, notices: string[]): Promise<void> {
+    try {
+      const resp = await metaApi.searchSteam(q)
+      if (token !== searchToken) return
+      steamCandidates.value = resp.items ?? []
+      steamSearchTotal.value = resp.total ?? 0
+      steamSettled.value = true
+      markFirstSource(LIBRARY_SOURCE_STEAM)
+    } catch (err) {
+      if (token === searchToken) {
+        steamSettled.value = true
+        searchFailed.value = { ...searchFailed.value, steam: true }
+        notices.push(`Steam 搜索失败：${toMessage(err)}`)
+      }
+    }
+  }
+
+  /**
+   * 记下「第一个真正带回候选的来源」（只记第一次；后到的源不覆盖，
+   * 免得用户已经看着某一边的列表时被切走）。没有候选的源不算「返回数据」。
+   */
+  function markFirstSource(src: LibrarySource) {
+    if (searchFirstSource.value) return
+    const hasData = src === LIBRARY_SOURCE_DLSITE ? candidateTotal.value > 0 : steamCandidates.value.length > 0
+    if (hasData) searchFirstSource.value = src
+  }
+
+  /** 进行中的进度文案：只写已经回来的那一路，另一路标明"还在搜" */
+  function progressText(): string {
+    const parts: string[] = []
+    if (!dlsiteSettled.value) parts.push('DLsite 搜索中…')
+    else if (searchFailed.value.dlsite) parts.push('DLsite 失败')
+    else parts.push(`DLsite ${candidateTotal.value} 条`)
+
+    if (!steamSettled.value) parts.push('Steam 搜索中…')
+    else if (searchFailed.value.steam) parts.push('Steam 失败')
+    else parts.push(`Steam ${steamCandidates.value.length} 个候选`)
+
+    return `同时搜索 DLsite 与 Steam：${parts.join(' · ')}`
+  }
+
+  /** 两路都回来了：收尾（全失败只弹一次错误；有成功时才弹"部分来源失败"的警告） */
+  function finishMultiSearch(notices: string[]) {
+    // 有失败源时状态里说「失败」，别把它当成"搜到 0 条"
+    const parts: string[] = []
+    if (searchFailed.value.dlsite) parts.push('DLsite 失败')
+    else if (dlsiteSettled.value) parts.push(`DLsite ${candidateTotal.value} 条`)
+    if (searchFailed.value.steam) parts.push('Steam 失败')
+    else if (steamSettled.value) parts.push(`Steam ${steamCandidates.value.length} 个候选`)
+
+    const dlsiteEmpty = !searchFailed.value.dlsite && candidateTotal.value === 0
+    const steamEmpty = !searchFailed.value.steam && !steamCandidates.value.length
+    if (dlsiteEmpty && steamEmpty) {
+      // 两路都成功但都没数据：这才是"没有搜索到结果"
+      fail('没有搜索到结果')
+      return
+    }
+    if (searchFailed.value.dlsite && searchFailed.value.steam) {
+      // 两路都失败：当成一次失败搜索
+      fail(notices.join('；') || '两个来源都搜索失败')
+      return
+    }
+    searchNotice.value = notices.join('；')
+    if (searchNotice.value) {
+      toastWarning('部分来源搜索失败', { description: searchNotice.value })
+    }
+    status.value = `同时搜索 DLsite 与 Steam：${parts.join(' · ')}；点「详情」核对后再入库`
+    note(status.value)
   }
 
   /**
@@ -1045,6 +1154,11 @@ export const useMetaStore = defineStore('meta', () => {
     tagError,
     metaSaving,
     searchNotice,
+    searchFirstSource,
+    dlsiteSettled,
+    steamSettled,
+    multiSearching,
+    searchFailed,
     steamCandidates,
     steamSearchTotal,
     steamStats,

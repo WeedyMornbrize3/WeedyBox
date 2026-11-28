@@ -43,7 +43,10 @@ html, body, #app {
        fast 颜色、透明度等轻量反馈
        base 位移、缩放等小幅变化
        slow 展开/收起、进出场等牵涉布局的较大变化
-     缓动：进入用减速（收尾柔和），离开用加速（果断离场）。 */
+     缓动：进入用减速（收尾柔和），离开用加速（果断离场）。
+     2026-11-28 用户「hover特效统一」：以下三档 + 缓动是**全站唯一口径**，
+     包括 naive 的控件（见文件末尾 .n-button 覆盖段）在内，不允许再出现
+     0.2s / 0.28s / ease 这类手写值。 */
   --motion-fast: 160ms;
   --motion-base: 220ms;
   --motion-slow: 280ms;
@@ -251,6 +254,57 @@ body {
 
 .spin {
   animation: spin 1s linear infinite;
+}
+
+/* ===== naive 控件的 hover 节奏对齐 design token（2026-11-28 用户「hover特效统一」）=====
+   背景：naive 的 Button 在库里把 `color .3s var(--n-bezier), background-color .3s ...`
+   写死在 .n-button 上（node_modules/naive-ui/es/button/src/styles/index.cssr.mjs 第 33 行起），
+   主题里只有 cubicBezierEaseInOut 可调（缓动），**时长没有对应的主题项**。
+   于是全站出现过两种手感：naive 控件 300ms + .4,0,.2,1，自绘组件 160–280ms + .16,1,.3,1。
+   用户选定「跟 design token 走」，所以这里用一条全局规则把它拉齐：
+     · 颜色/背景/描边/透明度 = 轻量反馈 → --motion-fast(160ms)
+     · 缓动统一 --ease-enter
+   为什么写在 global.css 而不是放组件里：按钮散布在十几处页面，逐个覆盖必然漏；
+   naive 的选择器是单类 `.n-button{...}`，这里同等权重但更靠后，能稳定覆盖。
+   ⚠️ 不要用 !important：主题里若以后给了专门的过渡项，应让它有机会生效。 */
+.n-button {
+  transition:
+    color var(--motion-fast) var(--ease-enter),
+    background-color var(--motion-fast) var(--ease-enter),
+    opacity var(--motion-fast) var(--ease-enter),
+    border-color var(--motion-fast) var(--ease-enter),
+    box-shadow var(--motion-fast) var(--ease-enter);
+}
+
+/* 输入类控件的描边/底色反馈同理（naive 内部也是 .3s 固定值） */
+.n-input .n-input__border,
+.n-input .n-input__state-border,
+.n-base-selection .n-base-selection-label,
+.n-checkbox .n-checkbox-box,
+.n-radio .n-radio__dot-wrapper,
+.n-switch .n-switch__rail {
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--ease-enter);
+}
+
+/* ===== 文字链接的 hover（2026-11-28 hover 特效统一）=====
+   站内有三处 `<a class="text-brand hover:underline">`（已保存图片、Steam 公告、
+   调试页原始页面）。UnoCSS 的 hover:underline 是**瞬时**的，下划线会突然弹出，
+   与其它元素 160ms 的缓动不是一套手感。
+   做法：**静息态就把 transition 声明在基础选择器上**，hover 只改目标值 —— 
+   过渡是"从哪到哪"的双向描述，挂在 :hover 上会导致进入有动画、退出没有（以及被
+   后面的基础规则覆盖，实测静息 transition 变成 `all 0s`）。
+   · text-decoration-color 参与过渡 → 下划线淡入淡出，不是硬切；
+   · text-underline-offset 留 2px 距离，不压住中日文字的下伸部。 */
+a.text-brand {
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+  transition: text-decoration-color var(--motion-fast) var(--ease-enter);
+}
+
+a.text-brand:hover {
+  text-decoration-line: underline;
+  text-decoration-color: currentColor;
 }
 
 /* ===== 无障碍：尊重系统的「减弱动态效果」 ===== */

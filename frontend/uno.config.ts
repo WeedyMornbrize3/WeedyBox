@@ -33,6 +33,14 @@ export default defineConfig({
   // ===== 自定义规则（映射 CSS 变量）=====
   // 注意：这里是精确字符串匹配，不支持 `bg-secondary/50` 这类透明度后缀
   // （会被判 unmatched 静默丢弃）。需要半透明请用已定义的具体类名。
+
+  // ===== 安全名单（safelist）=====
+  // 只包含「类名写在 .ts 字符串里、模板中没有字面量」的图标：
+  // presetIcons 是**静态扫描**，看不到 config/brand.ts 里 LOGO_ICON 的值，
+  // 不加这里就会出现「logo 盒子有 20×20 的尺寸但图形是空的」（2026-11-28 实测踩到）。
+  // 换 logo 图标时把新类名一起加进来。
+  safelist: ['i-lucide-package'],
+
   rules: [
     // 背景
     ['bg-base', { 'background-color': 'var(--color-bg-base)' }],
@@ -145,12 +153,14 @@ export default defineConfig({
     // 2026-11-25 起导航项本身是 naive 的 n-menu（用户要求「改用 naive ui 样式和逻辑」）：
     // 原来的 nav-item / nav-item-active / nav-icon / nav-text / nav-badge 已删除，
     // 菜单项的高度/圆角/选中色/折叠 tooltip 全部由 styles/naiveTheme.ts 的 Menu 段驱动。
-    // 这里只剩侧栏外壳（宽度过渡、底色、右侧分隔线）与上下两个菜单容器。
-    'sidebar': 'fixed left-0 top-0 h-screen bg-sidebar text-primary transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] flex flex-col z-[1000] overflow-hidden select-none border-r-sidebar will-change-width',
-    'sidebar-header': 'flex items-center px-5 gap-3 cursor-pointer min-h-[72px] flex-shrink-0 transition-colors duration-150 hover:bg-hover',
-    'logo-icon': 'flex-shrink-0 text-brand flex-center',
-    'logo-text': 'text-lg font-semibold text-primary whitespace-nowrap transition-opacity duration-250 ease-in overflow-hidden tracking-[0.5px]',
-    'sidebar-nav-top': 'flex-1 flex flex-col overflow-y-auto overflow-x-hidden p-2 mt-2.5',
+    // 2026-11-28 用户要求「与其他 router ui 一起排布」：侧栏不再是 fixed 覆盖层
+    // （原来靠 router-view 的 padding-left 让位），改成 MainLayout 里的普通 flex 列，
+    // 宽度过渡、底色、右侧分隔线照旧；让位不再需要补偿。
+    'sidebar': 'relative h-full shrink-0 bg-sidebar text-primary transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] flex flex-col z-[1000] overflow-hidden select-none border-r-sidebar will-change-width',
+    // 2026-11-28：原来的 sidebar-header / logo-icon / logo-text（整块可点的 logo 方块）
+    // 已删除 —— logo 只在展开态显示，且折叠开关改成导航区里的普通图标按钮，
+    // 品牌区样式都在 components/SidebarBrand.vue 的 scoped 里。
+    'sidebar-nav-top': 'flex-1 flex flex-col overflow-y-auto overflow-x-hidden p-2 mt-1',
     'sidebar-nav-bottom': 'flex-shrink-0 p-2 pt-0',
 
     // ---------- 筛选栏 ----------

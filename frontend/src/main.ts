@@ -1,5 +1,7 @@
 import './styles/global.css'
 import 'uno.css'
+// vue-echarts 的宿主元素样式（x-vue-echarts 要 display:block + 100% 宽高，否则图表高度为 0）
+import 'vue-echarts/style.css'
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
@@ -9,6 +11,9 @@ import { useSidebarStore } from './stores/Sidebar'
 import { useAppStore } from './stores/App'
 import { syncNaiveTheme } from './styles/naive'
 import { vScrollFade } from './utils/scrollFade'
+// ECharts 按需注册（柱状/折线/提示框/网格）。必须在使用 <VChart> 之前跑一遍，
+// 放在入口最稳：分析页是懒加载路由，但图表组件自己也会 import 这个模块（幂等）。
+import './utils/echartsSetup'
 
 const pinia = createPinia()
 const app = createApp(App)

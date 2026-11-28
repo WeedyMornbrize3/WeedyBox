@@ -10,8 +10,10 @@ const themeStore = useThemeStore()
 // 主题切换（明暗模式 或 四色主题）→ 重新读 token → 更新 naive 主题。
 // flush: 'post' 保证 store 的 applyTheme() 已经把新的 --color-* 写到 <html> 上，
 // 否则会读到上一套主题的变量（换肤后控件颜色不跟着变）。
+// 依赖用 themeSignature 而不是 `${effectiveTheme}:${themeId}`：自定义主题调色时
+// id 不变、只有四色变，只看 id 的话 naive 控件会留在旧配色（见 stores/Theme.ts）。
 watch(
-  () => `${themeStore.effectiveTheme}:${themeStore.themeId}`,
+  () => themeStore.themeSignature,
   () => syncNaiveTheme(themeStore.isDark),
   { immediate: true, flush: 'post' },
 )

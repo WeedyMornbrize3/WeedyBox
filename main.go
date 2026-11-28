@@ -8,6 +8,7 @@ import (
 	"WeedyBox/internal/service/game"
 	"WeedyBox/internal/service/getMeta"
 	"WeedyBox/internal/service/scan"
+	"WeedyBox/internal/service/stats"
 	"log"
 	"time"
 
@@ -78,6 +79,11 @@ func main() {
 	// 扫描添加入库时会顺手记录 exe 路径，手动入库的作品第一次启动时让用户选一次。
 	gameService := &game.GameService{DB: dbService}
 
+	// 数据分析服务（2026-11-28）：游玩时长/次数的聚合，给 /stats 报表页用。
+	// 只读库、不联网：把 work_play_time（日桶）与 work_play_sessions（会话区间）
+	// 合成「单日运行时长 / 名次统计 / 时段分布 / 总览」四块数据。
+	statsService := &stats.StatsService{DB: dbService}
+
 	applicationServices := []application.Service{
 		application.NewService(windowService),
 		application.NewService(todoService),
@@ -87,6 +93,7 @@ func main() {
 		application.NewService(scanService),
 		application.NewService(dialogService),
 		application.NewService(gameService),
+		application.NewService(statsService),
 	}
 
 	app := application.New(application.Options{

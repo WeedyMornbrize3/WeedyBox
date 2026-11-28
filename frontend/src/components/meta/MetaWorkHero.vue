@@ -23,6 +23,28 @@
     />
     <div class="work-hero-shade" aria-hidden="true" />
 
+    <!-- 左上角返回游戏库（用户 2026-11-28：「hero图左上角添加退出按钮回到library界面」）。
+         用 naive 的 n-button circle 而不是自己写 <button>（用户 2026-11-28：「使用naive ui的圆形样式」）：
+         尺寸/圆形/波纹/hover/焦点圈/禁用态都由 naive 给，这里只把颜色掰成"压在图片上"的口径。
+         配色仍不跟主题走：白色图标 + 半透明黑底（--color-hero-veil），因为品牌色压在
+         任意画面上不一定有对比度。
+         ⚠️ naive 把 --n-* 以内联样式写在按钮元素上，外部 class 覆盖不掉；
+         必须在同一元素用 :style 覆盖同名变量才生效（见 styles/naiveTheme.ts 的同类注释）。 -->
+    <n-button
+      class="work-hero-back"
+      quaternary
+      circle
+      size="small"
+      aria-label="返回游戏库"
+      title="返回游戏库"
+      :style="backButtonStyle"
+      @click="emit('back')"
+    >
+      <template #icon>
+        <span class="i-lucide-arrow-left icon-sm" aria-hidden="true" />
+      </template>
+    </n-button>
+
     <div class="work-hero-body">
       <div class="flex-1 min-w-0 flex flex-col gap-2.5">
         <p v-if="kickerParts.length" class="work-hero-kicker">
@@ -59,6 +81,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { NButton } from 'naive-ui'
 import type { WorkMeta } from '../../services/metaService'
 
 /** hero 里最多显示几个标签（其余折成「+N」，避免把标题挤爆） */
@@ -78,6 +101,32 @@ const props = withDefaults(
   }>(),
   { backgroundSrc: '', coverSrc: '', tags: () => [], sourceLabel: '' },
 )
+
+/** 返回游戏库：只把点击抛给 WorksPage（它持有 router） */
+const emit = defineEmits<{ back: [] }>()
+
+/**
+ * 返回按钮的配色：压在 hero 图片上，所以固定用「白色图标 + 半透明黑底」，
+ * 不跟主题走（浅色主题下用浅底/品牌色都会糊）。
+ * 走 :style 覆盖 naive 的 --n-* 内联变量 —— quaternary 的静息底是 transparent，
+ * 这里把它换成半透明黑，hover/pressed 再加深一档。
+ *
+ * ⚠️ 不要试图用 --n-border* 画描边：naive 的边框在 `.n-button__border` /
+ * `.n-button__state-border` 两个子元素上，跟 --n-border 变量不是一条链路
+ * （实测 --n-border 传了也不生效，border 仍是 0px）。所以描边交给 naive，
+ * 这里只把「环形边界」用静息底色的半透明度做出来。
+ */
+const backButtonStyle = {
+  '--n-color': 'transparent',
+  '--n-color-hover': 'color-mix(in srgb, var(--color-hero-veil) 88%, transparent)',
+  '--n-color-pressed': 'var(--color-hero-veil)',
+  '--n-color-focus': 'color-mix(in srgb, var(--color-hero-veil) 88%, transparent)',
+  '--n-text-color': 'var(--color-text-on-image)',
+  '--n-text-color-hover': 'var(--color-text-on-image)',
+  '--n-text-color-pressed': 'var(--color-text-on-image)',
+  '--n-text-color-focus': 'var(--color-text-on-image)',
+  '--n-ripple-color': 'var(--color-hero-veil)',
+} as Record<string, string>
 
 /** 背景图加载失败标记：换作品（src 变化）时复位 */
 const backgroundOk = ref(true)
@@ -187,6 +236,25 @@ const kickerParts = computed(() => {
   gap: 24px;
   width: 100%;
   padding: 110px 28px 24px;
+}
+
+/* 左上角返回按钮：现在是 naive 的 n-button.circle（尺寸/圆形/波纹/焦点圈都由 naive 给），
+   这里只定位 + 给一块静息半透明黑底 —— 按钮压在图片上，完全透明会看不出边界。
+   底色等动态颜色走 :style 覆盖 --n-*（见 script 的 backButtonStyle）；
+   1px 白描边用 outline 画（naive 的 border 在子元素上，,--n-border 那条路不通）。 */
+.work-hero-back {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  background-color: color-mix(in srgb, var(--color-hero-veil) 55%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--color-text-on-image) 26%, transparent);
+  outline-offset: -1px;
+}
+
+.work-hero-back:hover {
+  background-color: color-mix(in srgb, var(--color-hero-veil) 88%, transparent);
+  outline-color: color-mix(in srgb, var(--color-text-on-image) 45%, transparent);
 }
 
 /* 来源 / 发售日 / 类型：压在图片上的小字，两套主题都用浅色（图片本身是深色画面） */

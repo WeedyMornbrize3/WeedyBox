@@ -32,6 +32,14 @@ const routes = [
         meta: { title: '游戏库' }
       },
       {
+        // 数据分析（2026-11-28）：游玩时长 / 名次 / 时段分布。
+        // 数据全在本地 SQLite（work_play_time + work_play_sessions），不联网。
+        path: '/stats',
+        name: 'Stats',
+        component: () => import('../views/StatsPage.vue'),
+        meta: { title: '数据分析' }
+      },
+      {
         // 作品库：游戏库卡片点击后进这里看详情（views/WorksPage.vue 复用）
         path: '/works',
         name: 'Works',

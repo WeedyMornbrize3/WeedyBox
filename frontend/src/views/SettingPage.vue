@@ -13,9 +13,20 @@
         <ThemeModeSelector v-model="themeMode" />
       </SettingsItem>
 
-      <!-- 四色主题：选项来自 styles/themePresets.ts，以后加主题自动出现 -->
+      <!-- 四色主题（2026-11-28 改版）：四个圆盘直接显示当前明暗下的四色，
+           点任一圆盘用 naive 的 ColorPicker 现调；右侧下拉仍可切内置预设。
+           四色定义在 styles/themePresets.ts，自定义值存在 stores/Theme.ts。 -->
       <SettingsItem label="主题配色" :description="themeStore.activePreset.description">
-        <ThemePresetSelector v-model="themePreset" />
+        <ThemePalettePicker />
+      </SettingsItem>
+
+      <!-- 玻璃效果：作品详情页那张模糊 hero 遮罩，按明暗模式分别勾选
+           （用户 2026-11-28：浅色默认不用，可以在设置里调） -->
+      <SettingsItem
+        label="玻璃效果"
+        description="作品页模糊 hero 遮罩：勾选的模式下才使用；默认只开深色"
+      >
+        <GlassEffectSelect />
       </SettingsItem>
     </SettingsSection>
 
@@ -65,7 +76,8 @@ import SettingsSection from '../components/settings/SettingsSection.vue'
 import SettingsItem from '../components/settings/SettingsItem.vue'
 import ThemeToggle from '../components/settings/ThemeToggle.vue'
 import ThemeModeSelector from '../components/settings/ThemeModeSelector.vue'
-import ThemePresetSelector from '../components/settings/ThemePresetSelector.vue'
+import ThemePalettePicker from '../components/settings/ThemePalettePicker.vue'
+import GlassEffectSelect from '../components/settings/GlassEffectSelect.vue'
 import CloseActionSelect from '../components/settings/CloseActionSelect.vue'
 import LanguageSelect from '../components/settings/LanguageSelect.vue'
 import VersionInfo from '../components/settings/VersionInfo.vue'
@@ -78,11 +90,7 @@ const themeMode = computed({
   set: (value: 'light' | 'dark' | 'system') => themeStore.setMode(value)
 })
 
-// 四色主题选择：选项与颜色定义在 styles/themePresets.ts
-const themePreset = computed({
-  get: () => themeStore.themeId,
-  set: (value: string) => themeStore.setThemeId(value),
-})
+// 四色主题的选择/取色已整体搬进 ThemePalettePicker（它直接读写 themeStore）
 
 const modeDes = computed(() => 
   themeStore.isDark ? '深色模式' : '浅色模式'

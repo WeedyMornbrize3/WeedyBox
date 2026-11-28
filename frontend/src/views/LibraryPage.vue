@@ -275,9 +275,12 @@
 
         <!-- 候选：**不同来源分开显示**（用户 2026-11-24 要求：不要把多源数据归并到一页里）。
              用源切换器选看 Steam 或 DLsite，分页只属于当前源（Steam 最多 10 条、没有分页）。
-             列表与分页仍是一张卡片：列表滚动、分页固定在卡片底部。 -->
+             列表与分页仍是一张卡片：列表滚动、分页固定在卡片底部。
+             2026-11-28 起是**流式**的：某一源一回来就立刻出现在这里（不必等另一源），
+             还在路上的源在切换器里显示「搜索中…」，回来后再补上条数。 -->
         <template v-if="addMode === 'manual' && sourceOptions.length">
-          <!-- 源切换：只有存在候选的源才出现，按钮上带条数 -->
+          <!-- 源切换：已经有候选的源出现并带条数；还在搜的源也占一格（禁用 + 搜索中）
+               —— 用户要「有一条源返回数据则立刻显示返回了的源」，同时也要知道另一边还没到。 -->
           <n-radio-group
             class="shrink-0"
             :value="activeSource"
@@ -286,8 +289,13 @@
             aria-label="候选来源"
             @update:value="(value: string | number | boolean) => (searchSource = value as LibrarySource)"
           >
-            <n-radio-button v-for="option in sourceOptions" :key="option.value" :value="option.value">
-              {{ option.label }}（{{ option.count }}）
+            <n-radio-button
+              v-for="option in sourceOptions"
+              :key="option.value"
+              :value="option.value"
+              :disabled="option.pending || option.failed"
+            >
+              {{ option.label }}（{{ option.pending ? '搜索中…' : option.failed ? '失败' : option.count }}）
             </n-radio-button>
           </n-radio-group>
 
@@ -304,6 +312,22 @@
                 :candidates="meta.steamCandidates"
                 @select="chooseSteamCandidate"
               />
+              <!-- 当前这一源还在路上、且一条候选都没有：铺骨架屏而不是「没有结果」
+                   （不原子操作，不能在这一刻就下"没搜到"的结论）。 -->
+              <div
+                v-if="activePending && !activeCandidates.length"
+                class="flex flex-col gap-2 p-4"
+                aria-busy="true"
+              >
+                <n-skeleton v-for="i in 4" :key="`cand-skeleton-${i}`" height="44px" :sharp="true" />
+              </div>
+              <!-- 两个源都结束、确实一条都没有才说"没搜到"（有失败时已弹 toast，不重复） -->
+              <p
+                v-else-if="showNoResult && !activeCandidates.length"
+                class="m-0 px-5 py-6 text-center text-xs text-tertiary"
+              >
+                没有搜索到结果：换个关键词，或直接输入 RJ 编号。
+              </p>
             </div>
 
             <!-- 分页只属于当前源；Steam 没有分页，所以只在 DLsite 下出现。
@@ -337,7 +361,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   NButton,
@@ -390,23 +414,103 @@ const addMode = ref<AddMode>('scan')
 /** 手动搜索当前查看的候选来源：不同源不归并到同一页，用切换器分开看 */
 const searchSource = ref<LibrarySource>('dlsite')
 
-/** 有候选的来源（切换器只出现有结果的源，按钮上带条数） */
+/**
+ * 候选来源切换器的选项（2026-11-28 改成「流式可用」）：
+ *   · 已经有候选的源：正常出现，按钮上带条数；
+ *   · 还在路上的源：也占一格，显示「搜索中…」并禁用 —— 用户要「谁先返回先显示谁」，
+ *     同时不能让人以为另一边"根本没这条源"；
+ *   · 回来但失败的源：显示「失败」（不能当成 0 条，那是两回事）；
+ *   · 已经回来且确实没候选的源：不出现（没东西可切）。
+ */
 const sourceOptions = computed(() => {
-  const options: Array<{ value: LibrarySource; label: string; count: number }> = []
-  if (meta.candidateTotal > 0) {
-    options.push({ value: 'dlsite', label: 'DLsite', count: meta.candidateTotal })
+  const options: Array<{
+    value: LibrarySource
+    label: string
+    count: number
+    pending: boolean
+    failed: boolean
+  }> = []
+  const dlsitePending = meta.multiSearching && !meta.dlsiteSettled
+  const steamPending = meta.multiSearching && !meta.steamSettled
+
+  if (meta.candidateTotal > 0 || dlsitePending || meta.searchFailed.dlsite) {
+    options.push({
+      value: 'dlsite',
+      label: 'DLsite',
+      count: meta.candidateTotal,
+      pending: meta.candidateTotal === 0 && dlsitePending,
+      failed: meta.searchFailed.dlsite,
+    })
   }
-  if (meta.steamCandidates.length) {
-    options.push({ value: 'steam', label: 'Steam 商店', count: meta.steamCandidates.length })
+  if (meta.steamCandidates.length || steamPending || meta.searchFailed.steam) {
+    options.push({
+      value: 'steam',
+      label: 'Steam 商店',
+      count: meta.steamCandidates.length,
+      pending: meta.steamCandidates.length === 0 && steamPending,
+      failed: meta.searchFailed.steam,
+    })
   }
   return options
 })
 
-/** 生效的源：用户选的源已经没有候选时，回落到第一个有候选的源 */
+/**
+ * 生效的源：优先停在用户选的源上；那个源没有候选（还没到 / 失败 / 搜到 0 条）时，
+ * 落到**第一个真有候选的源**（不能让界面停在一个 disabled 的「搜索中… / 失败」按钮上）；
+ * 一个都没候选时退回第一个选项（此时列表本来就是空的，由骨架屏或空态兜住）。
+ */
 const activeSource = computed<LibrarySource>(() => {
+  const withData = sourceOptions.value.filter((option) => option.count > 0)
+  if (withData.some((option) => option.value === searchSource.value)) return searchSource.value
+  if (withData.length) return withData[0].value
   const values = sourceOptions.value.map((option) => option.value)
   return values.includes(searchSource.value) ? searchSource.value : (values[0] ?? 'dlsite')
 })
+
+/** 当前查看的源是否还在返回中（候选区据此铺骨架而不是「没结果」） */
+const activePending = computed<boolean>(() =>
+  activeSource.value === 'dlsite'
+    ? meta.multiSearching && !meta.dlsiteSettled
+    : meta.multiSearching && !meta.steamSettled,
+)
+
+/** 当前查看的源已有的候选（判断"是否真的没结果"用） */
+const activeCandidates = computed<unknown[]>(() =>
+  activeSource.value === 'dlsite' ? meta.pagedCandidates : meta.steamCandidates,
+)
+
+/** 多源搜索是否已经全部结束（两路都回来 = 不再是"还在搜"） */
+const searchFinished = computed(() => !meta.multiSearching && Boolean(meta.keyword))
+
+/** 已返回的源里是否有任何一个真有候选（决定要不要显示"没有搜索到结果"） */
+const sourceHasData = computed(
+  () => meta.candidateTotal > 0 || meta.steamCandidates.length > 0,
+)
+
+/**
+ * 该显示「没有搜索到结果」吗：两路都已结束、没有任何候选、且**没有失败**
+ * （失败已经弹过 toast，错误页不该再写一句"没搜到"）。
+ */
+const showNoResult = computed(
+  () =>
+    searchFinished.value &&
+    !sourceHasData.value &&
+    !meta.searchFailed.dlsite &&
+    !meta.searchFailed.steam,
+)
+
+/**
+ * 流式搜索的落点（用户 2026-11-28：「哪个搜索先返回就优先使用哪个，
+ * 只要有一条源返回数据就立刻显示返回了的源，不原子操作」）：
+ * store 记下第一个带回候选的源，这里立刻把候选区切到它 —— 不必等另一路。
+ * 后到的源只补自己的条数（按钮上会多一个），不会把已经看到的列表切走。
+ */
+watch(
+  () => meta.searchFirstSource,
+  (first) => {
+    if (first) searchSource.value = first
+  },
+)
 
 // ===== 批量操作（用户 2026-11-23）=====
 // 「只有批量操作游戏库时才弹出操作栏」：平时卡片上没有任何按钮，
@@ -536,16 +640,14 @@ function openAddGame() {
  * ⚠️ 必须用 `runMultiSearch()` 的返回值把关，不能只看 `meta.work`：
  * store 里可能还留着上一次搜索的作品，搜索栏为空时点「搜索」会拿它跳详情页
  * （用户报的 bug）。空关键词时只提示「搜索栏不能为空」并返回 false。
+ *
+ * 2026-11-28 起关键词搜索是**流式的**（谁先返回先显示谁）：候选两路各回各写，
+ * 但 `runMultiSearch()` 仍要等两路都结束才 resolve，所以命中作品的跳转照旧在这里判断。
  */
 async function submitSearch() {
   const searched = await meta.runMultiSearch()
   if (!searched) return
-  if (meta.work) {
-    finishSearch()
-    return
-  }
-  // 两边都搜完后默认看 DLsite；DLsite 没结果时自动落到 Steam（不把两源塞进同一页）
-  searchSource.value = meta.candidateTotal > 0 ? 'dlsite' : 'steam'
+  if (meta.work) finishSearch()
 }
 
 /**

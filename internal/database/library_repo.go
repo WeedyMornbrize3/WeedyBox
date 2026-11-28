@@ -134,7 +134,7 @@ func (s *SQLiteService) ensureLibraryTables(ctx context.Context) error {
 
 		// 按天的游玩时长：一天一个桶（sessions 跨午夜时切开分别累加）。
 		// 与 library_works 上的 play_time_total_seconds 同时写：总数用于动作栏秒开，
-		// 日桶留给以后「游戏统计」页做每天/每周曲线。
+		// 日桶留给「游戏统计」页做每天/每周曲线。
 		`CREATE TABLE IF NOT EXISTS work_play_time (
 			source TEXT NOT NULL DEFAULT 'dlsite',
 			work_id TEXT NOT NULL,
@@ -143,6 +143,31 @@ func (s *SQLiteService) ensureLibraryTables(ctx context.Context) error {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (source, work_id, day)
 		)`,
+
+		// 单次游玩会话：一行 = 一次「启动到退出」的区间。（2026-11-28 用户要求
+		// 「加 work_play_sessions（启动区间一行），支持时段分布 + 游玩次数」）
+		//
+		// 为什么在日桶之外还要这张表：日桶只记"某天一共多久"，回答不了
+		// 「玩了几次」「晚上几点最常玩」「一次最长玩了多久」—— 那些都需要**区间**。
+		// 日桶仍是时长的权威来源（老数据全在日桶里），会话表只补充区间维度。
+		//
+		// 起点/终点都存 RFC3339 本地时区（与 quit_game_time_stamp 同一口径），
+		// 不存 Unix 秒：直接和在日桶的 day 文本上对齐、也方便 sqlite3 CLI 里肉眼看。
+		`CREATE TABLE IF NOT EXISTS work_play_sessions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source TEXT NOT NULL DEFAULT 'dlsite',
+			work_id TEXT NOT NULL,
+			started_at DATETIME NOT NULL,
+			ended_at DATETIME NOT NULL,
+			seconds INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+
+		`CREATE INDEX IF NOT EXISTS idx_work_play_sessions_work
+			ON work_play_sessions (source, work_id, started_at)`,
+
+		`CREATE INDEX IF NOT EXISTS idx_work_play_sessions_started
+			ON work_play_sessions (started_at)`,
 	}
 
 	for _, query := range queries {
@@ -652,10 +677,28 @@ func (s *SQLiteService) MarkGameLaunched(ctx context.Context, source, workID str
 
 // RecordGameSession 结算一次游戏会话：更新退出时间、累计总时长、并按天累加日桶。
 // seconds 与 days 由 game 服务算好（它负责"跨午夜切到第二天"的规则）。
+//
+// 2026-11-28 起额外写一行 work_play_sessions（一次启动到退出 = 一行区间），
+// 供数据分析页做「游玩次数 / 时段分布 / 最长一次」。区间写入是**尽力而为**：
+// 它失败不该让整次结算回滚 —— 总时长与日桶才是账本，区间只是分析素材。
 func (s *SQLiteService) RecordGameSession(
 	ctx context.Context,
 	source, workID string,
 	quitAt time.Time,
+	seconds int64,
+	days []model.PlayTimeDay,
+) error {
+	return s.RecordGameSessionSpan(ctx, source, workID, time.Time{}, quitAt, seconds, days)
+}
+
+// RecordGameSessionSpan 带**起点**的结算：额外把 [startedAt, quitAt] 记进 work_play_sessions。
+//
+// startedAt 传零值时只写账本（总时长 + 日桶），不写会话行 —— 老调用方
+// （以及"起点已经无从考证"的恢复会话）走这条路，界面上表现为"这段有时长没有次数"。
+func (s *SQLiteService) RecordGameSessionSpan(
+	ctx context.Context,
+	source, workID string,
+	startedAt, quitAt time.Time,
 	seconds int64,
 	days []model.PlayTimeDay,
 ) error {
@@ -674,7 +717,7 @@ func (s *SQLiteService) RecordGameSession(
 		return err
 	}
 
-	return s.Transaction(ctx, func(ctx context.Context) error {
+	err := s.Transaction(ctx, func(ctx context.Context) error {
 		if err := s.Execute(ctx,
 			`UPDATE library_works
 			 SET quit_game_time_stamp = ?, play_time_total_seconds = play_time_total_seconds + ?
@@ -698,6 +741,20 @@ func (s *SQLiteService) RecordGameSession(
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	// 会话区间：单独一步、失败只记日志（见函数注释）。
+	if seconds > 0 && !startedAt.IsZero() && quitAt.After(startedAt) {
+		if err := s.Execute(ctx,
+			`INSERT INTO work_play_sessions (source, work_id, started_at, ended_at, seconds)
+			 VALUES (?, ?, ?, ?, ?)`,
+			src, workID, formatTimeStamp(startedAt), formatTimeStamp(quitAt), seconds); err != nil {
+			return fmt.Errorf("记录游玩区间失败: %w", err)
+		}
+	}
+	return nil
 }
 
 // ListPlayTimeDays 列出某个作品按天的游玩时长（日期升序）。

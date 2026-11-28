@@ -308,7 +308,9 @@ func (s *GameService) settlePlaySession(sess *playSession, quitAt time.Time) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), playWriteTimeout)
 	defer cancel()
-	if err := s.DB.RecordGameSession(ctx, sess.source, sess.workID, quitAt, seconds, days); err != nil {
+	// 传 startedAt 是为了让数据库额外落一行 work_play_sessions（数据分析页要区间）：
+	// 有起止时间才算得出「玩了几次 / 几点在玩」。日桶与总时长仍按 seconds 记。
+	if err := s.DB.RecordGameSessionSpan(ctx, sess.source, sess.workID, sess.started, quitAt, seconds, days); err != nil {
 		log.Printf("记录游玩时长失败（%s/%s）: %v", sess.source, sess.workID, err)
 	}
 }

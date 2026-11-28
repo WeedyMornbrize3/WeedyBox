@@ -6,7 +6,7 @@
        右：两颗方形（圆角）图标按钮 —— 重新抓取、打开原始作品页（截图右侧的设置/信息图标位）
      只负责长相与事件转发；请求都在 stores/metaStore.ts。 -->
 <template>
-  <section class="work-topbar">
+  <section class="work-topbar" :class="{ 'work-topbar--glass': glass }">
     <div class="flex items-center gap-x-5 gap-y-2 flex-wrap min-w-0 flex-1">
       <MetaWorkActions
         :disabled="disabled"
@@ -134,6 +134,8 @@ import MetaWorkActions from './MetaWorkActions.vue'
 
 const props = withDefaults(
   defineProps<{
+    /** 当前明暗模式是否启用玻璃效果（遮罩开着才把动作栏底做半透明） */
+    glass?: boolean
     /** 未入库时「入库」按钮是否禁用（没有封面 URL 时不能入库） */
     disabled?: boolean
     downloading?: boolean
@@ -158,6 +160,7 @@ const props = withDefaults(
     playTimeTotalSeconds?: number
   }>(),
   {
+    glass: false,
     disabled: false,
     downloading: false,
     stored: false,
@@ -225,9 +228,10 @@ const sourceLinkLabel = computed(() =>
 </script>
 
 <style scoped>
-/* 动作栏本体（「启动所在卡片」）：65% 半透明底，让内容下方唯一那张遮罩透出来
+/* 动作栏本体（「启动所在卡片」）：玻璃效果开启时 65% 半透明底，让内容下方唯一那张遮罩透出来
    （80% 时遮罩那 12% 的透光几乎看不出来，用户反馈「没有透明效果」）。
-   不铺自己的遮罩、不用 backdrop-filter；按钮等 UI 控件自身仍是不透明的。 */
+   2026-11-28 起由父组件的 glass 控制：关掉玻璃效果（浅色默认）时用卡片实色底，
+   不铺自己的遮罩、不用 backdrop-filter；按钮等 UI 控件自身始终不透明。 */
 .work-topbar {
   position: relative;
   z-index: 1;
@@ -239,6 +243,10 @@ const sourceLinkLabel = computed(() =>
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
   border-radius: 0;
+  background: var(--color-bg-card);
+}
+
+.work-topbar--glass {
   background: color-mix(in srgb, var(--color-bg-card) 65%, transparent);
 }
 
@@ -258,9 +266,6 @@ const sourceLinkLabel = computed(() =>
   justify-content: center;
   width: 30px;
   height: 30px;
-  border: 1px solid var(--color-border-light);
-  border-radius: 7px;
-  background: var(--color-bg-secondary);
 }
 
 .work-topbar-stats {

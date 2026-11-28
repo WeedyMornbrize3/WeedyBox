@@ -146,7 +146,7 @@ const handleSubmit = async () => {
   line-height: 1.2;
   color: var(--color-text-muted);
   opacity: 0.7;
-  transition: opacity 0.2s ease;
+  transition: opacity var(--motion-fast) var(--ease-enter);
 }
 
 .desc-field:focus-within .desc-hint {
@@ -154,13 +154,16 @@ const handleSubmit = async () => {
 }
 
 /* ===== 展开/收起过渡（配合 <Transition name="desc-slide">）=====
-   用 max-height 做高度动画：height:auto 无法参与 transition */
+   用 max-height 做高度动画：height:auto 无法参与 transition。
+   时长/缓动走 design token（全站统一口径）：牵涉布局的收起用 --motion-slow，
+   其中透明度这一类轻量反馈用 --motion-fast。 */
 .desc-slide-enter-active,
 .desc-slide-leave-active {
   overflow: hidden;
-  transition: max-height 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.22s ease,
-              margin-top 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    max-height var(--motion-slow) var(--ease-enter),
+    opacity var(--motion-fast) var(--ease-enter),
+    margin-top var(--motion-slow) var(--ease-enter);
 }
 
 .desc-slide-enter-from,

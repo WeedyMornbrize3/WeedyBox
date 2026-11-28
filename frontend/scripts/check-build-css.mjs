@@ -16,12 +16,27 @@ const css = cssFiles.map((f) => readFileSync(join(assets, f), 'utf8')).join('\n'
 
 console.log(`CSS files: ${cssFiles.join(', ')}  (total ${css.length} chars)`)
 
+/**
+ * 去掉所有空白字符（空格/换行/制表符）。
+ *
+ * 为什么：vite 的 CSS 压缩格式会随版本变化 —— 8.2.x 输出 `box-sizing:border-box`
+ * （无空格），8.3.x 输出 `box-sizing: border-box`（带空格）。下面的断言 needle 都按
+ * 「无空格」写，若直接 `css.includes(needle)`，换 vite 版本就会整片假失败。
+ * 把两边都去空白再比较，就只断言「关键声明确实存在」，不再跟压缩格式绑死。
+ */
+function squash(text) {
+  return text.replace(/\s+/g, '')
+}
+const squashedCss = squash(css)
+
 const must = [
   // 图标尺寸五档 + 项目常用图标（presetIcons 构建期内联，缺了说明没被扫到）
   'icon-xs', 'icon-sm', 'icon-md', 'icon-lg', 'icon-xl',
   // 布局 / 结构类
   'todo-desc-block', 'card', 'filter-bar', 'filter-group', 'filter-label',
-  'sidebar', 'sidebar-nav-top', 'sidebar-nav-bottom', 'logo-text', 'settings-page', 'settings-item',
+  // 侧栏：品牌区已从 Sidebar.vue 拆到 SidebarBrand.vue（2026-11-28，logo 只在展开态显示），
+  // 旧的 logo-text / logo-icon 不再存在，断言改成品牌区自己的类名。
+  'sidebar', 'sidebar-nav-top', 'sidebar-nav-bottom', 'sidebar-brand', 'settings-page', 'settings-item',
   'text-priority-low', 'text-priority-medium', 'text-priority-high',
   'border-theme-light', 'bg-brand', 'text-brand', 'text-danger', 'text-success',
   'bg-secondary-soft', 'tabular-nums', 'flex-col-center',
@@ -46,20 +61,22 @@ const must = [
 
 let bad = 0
 for (const token of must) {
-  if (!css.includes(token)) { bad++; console.log(`  MISSING  ${token}`) }
+  if (!squashedCss.includes(squash(token))) { bad++; console.log(`  MISSING  ${token}`) }
 }
 console.log(bad === 0 ? `\nOK: 所有 ${must.length} 个关键类都已生成规则` : `\n${bad} 个类缺失`)
 
-// 非法 CSS 检测：border-color 收到整条简写值
-const invalid = css.match(/border-color:1px solid/g)
+// 非法 CSS 检测：border-color 收到整条简写值（对去空白后的产物做正则）
+const invalid = squashedCss.match(/border-color:1pxsolid/g)
 console.log(invalid ? `\n❌ 仍有非法 border-color 简写值: ${invalid.length} 处` : '\nOK: 无 border-color 简写值污染')
 
 // ===== 布局链 / 无障碍关键声明 =====
 const layout = [
   ['box-sizing reset', 'box-sizing:border-box'],
   ['html/body/#app 定高', 'height:100%'],
-  ['全局隐藏滚动条', '::-webkit-scrollbar{background:0 0!important;width:0!important'],
-  ['scrollbar-theme 恢复', '.scrollbar-theme::-webkit-scrollbar{background:0 0!important;width:8px!important'],
+  // 全局隐藏滚动条：width/height 0 + display none + 透明背景（global.css 的实际定义）
+  ['全局隐藏滚动条', '::-webkit-scrollbar{width:0!important;height:0!important;display:none!important'],
+  // scrollbar-theme 恢复：局部把滚动条显示回来（width:8px + display:block）
+  ['scrollbar-theme 恢复', '.scrollbar-theme::-webkit-scrollbar{display:block!important;width:8px!important'],
   ['scrollbar-theme Firefox', 'scrollbar-width:thin'],
   ['h-screen', 'height:100vh'],
   // presetWind4 下 `min-h-0` 的输出是 calc(var(--spacing) * 0)，不是字面量 0
@@ -79,7 +96,7 @@ const layout = [
 ]
 let layoutBad = 0
 for (const [name, needle] of layout) {
-  if (!css.includes(needle)) { layoutBad++; console.log(`  MISSING  ${name}  (${needle})`) }
+  if (!squashedCss.includes(squash(needle))) { layoutBad++; console.log(`  MISSING  ${name}  (${needle})`) }
 }
 console.log(layoutBad === 0 ? `OK: 布局链与无障碍 ${layout.length} 项断言全部通过` : `${layoutBad} 项布局断言失败`)
 
@@ -95,9 +112,9 @@ const borderRules = [
 ]
 let borderBad = 0
 for (const [name, needle] of borderRules) {
-  if (!css.includes(needle)) { borderBad++; console.log(`  MISSING  ${name}  -> 期望 ${needle}`) }
+  if (!squashedCss.includes(squash(needle))) { borderBad++; console.log(`  MISSING  ${name}  -> 期望 ${needle}`) }
 }
-const shorthandInColor = css.match(/border-color:1px\s+solid/g)
+const shorthandInColor = squashedCss.match(/border-color:1pxsolid/g)
 if (shorthandInColor) { borderBad++; console.log(`  ❌ 有 ${shorthandInColor.length} 处 border-color 收到简写值（非法 CSS）`) }
 console.log(borderBad === 0 ? `OK: 边框规则 ${borderRules.length} 项均自带 width+style+color` : `${borderBad} 项边框断言失败`)
 
@@ -110,9 +127,9 @@ const sideRules = [
 ]
 let sideBad = 0
 for (const [name, own, zeros] of sideRules) {
-  if (!css.includes(own)) { sideBad++; console.log(`  MISSING  ${name} -> 期望含 ${own}`) }
+  if (!squashedCss.includes(squash(own))) { sideBad++; console.log(`  MISSING  ${name} -> 期望含 ${own}`) }
   for (const z of zeros) {
-    if (!css.includes(z)) { sideBad++; console.log(`  MISSING  ${name} 缺少 ${z}（会退化成四边框）`) }
+    if (!squashedCss.includes(squash(z))) { sideBad++; console.log(`  MISSING  ${name} 缺少 ${z}（会退化成四边框）`) }
   }
 }
 console.log(sideBad === 0 ? `OK: 单侧边框 ${sideRules.length} 条均显式置零其余边` : `${sideBad} 项单侧边框断言失败`)

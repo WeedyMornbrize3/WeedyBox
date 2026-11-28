@@ -8,7 +8,7 @@
           指针保持默认（不加 cursor-pointer），行内控件都 .stop 冒泡，避免误复制。 -->
 <template>
   <div
-    class="group flex items-start gap-3 px-3 py-2.5 rounded-none bg-card border-theme transition-colors duration-200"
+    class="group todo-row flex items-start gap-3 px-3 py-2.5 rounded-none bg-card border-theme"
     :class="selected ? 'border-brand bg-brand-light' : 'hover:border-brand'"
     @click="handleCopy"
   >
@@ -160,10 +160,24 @@ function formatDate(dateStr: string): string {
 </script>
 
 <style scoped>
+/* hover 特效统一（2026-11-28 用户「hover特效统一」）：
+   原来模板上挂的是 UnoCSS 的 `transition-colors duration-200` —— 它一次展开
+   color/background-color/border-color/text-decoration-color/fill/stroke/
+   --un-gradient-* 共 8 个属性、200ms + (0.4,0,0.2,1)，与 design token（160ms +
+   --ease-enter）不是一套。这里改成只过渡真正会变的两项：描边色与底色。 */
+.todo-row {
+  transition:
+    border-color var(--motion-fast) var(--ease-enter),
+    background-color var(--motion-fast) var(--ease-enter);
+}
+
 /* 描述块：默认只有左侧一条竖线，hover 时只有这条竖线换成品牌色。
    竖线本身（宽度/样式/基础色）定义在这里，
-   UnoCSS 只负责 group-hover 时的颜色切换（见模板的 group-hover:border-l-brand）。 */
+   UnoCSS 只负责 group-hover 时的颜色切换（见模板的 group-hover:border-l-brand）。
+   竖线变色同样走 --motion-fast，与整行的 hover 节奏一致（否则会出现
+   "行已经亮完了、竖线还在慢慢变色"的错位感）。 */
 .todo-desc-block {
   border-left: 2px solid var(--color-border-light);
+  transition: border-left-color var(--motion-fast) var(--ease-enter);
 }
 </style>

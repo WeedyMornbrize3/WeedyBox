@@ -523,11 +523,13 @@ export function buildThemeOverrides(t: DesignTokens): GlobalThemeOverrides {
     // 只在这里给「颜色 / 高度 / 圆角 / 字号」：选中态 = accentSoft 底 + 品牌文字色，
     // 悬停 = bg-hover，折叠态图标用 tertiary（比展开态暗一档，压住存在感）。
     // ⚠️ 菜单本体不铺底（color: transparent）：侧栏底色来自 aside 的 --sidebar-bg。
+    // 2026-11-28 用户「整体调大 与 router 大小一致」：itemHeight 40→50、字号 14→15，
+    // 与右侧卡片 header（50 行高 / 15 标题 / 20 图标）同一节奏。
     Menu: {
       color: 'transparent',
-      itemHeight: '40px',
+      itemHeight: '50px',
       borderRadius: '8px',
-      fontSize: '14px',
+      fontSize: '15px',
       itemTextColor: t.textSecondary,
       itemTextColorHover: t.textPrimary,
       itemTextColorActive: t.brandText,

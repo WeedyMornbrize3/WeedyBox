@@ -81,5 +81,5 @@ logs/
 /covers/
 
 # 本机自测脚本（Wails MCP / 场景脚本），只在开发机使用，不入库
-/scripts/dev/
-
+/scripts/
+/.gocache/
