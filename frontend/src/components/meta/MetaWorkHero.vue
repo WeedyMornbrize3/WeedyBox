@@ -5,9 +5,10 @@
      2026-11-24 用户要求：原来左信息栏里的「社团（开发商）」「评分」并进这行小字，
      左信息栏整块删除 —— 所以这里用 kickerParts 统一拼「源 · 社团 · 发售日 · 形式 · 评分」，
      不再各自写死分隔符（少一项就少一个点）。
-     背景图的优先级在 stores/metaStore.ts 的 backgroundUrl 里算好了：
-       Steam 源 = 本机 librarycache 的 library_hero*，没有才用商店接口的预览图；
-       DLsite 源 = 画廊第二张预览图（第一张是游戏库卡片封面）。
+     背景图（2026-11-27 起）：**后端缓存的本地图**（HeroImage，covers/ 里那张）——
+       本地没有才由后端联网补一张并落盘，页面本身不再直接挂远程 URL，
+       所以不会出现「先远程预览、再换成本地图」的两次换 src（用户反馈的抖动）。
+       Steam 源在本机 Steam 客户端缓存里有 hero 时优先用那张；DLsite 源用画廊第二张预览图。
      背景图加载失败时只保留渐变底，不影响文字与操作。 -->
 <template>
   <section class="work-hero" :class="{ 'work-hero-plain': !showBackground }">
@@ -66,7 +67,7 @@ const HERO_TAG_LIMIT = 10
 const props = withDefaults(
   defineProps<{
     work: WorkMeta
-    /** 背景大图（可能是本地 hero 的 data URL，也可能是远程预览图） */
+    /** 背景大图（后端缓存的 hero 本地图，data URL） */
     backgroundSrc?: string
     /** 竖版封面（游戏库卡片的 cover 优先） */
     coverSrc?: string

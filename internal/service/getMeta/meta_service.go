@@ -465,6 +465,17 @@ func toRawMap(v any) (map[string]any, error) {
 	return out, nil
 }
 
+// FetchImagePreferringWebP 下载图片字节，**优先同名 .webp 档位**（2026-11-27 用户要求
+// 「所有图片尽量改为 webp」），拿不到再回落原图。
+//
+// 给 hero 图缓存用（封面下载内部用的是同一个 fetchImagePreferringWebP）：
+// 探测只发一次请求、失败静默回落，不会因为多探一次让整张图失败。
+// 返回的 ext 是图片真实内容的类型（.webp / .jpg / .png ...）。
+//wails:ignore
+func (s *MetaApiService) FetchImagePreferringWebP(ctx context.Context, rawURL string) ([]byte, string, error) {
+	return s.fetchImagePreferringWebP(ctx, rawURL)
+}
+
 // FetchImageBytes 下载图片原始字节（带 UA / Referer 与一次重试）。
 //
 // 给 LibraryService 生成「预模糊 hero 图」用：hero 图既可能来自本机 Steam 缓存（data URL），
@@ -528,6 +539,12 @@ func (s *MetaApiService) tryFetchImage(ctx context.Context, client *http.Client,
 
 // maxCoverBytes 封面体积上限。最大的 _smp1 预览图约 808KB，留 16MB 余量。
 const maxCoverBytes = 16 << 20
+
+// ImageExt 只按图片真实内容判断后缀。
+// 给「手里只有字节」的调用方用（hero 图缓存 / 模糊图缓存），口径与 DownloadCover 一致。
+func ImageExt(data []byte) string {
+	return imageExt("", "", data)
+}
 
 // imageExt 决定文件后缀：真实内容 > Content-Type > URL 后缀 > 默认 .jpg。
 // 硬编码 jpg 是错的（存在 webp 封面，实测 RJ01721474 就有 webp 档位）。

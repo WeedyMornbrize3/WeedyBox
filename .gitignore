@@ -79,3 +79,7 @@ logs/
 /preImg/
 # 入库封面目录（2026-11-16 由 preImg 改名；旧目录继续忽略）
 /covers/
+
+# 本机自测脚本（Wails MCP / 场景脚本），只在开发机使用，不入库
+/scripts/dev/
+

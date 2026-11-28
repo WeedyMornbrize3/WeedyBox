@@ -41,6 +41,11 @@ type GameService struct {
 	// 每次查询仍会复核进程是否真的还在（PID 可能被系统复用，进程也可能自己退出）。
 	mu      sync.Mutex
 	running map[string]uint32
+
+	// playSessions 是「正在计时」的游戏会话：key = 来源|编号（见 play_time.go）。
+	// 与 running 共用一把锁；两者语义不同：running 是"进程在不在"，playSessions 是
+	// "这一段时间该记给谁、从什么时候开始算"。
+	playSessions map[string]*playSession
 }
 
 // GamePathState 是「设置游戏位置」成功后返回的状态。
@@ -100,6 +105,11 @@ type GameLaunchResult struct {
 //   - Running = true   → 游戏正在运行（按钮显示「运行中」并禁用，防止重复启动）。
 //
 // LaunchMode 是生效的启动方式（steam / exe）：Steam 源默认 steam，其余默认 exe。
+//
+// 最后三个字段是 2026-11-27 加的游玩统计（动作栏直接显示）：
+//   - LastLaunchAt：上一次启动时间，启动时写、退出后保留；
+//   - PlayTimeTotalSeconds：累计运行总时长（**含当前正在跑的这一段**，所以动作栏能实时涨）；
+//   - QuitGameTimeStamp：上一次退出时间（入库时等于添加时间，还没退出过）。
 type GameStatus struct {
 	WorkID     string `json:"workId"`
 	Path       string `json:"path"`
@@ -107,6 +117,10 @@ type GameStatus struct {
 	Running    bool   `json:"running"`
 	PID        uint32 `json:"pid"`
 	LaunchMode string `json:"launchMode"`
+
+	QuitGameTimeStamp    string `json:"quitGameTimeStamp,omitempty"`
+	LastLaunchAt         string `json:"lastLaunchAt,omitempty"`
+	PlayTimeTotalSeconds int64  `json:"playTimeTotalSeconds"`
 }
 
 // ===== 对外方法 =====
@@ -176,6 +190,15 @@ func (s *GameService) Status(ctx context.Context, workID, source string) (GameSt
 	}
 	status.LaunchMode = resolveLaunchMode(mode, src)
 
+	// 游玩统计先读出来：就算没有位置 / 没在运行，动作栏也要能显示
+	// 「上次启动时间 / 运行总时长」（2026-11-27）。
+	stats, statsErr := s.DB.GetGamePlayStats(ctx, src, status.WorkID)
+	if statsErr == nil {
+		status.QuitGameTimeStamp = formatStatusTime(stats.QuitGameTimeStamp)
+		status.LastLaunchAt = formatStatusTime(stats.LastLaunchAt)
+		status.PlayTimeTotalSeconds = stats.PlayTimeTotalSeconds
+	}
+
 	if path == "" {
 		return status, nil
 	}
@@ -187,6 +210,14 @@ func (s *GameService) Status(ctx context.Context, workID, source string) (GameSt
 
 	status.Exists = true
 	status.Running, status.PID = s.isRunning(path)
+	if status.Running {
+		// 应用重启过、游戏却还在跑：库里 quit 仍停在启动时间，从这里接着计时
+		if statsErr == nil {
+			s.recoverPlaySession(src, status.WorkID, stats, path, status.PID)
+		}
+		// 总时长带上当前会话的实时进度（前端每 5 秒轮询一次能看到它在涨）
+		status.PlayTimeTotalSeconds += s.activePlaySeconds(src, status.WorkID)
+	}
 	return status, nil
 }
 
@@ -245,6 +276,9 @@ func (s *GameService) Launch(ctx context.Context, workID, source string) (GameLa
 		}
 		result.Started = true
 		result.Message = fmt.Sprintf("已请求 Steam 启动游戏（%s）", url)
+		// 开始计时（2026-11-27）：Steam 方式没有 PID；如果库里记了本地 exe，
+		// watcher 仍能靠扫描检测进程，否则留到应用退出/下次启动时结算。
+		s.beginPlaySession(src, result.WorkID, time.Now(), path, 0)
 		return result, nil
 	}
 
@@ -267,6 +301,8 @@ func (s *GameService) Launch(ctx context.Context, workID, source string) (GameLa
 	s.rememberRunning(path, pid)
 	result.Started = true
 	result.Running = true
+	// 开始计时：PID 已知，watcher 5 秒一次确认进程是否还在，退出就结算
+	s.beginPlaySession(src, result.WorkID, time.Now(), path, pid)
 	return result, nil
 }
 

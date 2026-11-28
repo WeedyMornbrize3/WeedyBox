@@ -43,6 +43,19 @@ export interface LibraryMeta extends WorkMeta {
    * steam 源走 Steam URL，其它源跑本地 exe）；'steam' / 'exe' = 用户显式选过。
    */
   launchMode?: string
+  /** hero 大图的本地缓存（2026-11-27）：目录 / 相对路径 / 绝对路径 / 大小 / 后缀 / 来源 URL */
+  heroDir?: string
+  heroPath?: string
+  heroAbsPath?: string
+  heroBytes?: number
+  heroSuffix?: string
+  heroUrl?: string
+  /** 上一次退出游戏的时间（入库时 = 添加时间；启动时临时写成启动时间） */
+  quitGameTimeStamp?: string
+  /** 上一次启动时间（启动时写、退出后保留，动作栏显示） */
+  lastLaunchAt?: string
+  /** 累计运行总时长（秒） */
+  playTimeTotalSeconds?: number
 }
 
 /** 辅助函数：确保返回值不为 null（绑定层会返回 `T | null`） */
@@ -146,26 +159,33 @@ export const libraryApi = {
   },
 
   /**
-   * Steam 源作品的 hero 背景图（data URL）：后端在本机 Steam 客户端缓存
-   * `appcache\librarycache` 里按 appid 找文件名含 hero 的图片并读成 base64。
-   * 本机没有（游戏没装 / 缓存被清）返回空串 —— 详情页回落到商店接口的预览图。
+   * hero 大图（data URL）：后端**只读 covers/ 里的本地缓存**，本地没有才联网取一张
+   * 并落盘记账（2026-11-27 用户要求「网络只是兜底」）。因为返回的已经是本地图，
+   * <img> 不会再从远程图换成另一张，抖动就没有了。
+   *
+   * fallbackURL 是前端按元数据算出的首选远程图，只在后端本地完全没有缓存时才会用到
+   * （本地有缓存时后端完全忽略它）。
    */
-  async steamHeroImage(appID: string): Promise<string> {
-    return (await LibraryService.SteamHeroImage(appID)) ?? ''
+  async heroImage(
+    workId: string,
+    source: LibrarySource = LIBRARY_SOURCE_DLSITE,
+    fallbackUrl = '',
+  ): Promise<string> {
+    return (await LibraryService.HeroImage(workId, source, fallbackUrl)) ?? ''
   },
 
   /**
-   * 预模糊 hero 图（data URL）：后端把当前 hero 图缩到 480px + 盒式模糊一次，
-   * 缓存到 `covers/hero_blur_<source>_<id>_<hash>.jpg`，之后直接读缓存。
+   * 预模糊 hero 图（data URL）：后端把 hero 缓存缩到 480px + 盒式模糊一次，
+   * 缓存到 `covers/hero_blur_v4_<source>_<id>_<哈希>.jpg`，之后直接读缓存。
    * 前端所有遮罩层共用这一张图，CSS 不再做 filter: blur —— 滚动时只剩合成。
-   * 失败（webp 源 / 网络）返回空串，页面退化为不做遮罩。
+   * 失败（webp 源 / 没有 hero）返回空串，页面退化为不做遮罩。
    */
   async heroBlur(
     workId: string,
     source: LibrarySource = LIBRARY_SOURCE_DLSITE,
-    url = '',
+    fallbackUrl = '',
   ): Promise<string> {
-    return (await LibraryService.HeroBlur(workId, source, url)) ?? ''
+    return (await LibraryService.HeroBlur(workId, source, fallbackUrl)) ?? ''
   },
 
   /**

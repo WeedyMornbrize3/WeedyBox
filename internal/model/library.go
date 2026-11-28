@@ -43,9 +43,55 @@ type LibraryWork struct {
 	// 其它源直接跑游戏程序）；"steam" = steam://rungameid/<appid>；"exe" = 本地 exe。
 	// 与 GamePath 一样单独维护，Upsert 不会覆盖它。
 	LaunchMode string `json:"launchMode,omitempty"`
+
+	// ===== 游玩统计（2026-11-27 用户要求）=====
+	//
+	// QuitGameTimeStamp 是「上一次退出游戏的时间」，同时充当本次计时的起点：
+	//   - 入库时初始化为**添加时间**；
+	//   - 每次启动游戏时先临时写成启动时间（用户说的「启动时临时记录 quitGameTimeStamp」）；
+	//   - 退出游戏时写成真正的退出时间，与启动那一格相减就是本次游玩时长。
+	// 「是不是同一天」用和 TODO 时间筛选同一套时间戳差值思路判定（见 game 服务）。
+	QuitGameTimeStamp string `json:"quitGameTimeStamp,omitempty"`
+	// LastLaunchAt 是「上一次启动时间」：启动时写、退出后保留，动作栏直接显示。
+	LastLaunchAt string `json:"lastLaunchAt,omitempty"`
+	// PlayTimeTotalSeconds 是累计运行总时长（秒），每次会话退出时把本次时长累加进来。
+	PlayTimeTotalSeconds int64 `json:"playTimeTotalSeconds"`
+
+	// ===== hero 大图缓存（2026-11-27）=====
+	//
+	// Hero* 指向 covers/ 下已经存好的 hero 大图：详情页默认只读这里，本地没有才联网
+	// 补一张并落盘（网络只是兜底）。与 cover_* 一样，目录/相对路径/绝对路径三份都记，
+	// 前端与调试页能直接看到图存在哪里。
+	HeroDir     string `json:"heroDir,omitempty"`
+	HeroPath    string `json:"heroPath,omitempty"`
+	HeroAbsPath string `json:"heroAbsPath,omitempty"`
+	HeroBytes   int64  `json:"heroBytes,omitempty"`
+	HeroSuffix  string `json:"heroSuffix,omitempty"`
+	HeroURL     string `json:"heroUrl,omitempty"`
+
 	// 入库时间与最后一次更新时间（由数据库维护）
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// HeroImageFile 是一次 hero 大图的落地记录（与 CoverFile 同构）。
+//
+// 为什么不单独建表：一个作品只留当前这一张 hero（换图时旧文件一起清），
+// 直接挂在 library_works 的 hero_* 列上就够了；不像封面那样需要保留每次下载的历史。
+type HeroImageFile struct {
+	Dir     string `json:"dir"`     // 相对工作目录，固定 covers
+	Path    string `json:"path"`    // 相对路径，如 covers/hero_dlsite_RJ01721474.jpg
+	AbsPath string `json:"absPath"` // 绝对路径，读图时用这个
+	Bytes   int64  `json:"bytes"`
+	Suffix  string `json:"suffix"`
+	URL     string `json:"url"` // 这张图从哪来（http 直链 / steam-local:<本机路径>）
+}
+
+// PlayTimeDay 是「某一天这个作品玩了多久」的日桶（work_play_time 一行）。
+// 跨午夜的会话会按本地日期切开分别记录：当日部分留下，超出部分记到第二天。
+type PlayTimeDay struct {
+	Day     string `json:"day"` // 本地日期 YYYY-MM-DD
+	Seconds int64  `json:"seconds"`
 }
 
 // CoverFile 是一次封面下载的落地记录。

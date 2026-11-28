@@ -13,11 +13,15 @@
 //	重新计算大面积高斯模糊，是上下滑卡顿的主因。这里一次算好、落盘，前端只把它当普通图片
 //	铺到各层（同一张 bitmap，不再有任何 filter），滚动只剩合成。
 //
+// 原图从哪来（2026-11-27 起）：统一走 hero_image.go 的 heroImageBytes —— 本地缓存优先，
+// 没有才联网补一张。所以模糊图和页面上的大图永远是同一张，也不会重复下载。
+//
 // 实现选择：不引第三方图像库（项目准则：能不加依赖就不加）——
 //
 //	先缩到 480px 宽（模糊图不需要高分辨率），再用两遍可分离盒式模糊近似高斯，
 //	JPEG 80 落盘。480px 的图 base64 后约 20~40KB，传给 WebView 可接受。
-//	源图解码只依赖标准库的 jpeg/png/gif；webp 源解码失败时返回错误，前端自动不做遮罩。
+//	源图解码只依赖标准库的 jpeg/png/gif + 官方 x/image 的 webp 解码器；
+//	真正解码失败时返回错误，前端自动不做遮罩。
 package service
 
 import (
@@ -35,7 +39,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
+
+	// webp 解码：2026-11-27「所有图片尽量改为 webp」后，hero/封面缓存里会有 webp，
+	// 模糊图要能从同一张图生成。只引官方 x/image 的**解码器**（不引编码库）。
+	_ "golang.org/x/image/webp"
 )
 
 const (
@@ -53,43 +60,49 @@ var unsafeFileToken = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 
 // HeroBlur 返回某个作品 hero 图的「预模糊版本」（data URL），并缓存到 covers/。
 //
-// rawURL 是前端当前用的 hero 图（Steam 源是本地图的 data URL，DLsite 源是预览图直链）；
-// 缓存文件名带 URL 的哈希，换图/重新抓取后会自动生成新文件，不会拿到旧图的模糊版本。
-// 缓存命中直接读盘，不联网、不重新计算。
-func (s *LibraryService) HeroBlur(ctx context.Context, workID, source, rawURL string) (string, error) {
+// 原图由 heroImageBytes 提供：本地有 hero 缓存就直接用，没有才联网补一张并落盘。
+// fallbackURL 是前端按元数据算出的首选远程图（兼容 2026-11-27 之前的调用方：
+// 本地缓存还没建立时用它兜底；本地已有 hero 时完全忽略）。
+// 缓存文件名带**原图内容哈希**：hero 换了图/换了格式会自动生成新文件，
+// 不会拿到旧图的模糊版本；同一作品盘上始终只留一张。
+func (s *LibraryService) HeroBlur(ctx context.Context, workID, source, fallbackURL string) (string, error) {
 	workID = strings.TrimSpace(workID)
-	rawURL = strings.TrimSpace(rawURL)
-	if workID == "" || rawURL == "" {
+	if workID == "" {
 		return "", nil
 	}
+	src := normalizeWorkSource(source)
 
 	dir := s.ensureMeta().CoversDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("创建封面目录失败: %w", err)
 	}
-	name := fmt.Sprintf(
-		"hero_blur_v3_%s_%s_%08x.jpg",
-		normalizeBlurSource(source),
-		safeFileToken(workID),
-		hashURL(rawURL),
-	)
-	path := filepath.Join(dir, name)
 
-	// ① 缓存命中：直接读回
-	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-		return dataURLJPEG(data), nil
-	}
-
-	// ② 取原图字节（data URL 直接解 base64；http(s) 复用 getMeta 的下载器，带 UA/Referer）
-	data, err := s.loadHeroImageBytes(ctx, rawURL)
+	// ① 原图（缓存优先；没有 hero 就返回空串，页面不做遮罩）
+	data, _, err := s.heroImageBytes(ctx, src, workID, fallbackURL)
 	if err != nil {
 		return "", err
 	}
+	if len(data) == 0 {
+		return "", nil
+	}
 
-	// ③ 解码（webp 不支持 —— 解码失败就返回错误，前端退化为不做遮罩而不是崩页面）
+	name := fmt.Sprintf(
+		"hero_blur_v4_%s_%s_%08x.jpg",
+		normalizeBlurSource(src),
+		safeFileToken(workID),
+		hashBytes(data),
+	)
+	path := filepath.Join(dir, name)
+
+	// ② 缓存命中：直接读回
+	if cached, err := os.ReadFile(path); err == nil && len(cached) > 0 {
+		return dataURLJPEG(cached), nil
+	}
+
+	// ③ 解码（jpeg/png/gif/webp；解码失败就返回错误，前端退化为不做遮罩而不是崩页面）
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return "", fmt.Errorf("hero 图解码失败（可能是 webp）: %w", err)
+		return "", fmt.Errorf("hero 图解码失败: %w", err)
 	}
 
 	// ④ 缩小 + 两遍盒式模糊 → JPEG
@@ -111,51 +124,16 @@ func (s *LibraryService) HeroBlur(ctx context.Context, workID, source, rawURL st
 			_ = os.Rename(tmp, path)
 		}
 	}
-	// 同一作品只保留这一张：hero 图可能先给远程预览、后切成 Steam 本地 hero，
-	// 两次生成会得到两个哈希文件；写完新的就把旧版本清掉（用户反馈「生成两张图片」）。
-	s.pruneHeroBlurCache(workID, source, path)
+	// 同一作品只保留这一张：hero 图换过之后哈希会变，写完新的就把旧版本清掉。
+	s.pruneHeroBlurCache(workID, src, path)
 	return dataURLJPEG(buf.Bytes()), nil
 }
 
-// loadHeroImageBytes 取得 hero 原图字节。
-// data URL 走本地 base64 解码；http(s) 交给 getMeta 的下载函数（同一套 UA/Referer/重试）。
-func (s *LibraryService) loadHeroImageBytes(ctx context.Context, rawURL string) ([]byte, error) {
-	if strings.HasPrefix(rawURL, "data:") {
-		comma := strings.Index(rawURL, ",")
-		if comma < 0 || comma == len(rawURL)-1 {
-			return nil, fmt.Errorf("hero data URL 格式不正确")
-		}
-		payload := rawURL[comma+1:]
-		if !strings.Contains(rawURL[:comma], ";base64") {
-			return nil, fmt.Errorf("hero data URL 不是 base64 编码")
-		}
-		data, err := base64.StdEncoding.DecodeString(payload)
-		if err != nil {
-			return nil, fmt.Errorf("hero data URL 解码失败: %w", err)
-		}
-		return data, nil
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	return s.ensureMeta().FetchImageBytes(ctx, rawURL)
-}
-
-// RemoveHeroBlurCache 删除某个作品所有版本的模糊 hero 图（作品被移除时调用）。
-// 删不掉只忽略：它是纯缓存，留着也只占几十 KB。
-func (s *LibraryService) removeHeroBlurCache(workID, source string) {
-	workID = strings.TrimSpace(workID)
-	if workID == "" {
-		return
-	}
-	s.pruneHeroBlurCache(workID, source, "")
-}
-
 // pruneHeroBlurCache 删除同一作品旧版本的模糊图，keepPath 为空 = 全删。
-// 名称里带 URL 哈希是为了换图后不复用旧图，但同一作品只在盘上留一张。
+// 名称里带原图内容哈希是为了换图后不复用旧图，但同一作品只在盘上留一张。
 func (s *LibraryService) pruneHeroBlurCache(workID, source, keepPath string) {
 	dir := s.ensureMeta().CoversDir()
-	prefixes := []string{"hero_blur_v3", "hero_blur_v2", "hero_blur"}
+	prefixes := []string{"hero_blur_v4", "hero_blur_v3", "hero_blur_v2", "hero_blur"}
 	for _, prefix := range prefixes {
 		pattern := filepath.Join(dir, fmt.Sprintf("%s_%s_%s_*.jpg", prefix, normalizeBlurSource(source), safeFileToken(workID)))
 		matches, err := filepath.Glob(pattern)
@@ -188,9 +166,10 @@ func safeFileToken(value string) string {
 	return cleaned
 }
 
-func hashURL(rawURL string) uint32 {
+// hashBytes 是缓存文件名的内容指纹（hero 图换了，模糊图的文件名就跟着变）。
+func hashBytes(data []byte) uint32 {
 	h := fnv.New32a()
-	_, _ = h.Write([]byte(rawURL))
+	_, _ = h.Write(data)
 	return h.Sum32()
 }
 

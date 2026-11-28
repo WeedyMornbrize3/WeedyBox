@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/PuerkitoBio/goquery v1.4.1
 	github.com/wailsapp/wails/v3 v3.0.0-beta.10
+	golang.org/x/image v0.41.0
 	golang.org/x/sys v0.47.0
 )
 

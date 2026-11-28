@@ -6,7 +6,7 @@
      排版（2026-11-24 用户按 Steam 页面截图重排）：
        ┌ hero 大背景图（本机 Steam librarycache 的 hero 图 / DLsite 第二张预览图）
        │   左下：源·社团·发售日·形式·评分 + 作品名 + 标签；右下：竖版封面
-       ├ 动作栏（MetaWorkTopBar）：入库/启动 + 启动方式 + 库状态/入库时间/启动方式 + 右侧图标
+       ├ 动作栏（MetaWorkTopBar）：入库/启动 + 启动方式 + 库状态/入库时间/启动方式/上次启动时间/运行总时长 + 右侧图标
        ├ 下划线 tab（仿截图二的选中样式）：作品信息 / 游戏统计 / 启动配置 / 编辑 / 评价
        └ 各 tab 面板（简介+Outline+元数据 / Steam 动态+统计 / 启动方式与位置 / 元数据表单+标签 / 评分与评价入口）
      原来的左信息栏（MetaWorkSidebar）已删除：可展示的字段并进 hero 小字与各 tab。
@@ -37,10 +37,10 @@
              · 动作栏内部盖一层同图遮罩（向右淡出），见 MetaWorkTopBar 的 ::after。 -->
         <div class="work-glass">
 
-          <!-- 顶部大图：背景图 + 作品名 + 标签 + 竖版封面 -->
+          <!-- 顶部大图：背景图（后端缓存的本地图）+ 作品名 + 标签 + 竖版封面 -->
           <MetaWorkHero
             :work="meta.work"
-            :background-src="meta.backgroundUrl"
+            :background-src="meta.heroSrc"
             :cover-src="coverSrc"
             :tags="meta.tagList"
             :source-label="sourceLabel"
@@ -61,6 +61,8 @@
             :source-url="meta.work.sourceUrl ?? ''"
             :source-label="sourceLabel"
             :library-updated-at="meta.libraryUpdatedAt"
+            :last-launch-at="meta.lastLaunchAt"
+            :play-time-total-seconds="meta.playTimeTotalSeconds"
             @download="handleStoreIn"
             @launch="meta.launchGame"
             @change-path="meta.changeGamePath"
@@ -148,7 +150,8 @@
                     <n-statistic label="抓取时间" :value="fetchedDateText || '—'" />
                   </div>
                   <p class="m-0 mt-4 text-xs text-tertiary">
-                    数字来自元数据抓取（入库 / 重新抓取时更新）；本地游戏时长与次数暂未统计。
+                    数字来自元数据抓取（入库 / 重新抓取时更新）。本地游玩时长按会话累加，
+                    「上次启动时间 / 运行总时长」见上方动作栏；游玩次数暂未统计。
                     评分与评价数据见「评价」页。
                   </p>
                 </n-card>
@@ -290,6 +293,15 @@
         </div>
       </template>
 
+      <!-- 正在读取作品（缓存/网络都可能有一次 IPC）：用骨架屏占位
+           （用户 2026-11-27：数据加载中可以调用 naive 的 Skeleton），
+           别先渲染一帧「还没有选中作品」的空状态 —— 那就是打开作品页时闪的那一下。 -->
+      <div v-else-if="meta.loading" class="flex flex-col gap-2" aria-busy="true">
+        <n-skeleton height="340px" :sharp="true" />
+        <n-skeleton height="56px" :sharp="true" />
+        <n-skeleton height="220px" :sharp="true" />
+      </div>
+
       <MetaEmptyState
         v-else
         icon="i-lucide-inbox"
@@ -309,6 +321,7 @@ import {
   NDescriptionsItem,
   NRadioButton,
   NRadioGroup,
+  NSkeleton,
   NStatistic,
   NTabPane,
   NTabs,

@@ -101,20 +101,26 @@ export const useMetaStore = defineStore('meta', () => {
   const steamStats = ref<SteamStats | null>(null)
   const steamStatsLoading = ref(false)
   /**
-   * Steam 源作品的 hero 背景图（data URL）：后端在本机 Steam 客户端缓存
-   * appcache\librarycache 里按 appid 找文件名含 hero 的图片并读成 base64。
-   * 空串 = 本机没有（游戏没装 / 缓存被清），详情页回落到商店接口的预览图。
+   * 详情页 hero 大图（data URL，2026-11-27）：后端只读 covers/ 的本地缓存，
+   * 本地没有才联网取一张并落盘。页面只渲染这一张，不会先挂远程图再换成另一张
+   * —— 这是「hero 图抖动」的根治办法。
+   * 空串 = 没有 hero 图（页面退成渐变底，不影响文字与操作）。
    */
-  const heroImage = ref('')
-  /** Steam 本机 hero 正在读（读文件 + base64，通常几毫秒；遮罩等它落定再生成，避免先按远程预览算一张） */
-  const heroImageLoading = ref(false)
+  const heroSrc = ref('')
   /**
-   * 预模糊 hero 图（data URL）：后端把当前 hero 图缩到 480px + 盒式模糊一次，
-   * 缓存到 covers/hero_blur_<source>_<id>_<hash>.jpg，之后直接读缓存。
+   * 预模糊 hero 图（data URL）：后端拿同一张 hero 缓存缩到 480px + 盒式模糊一次，
+   * 缓存到 covers/hero_blur_v4_*.jpg，之后直接读缓存。
    * /works 的所有遮罩层共用这一张图，CSS 里不再做 filter: blur —— 滚动只剩合成。
    * 空串 = 后端还没算好 / 失败（webp 源等）：页面不做遮罩，正文照常。
    */
   const heroBlurred = ref('')
+
+  /** 上一次启动时间（ISO；空 = 还没启动过）——动作栏「上次启动时间」 */
+  const lastLaunchAt = ref('')
+  /** 累计运行总时长（秒，含当前正在跑的这一段）——动作栏「运行总时长」 */
+  const playTimeTotalSeconds = ref(0)
+  /** 上一次退出游戏的时间（入库时 = 添加时间）；目前只随库记录一起带回来备查 */
+  const quitGameTimeStamp = ref('')
 
   /** 后端返回的完整结构（原样展示，调试页用） */
   const raw = ref<unknown>(null)
@@ -175,21 +181,23 @@ export const useMetaStore = defineStore('meta', () => {
   })
 
   /**
-   * 详情页 hero 区域的大背景图（用户 2026-11-23 定稿）：
-   *   - Steam 源：优先本机扫描到的 hero 图（后端转 data URL）；没有就用商店接口的
-   *     预览图（background_raw / background / 第一张截图），最后才退到封面；
-   *   - DLsite 源：用画廊的**第二张**预览图（第一张是游戏库卡片封面，见
+   * 首选的**远程** hero 图（2026-11-27 起只作为后端联网兜底用的 fallbackURL）：
+   *   - Steam 源：商店接口的预览图（截图 → background_raw → background → 16:9 封面），
+   *     后端会先尝试本机 Steam 客户端缓存里的本地 hero，本地没有才用这里的 URL；
+   *   - DLsite 源：画廊的**第二张**预览图（第一张是游戏库卡片封面，见
    *     getFromDlsite.go 的 previewImages）。
    * 旧缓存（2026-11-23 之前入库的）没有预览图列表，从封面 URL 推一张 `_img_smp1`
-   * 兜底 —— 推出来的图不一定存在，<img> 加载失败时 hero 会退成纯渐变底。
+   * 兜底 —— 推出来的图不一定存在，后端下载失败会再试元数据里的其它候选。
+   *
+   * 页面**不再直接渲染这个 URL**：<img> 只用后端缓存的 heroSrc，避免先远程后本地
+   * 两次换 src 造成抖动。
    */
-  const backgroundUrl = computed(() => {
+  const heroFallbackUrl = computed(() => {
     const current = work.value
     if (!current) return ''
     const previews = Array.isArray(current.previewImages) ? current.previewImages : []
 
     if (source.value === LIBRARY_SOURCE_STEAM) {
-      if (heroImage.value) return heroImage.value
       const steam = (current.steam ?? {}) as Record<string, unknown>
       const screenshots = Array.isArray(steam.screenshots)
         ? (steam.screenshots as Array<Record<string, unknown>>)
@@ -213,43 +221,46 @@ export const useMetaStore = defineStore('meta', () => {
   })
 
   /**
-   * 让后端把当前 hero 图「预模糊」一次（缓存到 covers/，带 URL 哈希）。
-   * 换作品 / 换背景图时自动重取；失败就留空（页面不做遮罩），不打扰用户。
+   * 让后端把当前作品的 hero 大图准备成**本地缓存**，再基于同一张图生成模糊遮罩。
+   *
+   * 2026-11-27 用户要求：「hero 图改用缓存，不再使用网络，网络只是兜底；本地不存在缓存
+   * 才通过网络获取，并且直接下载到 covers 当作以后缓存」。所以这里先要 hero（后端命中
+   * 缓存时完全不联网），再要模糊图；两者都只在换作品/换来源时取一次。
    */
-  let heroBlurToken = 0
-  /** 去抖定时器：backgroundUrl 常连续变化（远程预览 → Steam 本地 hero），只让最后一次生效 */
-  let heroBlurTimer = 0
-  async function refreshHeroBlur() {
+  let heroToken = 0
+  async function refreshHero() {
     const current = work.value
-    const url = backgroundUrl.value
-    const token = ++heroBlurToken
-    if (!current || !url) {
+    const token = ++heroToken
+    if (!current) {
+      heroSrc.value = ''
       heroBlurred.value = ''
       return
     }
+    const fallback = heroFallbackUrl.value
     try {
-      const blurred = await libraryApi.heroBlur(current.id, source.value, url)
-      if (token !== heroBlurToken || work.value?.id !== current.id) return
+      const hero = await libraryApi.heroImage(current.id, source.value, fallback)
+      if (token !== heroToken || work.value?.id !== current.id) return
+      heroSrc.value = hero
+    } catch {
+      if (token === heroToken) heroSrc.value = ''
+    }
+    try {
+      // 模糊图以同一份本地 hero 为原图；拿不到就留空（页面不做遮罩）
+      const blurred = await libraryApi.heroBlur(current.id, source.value, fallback)
+      if (token !== heroToken || work.value?.id !== current.id) return
       heroBlurred.value = blurred
     } catch {
-      if (token === heroBlurToken) heroBlurred.value = ''
+      if (token === heroToken) heroBlurred.value = ''
     }
   }
 
-  // immediate：store 初始化时先对齐一次（通常是空作品）；之后 hero 图变了就重取。
-  // 去抖 400ms：Steam 源会先拿到远程预览、随后才拿到本地 hero 的 data URL，
-  // 不等待就会生成两张模糊图（用户反馈「生成遮罩时生成了两张图片」）。
+  // 换作品 / 换来源时重新准备 hero 与遮罩。先清空再取：不会把上一部的图留在页面上。
   watch(
-    [backgroundUrl, heroImageLoading],
+    () => [work.value?.id ?? '', source.value] as const,
     () => {
+      heroSrc.value = ''
       heroBlurred.value = ''
-      if (heroBlurTimer) window.clearTimeout(heroBlurTimer)
-      // Steam 的本机 hero 还在读：等它落定（watch 会再触发），否则会先按远程预览算一张
-      if (source.value === LIBRARY_SOURCE_STEAM && heroImageLoading.value) return
-      heroBlurTimer = window.setTimeout(() => {
-        heroBlurTimer = 0
-        void refreshHeroBlur()
-      }, 30)
+      if (work.value) void refreshHero()
     },
     { immediate: true },
   )
@@ -332,14 +343,13 @@ export const useMetaStore = defineStore('meta', () => {
     steamSearchTotal.value = 0
     steamStats.value = null
     steamStatsLoading.value = false
-    heroImage.value = ''
-    heroImageLoading.value = false
+    heroSrc.value = ''
     heroBlurred.value = ''
-    heroBlurToken += 1
-    if (heroBlurTimer) {
-      window.clearTimeout(heroBlurTimer)
-      heroBlurTimer = 0
-    }
+    // 换作品时作废还在飞的那次 hero 请求（回来也不往新页面上贴）
+    heroToken += 1
+    lastLaunchAt.value = ''
+    playTimeTotalSeconds.value = 0
+    quitGameTimeStamp.value = ''
     if (!opts.keepCandidates) {
       sourcePages.value = {}
       sourcePageCount.value = 1
@@ -515,25 +525,6 @@ export const useMetaStore = defineStore('meta', () => {
     }
   }
 
-  /**
-   * 读 Steam 源作品的 hero 背景图（本机 Steam 客户端缓存，后端转 data URL）。
-   * 只有 Steam 源才有；本机没有就留空 —— 详情页会回落到商店接口的预览图。
-   */
-  async function loadSteamHeroImage(appID: string) {
-    heroImageLoading.value = true
-    try {
-      const url = await libraryApi.steamHeroImage(appID)
-      if (!url) return
-      // 期间换作品了：丢弃旧响应（否则会把上一部的大图贴到当前作品上）
-      if (work.value?.id !== appID || source.value !== LIBRARY_SOURCE_STEAM) return
-      heroImage.value = url
-    } catch {
-      // 背景图是装饰，拿不到不影响详情页
-    } finally {
-      heroImageLoading.value = false
-    }
-  }
-
   /** 把取回来的作品塞进 state（同时记住"这是不是缓存"） */
   function applyWork(data: WorkMeta) {
     const meta = data as LibraryMeta
@@ -552,6 +543,11 @@ export const useMetaStore = defineStore('meta', () => {
     gamePathExists.value = Boolean(gamePath.value)
     gameRunning.value = false
     gameWarning.value = ''
+    // 游玩统计随库记录一起带回来（动作栏「上次启动时间 / 运行总时长」先用它，
+    // 紧接着 refreshGameStatus 会用后端的实时值覆盖）
+    lastLaunchAt.value = meta.lastLaunchAt ?? ''
+    playTimeTotalSeconds.value = meta.playTimeTotalSeconds ?? 0
+    quitGameTimeStamp.value = meta.quitGameTimeStamp ?? ''
     // 用户要求：进入相关界面时先检测 exe 是否存在、游戏是否在运行
     void refreshGameStatus()
     // 标签跟着作品走：换作品时重新拉一份（抓取标签 + 库里保存过的整理结果）。
@@ -560,9 +556,8 @@ export const useMetaStore = defineStore('meta', () => {
     if (previousId !== data.id || !tagsDirty.value) void loadTags(data.id)
     // Steam 源额外取「评价 / 在线人数 / 公告」（DLsite 分支里直接清空）
     void loadSteamStats()
-    // Steam 源额外取本机 hero 背景图（DLsite 的背景图直接从作品的预览图列表取）
-    heroImage.value = ''
-    if (source.value === LIBRARY_SOURCE_STEAM) void loadSteamHeroImage(data.id)
+    // hero 大图与遮罩由 watch(work.id, source) 统一触发 refreshHero，
+    // 这里不再单独清 / 取（换作品时 watch 会先清空再取，不会把上一部的图贴过来）。
     // 命中的作品从候选里剔除（已加载的每一页都要剔，否则翻页还会看到）
     if (work.value) {
       const id = work.value.id
@@ -761,7 +756,9 @@ export const useMetaStore = defineStore('meta', () => {
    */
   async function refreshGameStatus(): Promise<void> {
     const current = work.value
-    if (!current || !stored.value || !gamePath.value || gameStatusLoading.value) return
+    // 只要求已入库：Steam 方式没记本地 exe 时也要轮询（动作栏的上次启动时间 /
+    // 运行总时长来自 Status，不能因为"没有本地程序"就不刷新）。
+    if (!current || !stored.value || gameStatusLoading.value) return
     if (typeof document !== 'undefined' && document.hidden) return
 
     gameStatusLoading.value = true
@@ -771,6 +768,10 @@ export const useMetaStore = defineStore('meta', () => {
       gamePath.value = status.path || gamePath.value
       gamePathExists.value = status.exists
       gameRunning.value = status.running
+      // 游玩统计以后端为准（总时长里含当前正在跑的这一段，5 秒轮询能看到它在涨）
+      lastLaunchAt.value = status.lastLaunchAt ?? ''
+      playTimeTotalSeconds.value = status.playTimeTotalSeconds ?? 0
+      quitGameTimeStamp.value = status.quitGameTimeStamp ?? ''
       // 生效方式以后端为准（默认值已按来源解析）：切换过方式后状态轮询也能对齐
       const reportedMode = (status.launchMode ?? '').toLowerCase()
       if (reportedMode === 'steam' || reportedMode === 'exe') launchMode.value = reportedMode
@@ -1048,8 +1049,11 @@ export const useMetaStore = defineStore('meta', () => {
     steamSearchTotal,
     steamStats,
     steamStatsLoading,
-    heroImage,
+    heroSrc,
     heroBlurred,
+    lastLaunchAt,
+    playTimeTotalSeconds,
+    quitGameTimeStamp,
     // Getters
     rawJson,
     hasResult,
@@ -1057,7 +1061,7 @@ export const useMetaStore = defineStore('meta', () => {
     launchBlocked,
     effectiveLaunchMode,
     tagsDirty,
-    backgroundUrl,
+    heroFallbackUrl,
     candidates,
     candidateTotal,
     candidatePageCount,

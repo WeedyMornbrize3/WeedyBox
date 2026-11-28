@@ -77,12 +77,18 @@
          指令见 utils/scrollFade.ts；只有真的还有内容在视口外时才淡）。 -->
     <div class="flex-1 min-h-0 flex gap-4">
       <div v-scroll-fade class="scroll-fade flex-1 min-h-0 overflow-y-auto scrollbar-theme pr-2">
-        <!-- 网格在有作品或已读完时都渲染：空库也要能看到末尾那个「添加游戏」圆钮 -->
+        <!-- 网格在外层渲染（空库/加载中也要占位）：加载中先铺骨架屏卡片，
+             不再先闪一下「游戏库还是空的」再冒出内容（用户 2026-11-27 要求用 naive 的 Skeleton）。 -->
         <div
-          v-if="library.works.length || !library.loading"
           class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3"
           :class="{ 'lib-batch-mode': batchMode }"
         >
+          <!-- 数据加载中的骨架屏：与真实封面同比例（2:3）、同间距 -->
+          <template v-if="library.loading && !library.works.length">
+            <div v-for="i in 12" :key="`lib-skeleton-${i}`" class="lib-skeleton">
+              <n-skeleton height="100%" :sharp="true" />
+            </div>
+          </template>
           <!-- 一张卡片 = 一个封面按钮（**卡片上不再有任何操作按钮**，用户要求）。
                封面统一 2:3 等比裁切（Steam / DLsite / 以后所有来源都一样）：
                Steam 的 library_600x900 本身就是 2:3，DLsite 的 4:3 图会被 object-cover 居中裁掉两边。
@@ -150,9 +156,6 @@
             </p>
           </template>
         </n-empty>
-        <div v-else-if="library.loading && !library.works.length" class="py-8 flex-center">
-          <n-spin size="medium" description="正在读取游戏库…" />
-        </div>
       </div>
       <!-- 批量操作长条：**浮空的独立小卡片**（fixed 定位，垂直位置在「游戏库」顶栏卡片
            下方、水平位置在游戏卡片右侧的留白里，宽 56px、高随内容）。
@@ -344,7 +347,7 @@ import {
   NProgress,
   NRadioButton,
   NRadioGroup,
-  NSpin,
+  NSkeleton,
   NTooltip,
 } from 'naive-ui'
 import { useMetaStore } from '../stores/metaStore'
@@ -576,12 +579,14 @@ function finishSearch() {
 
 /**
  * 点封面进入作品库详情：
- * 先进 /works 再 loadById —— loadById 是缓存优先（库里有就不联网），所以详情几乎是瞬间出来的。
+ * **先把作品取回来、再切路由**（用户 2026-11-27：打开作品页会短暂闪「游戏库还是空的」）。
+ * 反过来的话 /works 会先挂载一帧「还没有选中作品」的空状态：store 里还没有 work，
+ * 缓存读取也至少要走一次 IPC。取不到作品就留在游戏库（错误已由 store 弹 toast）。
  * 必须把卡片的来源一并带过去：同一个编号在 dlsite / steam 里是两条记录。
  */
 async function openWork(item: LibraryWork) {
-  await router.push('/works')
   await meta.loadById(item.workId, false, item.source as LibrarySource)
+  if (meta.work) await router.push('/works')
 }
 
 onMounted(() => {
@@ -591,6 +596,18 @@ onMounted(() => {
 </script>
 
 <style scoped>
+/* ===== 加载骨架屏（2026-11-27 用户要求：数据加载中用 naive 的 Skeleton）=====
+   与真实封面同比例（2:3）、同约宽，加载完成后卡片在原地替换它，不跳布局。 */
+.lib-skeleton {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+}
+
+.lib-skeleton :deep(.n-skeleton) {
+  height: 100%;
+  border-radius: 0;
+}
+
 /* ===== 封面卡片（仿 Steam 库卡片，2026-11-25）=====
    · hover：上浮 2px + 阴影 + 封面轻微放大 + 底部名称浮层淡入；
    · 点击：从指针落点扩散一圈水纹（.lib-ripple）；

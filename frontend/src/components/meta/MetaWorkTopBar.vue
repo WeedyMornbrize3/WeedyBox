@@ -1,7 +1,7 @@
 <!-- frontend/src/components/meta/MetaWorkTopBar.vue
      作品详情页 hero 下方的那条动作栏（2026-11-24 按用户给的第一张 Steam 页面截图仿制）：
        左：入库 / 游戏启动（+ 启动方式下拉）     ← MetaWorkActions，状态判断仍在 store
-       中：库状态 / 入库时间 / 启动方式           ← 每组「小图标 + 灰标签 + 亮值」，模仿截图里的
+       中：库状态 / 入库时间 / 启动方式 / 上次启动时间 / 运行总时长   ← 每组「小图标 + 灰标签 + 亮值」，模仿截图里的
                                                   云状态 / 最后运行日期 / 游戏时间
        右：两颗方形（圆角）图标按钮 —— 重新抓取、打开原始作品页（截图右侧的设置/信息图标位）
      只负责长相与事件转发；请求都在 stores/metaStore.ts。 -->
@@ -57,6 +57,24 @@
           <div class="min-w-0">
             <p class="work-topbar-label">启动方式</p>
             <p class="work-topbar-value">{{ launchMode === 'steam' ? '通过 Steam' : '本地程序' }}</p>
+          </div>
+        </div>
+
+        <!-- 游玩统计（2026-11-27 用户要求）：只放在「启动所在卡片」上，
+             字段来自 library_works 的 last_launch_at / play_time_total_seconds。 -->
+        <div v-if="stored" class="work-topbar-stat">
+          <span class="icon-sm text-tertiary i-lucide-history" aria-hidden="true" />
+          <div class="min-w-0">
+            <p class="work-topbar-label">上次启动时间</p>
+            <p class="work-topbar-value">{{ lastLaunchText || '尚未启动' }}</p>
+          </div>
+        </div>
+
+        <div v-if="stored" class="work-topbar-stat">
+          <span class="icon-sm text-tertiary i-lucide-timer" aria-hidden="true" />
+          <div class="min-w-0">
+            <p class="work-topbar-label">运行总时长</p>
+            <p class="work-topbar-value">{{ playTimeText || '—' }}</p>
           </div>
         </div>
       </div>
@@ -134,6 +152,10 @@ const props = withDefaults(
     sourceLabel?: string
     /** 入库时间（ISO 字符串） */
     libraryUpdatedAt?: string
+    /** 上一次启动时间（ISO 字符串；空 = 还没启动过） */
+    lastLaunchAt?: string
+    /** 累计运行总时长（秒，可能含当前正在跑的这一段） */
+    playTimeTotalSeconds?: number
   }>(),
   {
     disabled: false,
@@ -149,6 +171,8 @@ const props = withDefaults(
     sourceUrl: '',
     sourceLabel: '',
     libraryUpdatedAt: '',
+    lastLaunchAt: '',
+    playTimeTotalSeconds: 0,
   },
 )
 
@@ -166,6 +190,33 @@ const savedAtText = computed(() => {
   const time = new Date(props.libraryUpdatedAt)
   if (Number.isNaN(time.getTime())) return ''
   return time.toLocaleDateString('zh-CN')
+})
+
+/** 上次启动时间：日期 + 时分（截图里 Steam 是「最后运行日期 6月18日」的粒度） */
+const lastLaunchText = computed(() => {
+  if (!props.lastLaunchAt) return ''
+  const time = new Date(props.lastLaunchAt)
+  if (Number.isNaN(time.getTime())) return ''
+  return time.toLocaleString('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+})
+
+/**
+ * 运行总时长：不足 1 小时显示分钟，超过 1 小时显示一位小数的小时（仿 Steam「12.3 小时」）。
+ * 后端每 5 秒轮询会带上"含当前会话"的实时总时长，所以运行中这个数字会自己涨。
+ */
+const playTimeText = computed(() => {
+  const seconds = props.playTimeTotalSeconds
+  if (!Number.isFinite(seconds) || seconds <= 0) return ''
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 1) return '不到 1 分钟'
+  if (minutes < 60) return `${minutes} 分钟`
+  const hours = seconds / 3600
+  return `${hours >= 10 ? Math.round(hours) : Math.round(hours * 10) / 10} 小时`
 })
 
 const sourceLinkLabel = computed(() =>

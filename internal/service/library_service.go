@@ -426,8 +426,8 @@ func (s *LibraryService) Remove(ctx context.Context, workID, source string) erro
 			return fmt.Errorf("删除封面图片 %s 失败: %w", path, err)
 		}
 	}
-	// 模糊 hero 缓存是纯派生文件，删不掉也不该阻止移除作品
-	s.removeHeroBlurCache(workID, source)
+	// hero 原图与模糊图都是可再生成的缓存，删不掉也不该阻止移除作品
+	s.removeHeroCache(workID, source)
 	return s.DB.DeleteLibraryWork(ctx, source, workID)
 }
 
@@ -654,6 +654,9 @@ func (s *LibraryService) CoverDataURL(ctx context.Context, workID, source string
 // 由前端决定回落到商店接口的预览图；扫描规则见 scan.SteamHeroImage。
 // 为什么转 data URL 而不是给文件路径：与封面同一原因（Wails webview 对 file:// 没有
 // 实机验证过）；hero 图实测 200~450KB，base64 后仍是一次可接受的传输。
+//
+// 2026-11-27 起详情页的 hero 图改由 HeroImage（hero_image.go）统一解析缓存，
+// 这个方法保留给旧前端/调试调用，行为不变（只读本机 Steam 缓存，不落盘）。
 func (s *LibraryService) SteamHeroImage(ctx context.Context, appID string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -737,6 +740,23 @@ func decorate(work map[string]any, row *model.LibraryWork, cached bool) map[stri
 	// 启动方式（library_works.launch_mode，2026-11-23）：空 = 按来源取默认
 	// （steam 源走 steam://rungameid，其它走本地 exe）。详情页据此显示"通过 Steam / 本地程序"。
 	work["launchMode"] = row.LaunchMode
+	// hero 大图缓存（library_works.hero_*，2026-11-27）：详情页默认只读这张本地图，
+	// 没有才由后端联网补一张并落盘。目录/相对路径/绝对路径都带上，调试页能直接核对。
+	work["heroDir"] = row.HeroDir
+	work["heroPath"] = row.HeroPath
+	work["heroAbsPath"] = row.HeroAbsPath
+	work["heroBytes"] = row.HeroBytes
+	work["heroSuffix"] = row.HeroSuffix
+	work["heroUrl"] = row.HeroURL
+	// 游玩统计（2026-11-27）：动作栏的「上次启动时间 / 运行总时长」直接用这两格。
+	// 老库记录没有 quit 这一格时按"初始值 = 添加时间"回落到入库时间。
+	quit := row.QuitGameTimeStamp
+	if strings.TrimSpace(quit) == "" && !row.CreatedAt.IsZero() {
+		quit = row.CreatedAt.Format(time.RFC3339)
+	}
+	work["quitGameTimeStamp"] = quit
+	work["lastLaunchAt"] = row.LastLaunchAt
+	work["playTimeTotalSeconds"] = row.PlayTimeTotalSeconds
 	return work
 }
 
